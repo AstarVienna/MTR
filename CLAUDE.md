@@ -183,8 +183,17 @@ ScopeSim names files `METIS.<INTERNAL_NAME>.<timestamp>.fits` — this internal 
 
 ## Repository Layout
 
+This directory is a git repository containing the runner script and reference YAML. External repos and local data are gitignored.
+
 ```
-test_runner/
+test_runner/                 # git root (this repo)
+├── run_metis.py             # Main CLI wrapper
+├── LMS_RAD_06.yaml          # Reference IFU observation sequence
+├── podman-compose.yml       # Container-based environment
+├── README.md                # User-facing documentation
+├── .gitignore               # Excludes external repos, data/, output/, test_*.yaml
+│
+│   # gitignored — cloned/installed separately via metis-meta-package bootstrap
 ├── METIS_Pipeline/          # Main pipeline (Python + C)
 │   ├── metisp/pymetis/      # Core Python package
 │   ├── metisp/pyrecipes/    # pyesorex plugin entry points
@@ -193,6 +202,6 @@ test_runner/
 │   └── .github/workflows/   # CI: run_edps.yaml (daily), edps_runner.yaml
 ├── METIS_Simulations/       # Simulation scripts (scopesim-based)
 ├── metis-meta-package/      # UV/pip meta-installer
-├── data/                    # Local test data
-└── podman-compose.yml       # Container-based environment
+├── data/                    # Local test data (gitignored)
+└── output/                  # Pipeline run outputs (gitignored)
 ```
