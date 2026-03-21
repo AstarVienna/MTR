@@ -6,6 +6,9 @@ metis-meta-package/
 # Test/scratch YAML files
 test_*.yaml
 
+# Podman Files
+podman*.yml
+
 # Local test data and pipeline outputs
 data/
 output/
