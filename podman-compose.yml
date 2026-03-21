@@ -1,0 +1,14 @@
+services:
+  metis:
+    image: localhost/mini
+    userns_mode: keep-id
+    volumes:
+      - type: bind
+        source: ./METIS_Pipeline
+        target: /home/ubuntu/METIS_Pipeline
+      - type: bind
+        source: ./data
+        target: /home/ubuntu/data
+        read_only: true
+    stdin_open: true
+    tty: true

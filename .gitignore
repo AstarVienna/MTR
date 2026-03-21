@@ -1,0 +1,35 @@
+# External repositories (cloned separately via metis-meta-package bootstrap)
+METIS_Pipeline/
+METIS_Simulations/
+metis-meta-package/
+
+# Test/scratch YAML files
+test_*.yaml
+
+# Local test data and pipeline outputs
+data/
+output/
+
+# Claude Code internal files
+.claude/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+*.egg
+
+# FITS files (large binary data)
+*.fits
+*.fits.gz
+
+# OS / editor
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
