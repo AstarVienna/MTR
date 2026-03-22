@@ -15,4 +15,4 @@ jobs:
         run: pip install pytest pyyaml astropy
 
       - name: Run unit tests
-        run: python -m pytest test_run_metis.py -v
+        run: python -m pytest tests/ -v
