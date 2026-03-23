@@ -11,7 +11,11 @@ A CLI wrapper for end-to-end testing of the [METIS instrument pipeline](https://
 
 ## Prerequisites
 
-The `metis-meta-package` bootstrap must have been run on your machine. It installs `uv`, ScopeSim, EDPS, PyEsoRex, and all Python dependencies, and creates the directory layout the runner expects:
+The runner supports three installation layouts. Choose the one that matches how you have the pipeline installed:
+
+**Option A — metis-meta-package** (`--runner metapkg`, default)
+
+Run the bootstrap on your machine. It installs `uv`, ScopeSim, EDPS, PyEsoRex, and all Python dependencies:
 
 ```bash
 git clone <metis-meta-package-url> ~/metis-meta-package
@@ -19,12 +23,25 @@ cd ~/metis-meta-package
 bash bootstrap.sh
 ```
 
-By default the runner looks for:
-- `~/metis-meta-package/` — the meta-package install
-- `~/METIS_Simulations/` — the ScopeSim simulation scripts
-- `~/METIS_Pipeline/` — the pipeline source (for `PYTHONPATH` etc.)
+The runner looks for `~/metis-meta-package/` and `~/METIS_Simulations/` by default. Pass `--meta-pkg` / `--simulations-dir` to override.
 
-Pass `--meta-pkg` / `--simulations-dir` to override these paths.
+**Option B — Docker or Podman container** (`--runner docker` / `--runner podman`)
+
+Build and start the pipeline container from [METIS_Pipeline/toolbox/](https://github.com/AstarVienna/METIS_Pipeline/tree/main/toolbox):
+
+```bash
+cd METIS_Pipeline/toolbox
+docker build -t metispipeline .
+docker run -d --name metis-pipeline --net=host \
+  --mount type=bind,source=/path/to/output,target=/output \
+  metispipeline
+```
+
+Then pass `--runner docker --container metis-pipeline` (or set `METIS_RUNNER`/`METIS_CONTAINER`). The output directory must be bind-mounted into the container.
+
+**Option C — bare-metal or inside a container** (`--runner native`)
+
+If the pipeline tools (`edps`, `python`, ScopeSim) are already on your PATH — either because you are running the script *inside* a container or have installed everything directly — no additional setup is needed. Pass `--runner native`.
 
 ## Installation
 
