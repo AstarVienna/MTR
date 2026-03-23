@@ -1,9 +1,11 @@
 # METIS Test Runner
 
-[![Unit Tests](https://img.shields.io/github/actions/workflow/status/eiseleb47/MTR/unit_tests.yaml?branch=main&label=unit%20tests&labelColor=1e1e2e&color=a6e3a1&logo=github&logoColor=cdd6f4)](https://github.com/eiseleb47/MTR/actions/workflows/unit_tests.yaml)
-[![Python 3](https://img.shields.io/badge/python-3-89b4fa?labelColor=1e1e2e&logo=python&logoColor=cdd6f4)](https://www.python.org/)
-[![Last Commit](https://img.shields.io/github/last-commit/eiseleb47/MTR?labelColor=1e1e2e&color=cba6f7&logo=git&logoColor=cdd6f4)](https://github.com/eiseleb47/MTR/commits/main)
-[![Platform](https://img.shields.io/badge/platform-linux-fab387?labelColor=1e1e2e&logo=linux&logoColor=cdd6f4)](https://github.com/eiseleb47/MTR)
+<p align="center">
+  <a href="https://github.com/eiseleb47/MTR/actions/workflows/unit_tests.yaml"><img src="https://img.shields.io/github/actions/workflow/status/eiseleb47/MTR/unit_tests.yaml?branch=main&label=unit%20tests&style=for-the-badge&labelColor=1e1e2e&color=a6e3a1&logo=github&logoColor=cdd6f4" alt="Unit Tests"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3-89b4fa?style=for-the-badge&labelColor=1e1e2e&logo=python&logoColor=cdd6f4" alt="Python 3"></a>
+  <a href="https://github.com/eiseleb47/MTR/commits/main"><img src="https://img.shields.io/github/last-commit/eiseleb47/MTR?style=for-the-badge&labelColor=1e1e2e&color=cba6f7&logo=git&logoColor=cdd6f4" alt="Last Commit"></a>
+  <a href="https://github.com/eiseleb47/MTR"><img src="https://img.shields.io/badge/platform-linux-fab387?style=for-the-badge&labelColor=1e1e2e&logo=linux&logoColor=cdd6f4" alt="Platform"></a>
+</p>
 
 A CLI wrapper for end-to-end testing of the [METIS instrument pipeline](https://github.com/AstarVienna/METIS_Pipeline). It generates synthetic FITS observations via [ScopeSim](https://scopesim.readthedocs.io/) and then runs the matching [EDPS](https://www.eso.org/sci/software/edps/) reduction workflow, all in one command.
 
