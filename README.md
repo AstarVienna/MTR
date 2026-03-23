@@ -32,7 +32,7 @@ No extra install step is needed beyond the bootstrap above. Clone this repo anyw
 
 ```bash
 git clone <this-repo-url>
-cd metis-pipeline-runner
+cd MTR
 ```
 
 ## Usage
@@ -48,7 +48,7 @@ The workflow (`lm_img`, `n_img`, `ifu`, `lm_lss`, `n_lss`, …) and the deepest 
 | Flag | Default | Description |
 |---|---|---|
 | `-o / --output-dir` | `./output/<timestamp>` | Root directory for all outputs |
-| `--calib N` | `0` | Prepend N auto-generated calibration blocks |
+| `--calib` | off | Auto-generate calibration frames (dark/flat) inferred from YAML content |
 | `--small` | off | Use 32×32 detector cutouts for fast testing |
 | `--no-sim` | off | Skip simulation; run pipeline on existing data |
 | `--no-pipeline` | off | Run simulation only; skip pipeline |
@@ -61,8 +61,8 @@ The workflow (`lm_img`, `n_img`, `ifu`, `lm_lss`, `n_lss`, …) and the deepest 
 # Full run: simulate + reduce a complete IFU observation sequence
 python run_metis.py LMS_RAD_06.yaml
 
-# Multiple YAML files, custom output dir, with 2 auto-calibration frames prepended
-python run_metis.py -o /tmp/myrun --calib 2 obs1.yaml obs2.yaml
+# Multiple YAML files, custom output dir, with auto-calibration frames
+python run_metis.py -o /tmp/myrun --calib obs1.yaml obs2.yaml
 
 # Fast mode (32×32 detectors) for quick iteration
 python run_metis.py --small LMS_RAD_06.yaml
@@ -117,7 +117,7 @@ See `LMS_RAD_06.yaml` for a complete IFU example covering the full calibration +
 ## Repository Layout
 
 ```
-metis-pipeline-runner/
+MTR/
 ├── run_metis.py            # Main CLI script
 ├── LMS_RAD_06.yaml         # Full IFU observation sequence (reference example)
 └── podman-compose.yml      # Container environment for isolated runs

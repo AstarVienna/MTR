@@ -383,8 +383,8 @@ def parse_args():
         help="Use 32×32 pixel detectors (fast mode for testing)",
     )
     p.add_argument(
-        "--calib", type=int, default=0, metavar="N",
-        help="Auto-generate N dark/flat observations [default: 0]",
+        "--calib", action="store_true",
+        help="Auto-generate calibration frames (dark/flat) inferred from YAML content",
     )
     p.add_argument(
         "--cores", type=int, default=4, metavar="N",

@@ -126,7 +126,7 @@ Low-level image processing library written in C/C++ with an Autotools build syst
 python run_metis.py LMS_RAD_06.yaml
 
 # Multiple YAML files, custom output dir, with auto-calibration frames
-python run_metis.py -o /tmp/myrun --calib 2 obs1.yaml obs2.yaml
+python run_metis.py -o /tmp/myrun --calib obs1.yaml obs2.yaml
 
 # Fast mode (32×32 detectors) for testing
 python run_metis.py --small LMS_RAD_06.yaml
