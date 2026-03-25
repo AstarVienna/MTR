@@ -49,14 +49,47 @@ ScopeSim instrument packages (Armazones, ELT, METIS) will be downloaded into `./
 
 ## Installation
 
-No extra install step is needed beyond the bootstrap above. Clone this repo anywhere:
+Clone this repo anywhere:
 
 ```bash
 git clone <this-repo-url>
 cd MTR
 ```
 
-## Usage
+For the CLI, no extra install step is needed beyond the prerequisites above.
+
+For the GUI, install the additional dependency:
+
+```bash
+pip install pyqt6
+```
+
+## GUI
+
+A graphical front-end is available via `gui.py`. Launch it with:
+
+```bash
+python gui.py
+```
+
+It provides two tabs:
+
+**Install tab** — runs the full `metis-meta-package` bootstrap non-interactively:
+- Installs `uv` if not already on PATH
+- Clones or updates `METIS_Pipeline` and `METIS_Simulations` into the current directory
+- Runs `uv sync` to install all Python dependencies
+- Initialises and configures EDPS on port 4444
+- Writes `metis-meta-package/.env`
+
+Re-running is safe — existing repositories are updated, not re-cloned.
+
+**Run tab** — wraps `run_metis.py` with a file-picker UI:
+- Add one or more YAML input files via a file browser
+- All CLI options are exposed as labelled controls; runner-specific fields (container name, meta-package path) appear and disappear based on the selected runner
+- Live output log with a Stop button
+- Settings are remembered between sessions
+
+## Usage (CLI)
 
 ```bash
 python run_metis.py [OPTIONS] yaml1.yaml [yaml2.yaml ...]
@@ -164,6 +197,7 @@ See `LMS_RAD_06.yaml` for a complete IFU example covering the full calibration +
 ```
 MTR/
 ├── run_metis.py            # Main CLI script
+├── gui.py                  # Graphical front-end (PyQt6)
 ├── LMS_RAD_06.yaml         # Full IFU observation sequence (reference example)
 └── podman-compose.yml      # Container environment for isolated runs
 ```
