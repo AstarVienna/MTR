@@ -8,6 +8,7 @@ test_*.yaml
 
 # Podman Files
 podman*.yml
+Dockerfile*
 
 # Local test data and pipeline outputs
 data/
