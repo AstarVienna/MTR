@@ -549,15 +549,26 @@ def main():
             sys.exit(f"Error: YAML file not found: {p}")
         yaml_files.append(p)
 
-    # Locate metis-meta-package (metapkg runner only)
+    # Locate the pipeline environment directory (metapkg runner only).
+    # Prefers ./pipeline (installed via the MTR Install tab), then falls back
+    # to ./metis-meta-package (installed via the standalone bootstrap).
     meta_pkg = None
     if runner == "metapkg":
-        meta_pkg = Path(args.meta_pkg).resolve() if args.meta_pkg \
-                   else Path.cwd() / "metis-meta-package"
+        if args.meta_pkg:
+            meta_pkg = Path(args.meta_pkg).resolve()
+        else:
+            for candidate in [Path.cwd() / "pipeline",
+                              Path.cwd() / "metis-meta-package"]:
+                if (candidate / ".env").exists():
+                    meta_pkg = candidate
+                    break
+            else:
+                meta_pkg = Path.cwd() / "pipeline"
         if not (meta_pkg / ".env").exists():
             sys.exit(
-                f"Error: metis-meta-package not found at {meta_pkg}\n"
-                "Run metis-meta-package/bootstrap.sh first, or pass --meta-pkg."
+                f"Error: pipeline environment not found at {meta_pkg}\n"
+                "Run the Install tab in the MTR GUI, or pass --meta-pkg to point\n"
+                "to an existing metis-meta-package directory."
             )
 
     # Locate METIS_Simulations
@@ -665,17 +676,23 @@ def main():
         if rc != 0:
             sys.exit(f"Error: EDPS server failed to start (exit code {rc}).")
 
-        print("=== Running EDPS pipeline ===")
-        rc = subprocess.run(
-            edps_cmd + [
-                "-w", workflow,
-                "-i", str(sim_out),
-                "-o", str(pipe_out),
-            ] + target_flags,
-            cwd=edps_cwd,
-        ).returncode
-        if rc != 0:
-            sys.exit(f"Error: pipeline step failed (exit code {rc}).")
+        pipeline_rc = 1
+        try:
+            print("=== Running EDPS pipeline ===")
+            pipeline_rc = subprocess.run(
+                edps_cmd + [
+                    "-w", workflow,
+                    "-i", str(sim_out),
+                    "-o", str(pipe_out),
+                ] + target_flags,
+                cwd=edps_cwd,
+            ).returncode
+        finally:
+            print("=== Stopping EDPS server ===")
+            subprocess.run(edps_cmd + ["-s"], cwd=edps_cwd,
+                           capture_output=True, timeout=15)
+        if pipeline_rc != 0:
+            sys.exit(f"Error: pipeline step failed (exit code {pipeline_rc}).")
 
     print(f"\nDone. Pipeline products are in: {pipe_out}")
 

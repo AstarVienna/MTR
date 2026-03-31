@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 # ---------------------------------------------------------------------------
 
 REPO_ROOT   = Path(__file__).parent.resolve()
-META_PKG    = Path(os.environ.get("METIS_META_PKG", str(REPO_ROOT / "metis-meta-package")))
+META_PKG    = Path(os.environ.get("METIS_META_PKG", str(REPO_ROOT / "pipeline")))
 TARGET_A    = REPO_ROOT / "METIS_Pipeline"
 TARGET_B    = REPO_ROOT / "METIS_Simulations"
 REPO_A_URL  = "https://github.com/AstarVienna/METIS_Pipeline.git"
@@ -102,16 +102,16 @@ class InstallWorker(QThread):
             self._clone_or_update(REPO_B_URL, TARGET_B)
 
             self._step("Installing Python dependencies (uv sync)…")
-            self._run(["uv", "sync"], cwd=META_PKG)
+            self._run(["uv", "sync", "--all-extras"], cwd=META_PKG)
+
+            self._step("Writing .env…")
+            self._write_env()
 
             self._step("Initialising EDPS…")
             self._init_edps()
 
             self._step("Patching ~/.edps/application.properties…")
             self._patch_edps_config()
-
-            self._step("Writing .env…")
-            self._write_env()
 
             self.log.emit("\n✓ Installation complete.\n", "green")
             self.done.emit(True)
@@ -193,26 +193,19 @@ class InstallWorker(QThread):
             self._run(["git", "clone", "--depth", "1", url, str(target)])
 
     def _init_edps(self) -> None:
-        """Run edps once to generate ~/.edps/application.properties."""
+        """Run edps once to generate ~/.edps/application.properties, then stop it.
+
+        EDPS prompts for a bookkeeping directory on first run; we send a newline
+        to accept the default.  After edps daemonises the process exits, then we
+        issue -s to stop the background server.
+        """
         env_file = META_PKG / ".env"
-        cmd = ["uv", "run", "--env-file", str(env_file), "edps", "-P", "4444"]
-        self.log.emit(f"$ {' '.join(cmd)}\n", "")
-        proc = subprocess.Popen(
-            cmd, cwd=str(META_PKG),
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-        )
+        base = ["uv", "run", "--env-file", str(env_file), "edps", "-P", "4444"]
         try:
-            out, _ = proc.communicate(input="\n", timeout=30)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            out, _ = proc.communicate()
-        self.log.emit(out or "", "")
-        # Stop any running instance
-        subprocess.run(
-            ["uv", "run", "--env-file", str(env_file), "edps", "-P", "4444", "-s"],
-            cwd=str(META_PKG), capture_output=True, timeout=15,
-        )
+            self._run(base, cwd=META_PKG, stdin_text="\n", timeout=60)
+        finally:
+            subprocess.run(base + ["-s"], cwd=str(META_PKG),
+                           capture_output=True, timeout=15)
 
     def _patch_edps_config(self) -> None:
         props = Path.home() / ".edps" / "application.properties"
@@ -258,14 +251,24 @@ class InstallTab(QWidget):
 
         desc = QLabel(
             "<b>METIS Pipeline Installation</b><br><br>"
-            "Clicking <i>Install / Update</i> will perform the following steps:<br>"
+            "Skip this tab if you have already installed the pipeline via one of "
+            "these methods and go straight to <b>Run</b>:<br>"
+            "<ul>"
+            "<li><b>metis-meta-package</b> — select runner <i>metapkg</i> and set "
+            "<i>Meta-package dir</i> to your <code>metis-meta-package</code> folder</li>"
+            "<li><b>Bare-metal / ESO docs</b> — select runner <i>native</i></li>"
+            "<li><b>Pipeline container</b> — select runner <i>docker</i> or "
+            "<i>podman</i> and enter the container name</li>"
+            "</ul>"
+            "Otherwise, clicking <i>Install / Update</i> will perform the following "
+            "steps:<br>"
             "<ol>"
             "<li>Install <code>uv</code> if not already on PATH</li>"
             f"<li>Clone or update <b>METIS_Pipeline</b> and <b>METIS_Simulations</b> "
             f"into <code>{REPO_ROOT}</code></li>"
             "<li>Install all Python dependencies via <code>uv sync</code></li>"
-            "<li>Initialise and configure EDPS on port 4444</li>"
             f"<li>Write <code>{META_PKG / '.env'}</code></li>"
+            "<li>Initialise and configure EDPS on port 4444</li>"
             "</ol>"
             "Re-running is safe — existing repositories will be updated, not re-cloned."
         )
@@ -557,7 +560,7 @@ class RunTab(QWidget):
         self.meta_pkg_edit.setText(s.value("meta_pkg", ""))
         self.sim_dir_edit.setText(s.value("sim_dir", ""))
         self.inst_edit.setText(s.value("inst_pkgs", ""))
-        for f in s.value("yaml_files", []):
+        for f in (s.value("yaml_files") or []):
             self.yaml_list.addItem(f)
 
     def _save_settings(self) -> None:
@@ -594,9 +597,10 @@ class MainWindow(QMainWindow):
         self.resize(900, 720)
 
         tabs = QTabWidget()
+        tabs.setStyleSheet("QTabBar::tab { min-width: 440px; }")
         self._run_tab = RunTab()
-        tabs.addTab(InstallTab(), "Install")
         tabs.addTab(self._run_tab, "Run")
+        tabs.addTab(InstallTab(), "Install")
         self.setCentralWidget(tabs)
 
     def closeEvent(self, event) -> None:
