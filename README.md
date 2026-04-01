@@ -58,19 +58,15 @@ cd MTR
 
 For the CLI, no extra install step is needed beyond the prerequisites above.
 
-For the GUI, install the additional dependency:
-
-```bash
-pip install pyqt6
-```
-
 ## GUI
 
-A graphical front-end is available via `gui.py`. Launch it with:
+A graphical front-end is available via `launch.sh`. Launch it with:
 
 ```bash
-python gui.py
+./launch.sh
 ```
+
+If `uv` is not yet installed, the script will prompt you to install it first (one-time setup).
 
 It provides two tabs:
 

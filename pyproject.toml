@@ -1,0 +1,12 @@
+[project]
+name = "mtr"
+version = "0.1.0"
+description = "METIS Test Runner — GUI and CLI wrapper for end-to-end pipeline testing"
+requires-python = ">=3.10"
+dependencies = [
+    "PyQt6",
+    "PyYAML",
+]
+
+[dependency-groups]
+dev = ["pytest"]

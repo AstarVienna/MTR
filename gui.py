@@ -8,7 +8,6 @@ Two-tab graphical front-end:
 
 import os
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -27,7 +26,7 @@ from PyQt6.QtWidgets import (
 # ---------------------------------------------------------------------------
 
 REPO_ROOT   = Path(__file__).parent.resolve()
-META_PKG    = Path(os.environ.get("METIS_META_PKG", str(REPO_ROOT / "pipeline")))
+META_PKG    = Path(os.environ.get("METIS_META_PKG", str(REPO_ROOT / "metis-meta-package")))
 TARGET_A    = REPO_ROOT / "METIS_Pipeline"
 TARGET_B    = REPO_ROOT / "METIS_Simulations"
 REPO_A_URL  = "https://github.com/AstarVienna/METIS_Pipeline.git"
@@ -92,8 +91,7 @@ class InstallWorker(QThread):
 
     def run(self) -> None:
         try:
-            self._step("Checking for uv…")
-            self._ensure_uv()
+            META_PKG.mkdir(parents=True, exist_ok=True)
 
             self._step(f"Cloning / updating METIS_Pipeline  →  {TARGET_A}")
             self._clone_or_update(REPO_A_URL, TARGET_A)
@@ -101,8 +99,15 @@ class InstallWorker(QThread):
             self._step(f"Cloning / updating METIS_Simulations  →  {TARGET_B}")
             self._clone_or_update(REPO_B_URL, TARGET_B)
 
+            self._step(f"Writing {META_PKG / 'pyproject.toml'}…")
+            self._write_pyproject_toml()
+
             self._step("Installing Python dependencies (uv sync)…")
-            self._run(["uv", "sync", "--all-extras"], cwd=META_PKG)
+            recipe_dir = str(TARGET_A / "metisp" / "pyrecipes") + "/"
+            os.environ["PYCPL_RECIPE_DIR"] = recipe_dir
+            os.environ["PYESOREX_PLUGIN_DIR"] = recipe_dir
+            self.log.emit(f"Exported PYCPL_RECIPE_DIR={recipe_dir}\n", "")
+            self._run(["uv", "sync"], cwd=META_PKG)
 
             self._step("Writing .env…")
             self._write_env()
@@ -150,35 +155,6 @@ class InstallWorker(QThread):
                 f"Command exited {proc.returncode}: {' '.join(str(c) for c in cmd)}"
             )
 
-    def _ensure_uv(self) -> None:
-        if shutil.which("uv"):
-            self.log.emit("uv is already on PATH.\n", "")
-            return
-        self.log.emit("uv not found — downloading installer…\n", "")
-        curl = subprocess.run(
-            ["curl", "-LsSf", "https://astral.sh/uv/install.sh"],
-            capture_output=True,
-        )
-        if curl.returncode != 0:
-            raise RuntimeError("Failed to download the uv installer via curl.")
-        proc = subprocess.Popen(
-            ["sh"], stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-        )
-        out, _ = proc.communicate(input=curl.stdout.decode())
-        self.log.emit(out, "")
-        if proc.returncode != 0:
-            raise RuntimeError("uv installer script failed.")
-        # Make uv visible to subsequent calls in this process
-        env_script = Path.home() / ".local" / "bin" / "env"
-        if env_script.exists():
-            result = subprocess.run(
-                ["bash", "-c", f"source {env_script} && echo $PATH"],
-                capture_output=True, text=True,
-            )
-            if result.returncode == 0:
-                os.environ["PATH"] = result.stdout.strip()
-
     def _clone_or_update(self, url: str, target: Path) -> None:
         if (target / ".git").is_dir():
             self._run(["git", "-C", str(target), "fetch", "--all", "--prune"])
@@ -191,6 +167,32 @@ class InstallWorker(QThread):
             self.log.emit(f"⚠ {target} exists but is not a git repo — skipping.\n", "yellow")
         else:
             self._run(["git", "clone", "--depth", "1", url, str(target)])
+
+    def _write_pyproject_toml(self) -> None:
+        path = META_PKG / "pyproject.toml"
+        path.write_text(
+            "[project]\n"
+            'name = "metis-meta-package"\n'
+            'version = "0.1.0"\n'
+            'description = "Meta package for METIS Pipeline ESO stack"\n'
+            'requires-python = ">=3.11, <3.14"\n'
+            "dependencies = [\n"
+            '    "pycpl",\n'
+            '    "edps",\n'
+            '    "pyesorex",\n'
+            '    "adari_core",\n'
+            '    "scopesim",\n'
+            '    "scopesim_templates",\n'
+            "]\n"
+            "\n"
+            "[tool.uv]\n"
+            "package = false\n"
+            "extra-index-url = [\n"
+            '    "https://ivh.github.io/pycpl/simple/",\n'
+            '    "https://ftp.eso.org/pub/dfs/pipelines/libraries/",\n'
+            "]\n"
+        )
+        self.log.emit(f"Written {path}\n", "")
 
     def _init_edps(self) -> None:
         """Run edps once to generate ~/.edps/application.properties, then stop it.
@@ -263,7 +265,6 @@ class InstallTab(QWidget):
             "Otherwise, clicking <i>Install / Update</i> will perform the following "
             "steps:<br>"
             "<ol>"
-            "<li>Install <code>uv</code> if not already on PATH</li>"
             f"<li>Clone or update <b>METIS_Pipeline</b> and <b>METIS_Simulations</b> "
             f"into <code>{REPO_ROOT}</code></li>"
             "<li>Install all Python dependencies via <code>uv sync</code></li>"
