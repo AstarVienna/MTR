@@ -13,12 +13,12 @@ import sys
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QProcess, QSettings, QThread, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
+from PyQt6.QtGui import QColor, QFont, QPalette, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
-    QApplication, QButtonGroup, QCheckBox, QComboBox, QFileDialog,
-    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+    QAbstractSpinBox, QApplication, QButtonGroup, QCheckBox, QComboBox,
+    QFileDialog, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QMainWindow, QMessageBox, QPushButton, QRadioButton,
-    QSpinBox, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
+    QSpinBox, QTabBar, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
 # ---------------------------------------------------------------------------
@@ -32,7 +32,291 @@ TARGET_B    = REPO_ROOT / "METIS_Simulations"
 REPO_A_URL  = "https://github.com/AstarVienna/METIS_Pipeline.git"
 REPO_B_URL  = "https://github.com/AstarVienna/METIS_Simulations.git"
 
-LABEL_W = 190   # fixed label column width in the Run options form
+LABEL_W = 280   # fixed label column width in the Run options form
+
+# ---------------------------------------------------------------------------
+# Themes
+# ---------------------------------------------------------------------------
+
+THEMES: dict[str, dict[str, str]] = {
+    "dark": {
+        # Catppuccin Mocha-inspired
+        "window":         "#1e1e2e",
+        "window_text":    "#cdd6f4",
+        "base":           "#181825",
+        "alt_base":       "#313244",
+        "button":         "#313244",
+        "button_text":    "#cdd6f4",
+        "highlight":      "#89b4fa",
+        "highlight_text": "#1e1e2e",
+        "placeholder":    "#6c7086",
+        "tooltip_base":   "#313244",
+        "tooltip_text":   "#cdd6f4",
+        "border":         "#45475a",
+        "accent":         "#cba6f7",   # Mocha Mauve
+        "accent_dim":     "#7a6b9a",   # muted Mauve for scroll handles
+        "btn_success_bg": "#a6e3a1",   # Mocha Green
+        "btn_success_fg": "#1e1e2e",
+        "btn_danger_bg":  "#f38ba8",   # Mocha Red
+        "btn_danger_fg":  "#1e1e2e",
+        "btn_info_bg":    "#89b4fa",   # Mocha Blue
+        "btn_info_fg":    "#1e1e2e",
+        "log_green":      "#a6e3a1",
+        "log_red":        "#f38ba8",
+        "log_cyan":       "#94e2d5",
+        "log_yellow":     "#f9e2af",
+        "log_orange":     "#fab387",
+        "log_gray":       "#6c7086",
+        "log_default":    "#cdd6f4",
+    },
+    "light": {
+        # Catppuccin Latte-inspired
+        "window":         "#eff1f5",
+        "window_text":    "#4c4f69",
+        "base":           "#e6e9ef",
+        "alt_base":       "#dce0e8",
+        "button":         "#ddd9f5",   # lavender-tinted instead of cold gray
+        "button_text":    "#4c4f69",
+        "highlight":      "#7287fd",   # Latte Lavender (pastel, replaces bold blue)
+        "highlight_text": "#eff1f5",
+        "placeholder":    "#9ca0b0",
+        "tooltip_base":   "#ddd9f5",
+        "tooltip_text":   "#4c4f69",
+        "border":         "#bcc0cc",
+        "accent":         "#7287fd",   # Latte Lavender
+        "accent_dim":     "#b4b8f5",   # pale lilac for scroll handles
+        "btn_success_bg": "#b8e8b8",   # pastel green
+        "btn_success_fg": "#1e3a1e",
+        "btn_danger_bg":  "#f8b8c4",   # pastel red/pink
+        "btn_danger_fg":  "#3a1e24",
+        "btn_info_bg":    "#b8d0f8",   # pastel blue
+        "btn_info_fg":    "#1e2a4a",
+        "log_green":      "#40a02b",
+        "log_red":        "#d20f39",
+        "log_cyan":       "#179299",
+        "log_yellow":     "#df8e1d",
+        "log_orange":     "#fe640b",
+        "log_gray":       "#9ca0b0",
+        "log_default":    "#4c4f69",
+    },
+    "pink": {
+        # Catppuccin-flavoured deep magenta
+        "window":         "#1e1228",
+        "window_text":    "#f5d0fe",
+        "base":           "#160e1e",
+        "alt_base":       "#2d1a42",
+        "button":         "#3e2060",
+        "button_text":    "#f5d0fe",
+        "highlight":      "#e879f9",
+        "highlight_text": "#1e1228",
+        "placeholder":    "#9f6fb0",
+        "tooltip_base":   "#3e2060",
+        "tooltip_text":   "#f5d0fe",
+        "border":         "#5b3070",
+        "accent":         "#f5c2e7",   # Mocha Pink
+        "accent_dim":     "#9a6080",   # muted Pink for scroll handles
+        "btn_success_bg": "#a6e3a1",   # green (contrasts well against pink)
+        "btn_success_fg": "#1e1228",
+        "btn_danger_bg":  "#f38ba8",   # red-pink
+        "btn_danger_fg":  "#1e1228",
+        "btn_info_bg":    "#cba6f7",   # mauve/purple
+        "btn_info_fg":    "#1e1228",
+        "log_green":      "#a6e3a1",
+        "log_red":        "#f38ba8",
+        "log_cyan":       "#f5c2e7",
+        "log_yellow":     "#f9e2af",
+        "log_orange":     "#fab387",
+        "log_gray":       "#9f6fb0",
+        "log_default":    "#f5d0fe",
+    },
+}
+
+# Mutable mapping updated by apply_theme(); used by log_append()
+LOG_COLORS: dict[str, str] = {}
+
+
+def apply_theme(app: QApplication, name: str) -> None:
+    """Apply a named theme to the application (palette + stylesheet)."""
+    t = THEMES[name]
+    LOG_COLORS.update({k: t[k] for k in t if k.startswith("log_")})
+
+    app.setStyle("Fusion")
+
+    def c(key: str) -> QColor:
+        return QColor(t[key])
+
+    pal = QPalette()
+    pal.setColor(QPalette.ColorRole.Window,          c("window"))
+    pal.setColor(QPalette.ColorRole.WindowText,      c("window_text"))
+    pal.setColor(QPalette.ColorRole.Base,            c("base"))
+    pal.setColor(QPalette.ColorRole.AlternateBase,   c("alt_base"))
+    pal.setColor(QPalette.ColorRole.Button,          c("button"))
+    pal.setColor(QPalette.ColorRole.ButtonText,      c("button_text"))
+    pal.setColor(QPalette.ColorRole.Highlight,       c("highlight"))
+    pal.setColor(QPalette.ColorRole.HighlightedText, c("highlight_text"))
+    pal.setColor(QPalette.ColorRole.PlaceholderText, c("placeholder"))
+    pal.setColor(QPalette.ColorRole.ToolTipBase,     c("tooltip_base"))
+    pal.setColor(QPalette.ColorRole.ToolTipText,     c("tooltip_text"))
+    pal.setColor(QPalette.ColorRole.Text,            c("window_text"))
+    pal.setColor(QPalette.ColorRole.BrightText,      c("highlight"))
+    pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, c("placeholder"))
+    pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, c("placeholder"))
+    pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text,       c("placeholder"))
+    app.setPalette(pal)
+
+    brd        = t["border"]
+    hl         = t["highlight"]
+    win        = t["window"]
+    win_text   = t["window_text"]
+    alt        = t["alt_base"]
+    log_gray   = t["log_gray"]
+    accent     = t["accent"]
+    accent_dim = t["accent_dim"]
+    s_bg  = t["btn_success_bg"];  s_fg  = t["btn_success_fg"]
+    d_bg  = t["btn_danger_bg"];   d_fg  = t["btn_danger_fg"]
+    i_bg  = t["btn_info_bg"];     i_fg  = t["btn_info_fg"]
+    # hover colours: slightly darker for light theme, lighter for dark/pink
+    _shift = (lambda col: QColor(col).darker(110).name()) if name == "light" \
+             else (lambda col: QColor(col).lighter(118).name())
+    s_hov = _shift(s_bg); d_hov = _shift(d_bg)
+    i_hov = _shift(i_bg); a_hov = _shift(accent)
+    a_fg           = t["highlight_text"]   # accent-role button uses highlight_text
+    highlight_text = a_fg
+
+    app.setStyleSheet(f"""
+        QGroupBox {{
+            border: 1px solid {brd};
+            border-radius: 6px;
+            margin-top: 10px;
+            padding-top: 4px;
+            font-weight: bold;
+        }}
+        QGroupBox::title {{
+            color: {accent};
+            subcontrol-origin: margin;
+            left: 10px;
+            padding: 0 4px;
+        }}
+        QTabWidget::pane {{
+            border: 1px solid {brd};
+        }}
+        QTabBar::tab {{
+            padding: 8px 0;
+            min-width: 0;
+            border: 1px solid {accent_dim};
+            border-bottom: none;
+            border-top-left-radius: 6px;
+            border-top-right-radius: 6px;
+        }}
+        QTabBar::tab:selected {{
+            background: {win};
+            color: {accent};
+            border-color: {accent};
+            border-top: 3px solid {accent};
+        }}
+        QTabBar::tab:hover:!selected {{
+            background: {alt};
+            border-color: {accent};
+        }}
+        QLineEdit:focus, QTextEdit:focus {{
+            border: 1px solid {hl};
+        }}
+        QScrollBar::handle:vertical, QScrollBar::handle:horizontal {{
+            background: {accent_dim};
+            border-radius: 5px;
+            min-height: 20px;
+            min-width: 20px;
+        }}
+        QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {{
+            background: {accent};
+        }}
+        QLabel[hint="true"] {{
+            color: {log_gray};
+            font-size: 10px;
+        }}
+        QComboBox {{
+            border: 1px solid {accent_dim};
+            border-radius: 6px;
+            padding: 3px 8px;
+            background-color: {alt};
+            color: {win_text};
+            min-height: 22px;
+        }}
+        QComboBox:focus {{
+            border-color: {hl};
+        }}
+        QComboBox::drop-down {{
+            border: none;
+            width: 20px;
+        }}
+        QComboBox QAbstractItemView {{
+            border: 1px solid {accent_dim};
+            background-color: {alt};
+            color: {win_text};
+            selection-background-color: {hl};
+            selection-color: {highlight_text};
+            outline: none;
+            padding: 2px;
+        }}
+        QComboBox QAbstractItemView::item {{
+            color: {win_text};
+            background-color: {alt};
+            padding: 4px 8px;
+        }}
+        QComboBox QAbstractItemView::item:selected {{
+            background-color: {hl};
+            color: {highlight_text};
+        }}
+        QToolBar {{
+            border: none;
+            border-bottom: 1px solid {brd};
+            spacing: 4px;
+            padding: 2px 6px;
+        }}
+        QPushButton {{
+            border: none;
+            border-radius: 8px;
+            padding: 5px 16px;
+            min-height: 24px;
+            font-weight: 500;
+        }}
+        QPushButton:disabled {{
+            opacity: 0.45;
+        }}
+        QPushButton[role="success"] {{
+            background-color: {s_bg}; color: {s_fg};
+        }}
+        QPushButton[role="success"]:hover {{
+            background-color: {s_hov};
+        }}
+        QPushButton[role="danger"] {{
+            background-color: {d_bg}; color: {d_fg};
+        }}
+        QPushButton[role="danger"]:hover {{
+            background-color: {d_hov};
+        }}
+        QPushButton[role="info"] {{
+            background-color: {i_bg}; color: {i_fg};
+        }}
+        QPushButton[role="info"]:hover {{
+            background-color: {i_hov};
+        }}
+        QPushButton[role="accent"] {{
+            background-color: {accent}; color: {a_fg};
+        }}
+        QPushButton[role="accent"]:hover {{
+            background-color: {a_hov};
+        }}
+        QPushButton[role="browse"] {{
+            background-color: transparent;
+            border: 1px solid {accent_dim};
+            color: {accent};
+        }}
+        QPushButton[role="browse"]:hover {{
+            border-color: {accent};
+            background-color: {alt};
+        }}
+    """)
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +329,8 @@ def log_append(widget: QTextEdit, text: str, color: str | None = None) -> None:
     cursor.movePosition(QTextCursor.MoveOperation.End)
     fmt = QTextCharFormat()
     if color:
-        fmt.setForeground(QColor(color))
+        resolved = LOG_COLORS.get(f"log_{color}", color)
+        fmt.setForeground(QColor(resolved))
     cursor.setCharFormat(fmt)
     cursor.insertText(text)
     widget.setTextCursor(cursor)
@@ -59,6 +344,7 @@ def _labeled(label_text: str, *content_widgets) -> QWidget:
     h.setContentsMargins(0, 0, 0, 0)
     lbl = QLabel(label_text)
     lbl.setFixedWidth(LABEL_W)
+    lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
     h.addWidget(lbl)
     for w in content_widgets:
         h.addWidget(w)
@@ -68,6 +354,7 @@ def _labeled(label_text: str, *content_widgets) -> QWidget:
 def _dir_picker(edit: QLineEdit, parent: QWidget) -> QPushButton:
     """Wire up a Browse button for a directory edit; return the button."""
     btn = QPushButton("Browse…")
+    btn.setProperty("role", "browse")
     btn.clicked.connect(
         lambda: edit.setText(
             QFileDialog.getExistingDirectory(parent, "Select directory", str(REPO_ROOT))
@@ -278,6 +565,7 @@ class InstallTab(QWidget):
         layout.addWidget(desc)
 
         self.install_btn = QPushButton("Install / Update")
+        self.install_btn.setProperty("role", "success")
         self.install_btn.setMinimumHeight(36)
         self.install_btn.setMaximumWidth(200)
         self.install_btn.clicked.connect(self._start)
@@ -331,8 +619,10 @@ class RunTab(QWidget):
         file_row.addWidget(self.yaml_list)
         btn_col = QVBoxLayout()
         add_btn = QPushButton("Add…")
+        add_btn.setProperty("role", "info")
         add_btn.clicked.connect(self._add_yaml)
         remove_btn = QPushButton("Remove")
+        remove_btn.setProperty("role", "danger")
         remove_btn.clicked.connect(self._remove_yaml)
         btn_col.addWidget(add_btn)
         btn_col.addWidget(remove_btn)
@@ -344,7 +634,8 @@ class RunTab(QWidget):
         # ── Options ──
         opts_grp = QGroupBox("Options")
         opts_lay = QVBoxLayout(opts_grp)
-        opts_lay.setSpacing(6)
+        opts_lay.setSpacing(10)
+        opts_lay.setContentsMargins(9, 9, 9, 12)
 
         # Output directory
         self.output_edit = QLineEdit()
@@ -355,7 +646,7 @@ class RunTab(QWidget):
 
         # Output path info hint
         self.output_info = QLabel()
-        self.output_info.setStyleSheet("color: gray; font-size: 10px;")
+        self.output_info.setProperty("hint", "true")
         info_row = QWidget()
         info_h = QHBoxLayout(info_row)
         info_h.setContentsMargins(0, 0, 0, 0)
@@ -384,7 +675,14 @@ class RunTab(QWidget):
         self.cores_spin.setRange(1, os.cpu_count() or 16)
         self.cores_spin.setValue(4)
         self.cores_spin.setMaximumWidth(70)
+        self.cores_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.PlusMinus)
         opts_lay.addWidget(_labeled("CPU cores  (--cores):", self.cores_spin))
+
+        # Runner
+        self.runner_combo = QComboBox()
+        self.runner_combo.addItems(["metapkg", "native", "docker", "podman"])
+        self.runner_combo.setMaximumWidth(130)
+        opts_lay.addWidget(_labeled("Runner  (--runner):", self.runner_combo))
 
         # Pipeline mode
         mode_row = QWidget()
@@ -418,13 +716,6 @@ class RunTab(QWidget):
         for rb in (self.rb_both, self.rb_sim_only, self.rb_pipe_only):
             rb.toggled.connect(self._update_mode_fields)
 
-        # Runner
-        self.runner_combo = QComboBox()
-        self.runner_combo.addItems(["metapkg", "native", "docker", "podman"])
-        self.runner_combo.setMaximumWidth(130)
-        self.runner_combo.currentTextChanged.connect(self._update_runner_fields)
-        opts_lay.addWidget(_labeled("Runner  (--runner):", self.runner_combo))
-
         # Container name  [docker / podman only]
         self.container_edit = QLineEdit()
         self.container_edit.setPlaceholderText("e.g. metis-pipeline")
@@ -437,6 +728,8 @@ class RunTab(QWidget):
         self.meta_pkg_edit.setPlaceholderText(str(META_PKG))
         self.meta_pkg_row = _labeled("Meta-package dir  (--meta-pkg):", self.meta_pkg_edit, meta_browse)
         opts_lay.addWidget(self.meta_pkg_row)
+        # Connect runner signal now that container_row and meta_pkg_row exist
+        self.runner_combo.currentTextChanged.connect(self._update_runner_fields)
 
         # Simulations dir  [always visible]
         self.sim_dir_edit = QLineEdit()
@@ -454,10 +747,12 @@ class RunTab(QWidget):
         # ── Run / Stop ──
         run_row = QHBoxLayout()
         self.run_btn = QPushButton("Run")
+        self.run_btn.setProperty("role", "success")
         self.run_btn.setMinimumHeight(36)
         self.run_btn.setMaximumWidth(120)
         self.run_btn.clicked.connect(self._run)
         self.stop_btn = QPushButton("Stop")
+        self.stop_btn.setProperty("role", "danger")
         self.stop_btn.setMinimumHeight(36)
         self.stop_btn.setMaximumWidth(120)
         self.stop_btn.setEnabled(False)
@@ -649,22 +944,76 @@ class RunTab(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+class _ExpandingTabBar(QTabBar):
+    """Tab bar that divides its width equally among all tabs, overriding QSS."""
+
+    def tabSizeHint(self, index: int):
+        hint = super().tabSizeHint(index)
+        count = self.count()
+        w = self.width()
+        if w == 0 and self.parent():
+            w = self.parent().width()
+        if count > 0 and w > 0:
+            hint.setWidth(w // count)
+        return hint
+
+    def minimumTabSizeHint(self, index: int):
+        hint = super().minimumTabSizeHint(index)
+        hint.setWidth(0)
+        return hint
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update()
+
+
+# ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
 
 class MainWindow(QMainWindow):
 
-    def __init__(self) -> None:
+    def __init__(self, initial_theme: str = "dark") -> None:
         super().__init__()
         self.setWindowTitle("METIS Test Runner")
         self.resize(900, 720)
 
+        self._current_theme = initial_theme
+        self._home_dark = initial_theme  # "dark" or "pink" — the base non-light theme
+
+        toolbar = self.addToolBar("Theme")
+        toolbar.setMovable(False)
+        toolbar.setFloatable(False)
+        self._theme_btn = QPushButton()
+        self._theme_btn.setProperty("role", "accent")
+        toolbar.addWidget(self._theme_btn)
+        self._theme_btn.clicked.connect(self._toggle_theme)
+        self._update_theme_btn_label()
+
         tabs = QTabWidget()
-        tabs.setStyleSheet("QTabBar::tab { min-width: 440px; }")
+        tabs.setTabBar(_ExpandingTabBar())
+        tabs.tabBar().setUsesScrollButtons(False)
         self._run_tab = RunTab()
         tabs.addTab(self._run_tab, "Run")
         tabs.addTab(InstallTab(), "Install")
         self.setCentralWidget(tabs)
+
+    def _update_theme_btn_label(self) -> None:
+        if self._current_theme == "light":
+            self._theme_btn.setText("Dark theme")
+        else:
+            self._theme_btn.setText("Light theme")
+
+    def _toggle_theme(self) -> None:
+        if self._current_theme == "light":
+            self._current_theme = self._home_dark
+        else:
+            self._current_theme = "light"
+        apply_theme(QApplication.instance(), self._current_theme)
+        self._update_theme_btn_label()
 
     def closeEvent(self, event) -> None:
         self._run_tab._save_settings()
@@ -676,9 +1025,13 @@ class MainWindow(QMainWindow):
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    app = QApplication(sys.argv)
+    pink = "--pink" in sys.argv
+    argv = [a for a in sys.argv if a != "--pink"]
+    app = QApplication(argv)
     app.setApplicationName("METIS Test Runner")
-    win = MainWindow()
+    initial = "pink" if pink else "dark"
+    apply_theme(app, initial)
+    win = MainWindow(initial_theme=initial)
     win.show()
     sys.exit(app.exec())
 
