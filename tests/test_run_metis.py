@@ -553,6 +553,21 @@ class TestBuildSimScript:
         assert "/fake/METIS_Simulations" in script
         assert 'sys.path.insert(0, "python")' not in script
 
+    def test_script_sets_scipy_datasets_dir(self):
+        # metis_simulations.sources calls scipy.datasets.face() at import
+        # time, which writes to ~/.cache/scipy-data. On read-only home
+        # environments this raises PermissionError; the generated script
+        # must redirect the cache to a writable temp location before the
+        # metis_simulations import.
+        script = _build_sim_script(**self._base_kwargs)
+        assert "SCIPY_DATASETS_DIR" in script
+        assert "setdefault" in script
+        # Must precede the metis_simulations import or the env var has no
+        # effect on the eager scipy.datasets.face() call.
+        assert script.index("SCIPY_DATASETS_DIR") < script.index(
+            "from metis_simulations"
+        )
+
 
 # ---------------------------------------------------------------------------
 # _edps_base_cmd and _edps_cwd

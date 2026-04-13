@@ -395,6 +395,14 @@ def _build_sim_script(out_dir, do_calib, n_cores, yaml_list,
     lines = [
         "import sys",
         "import os as _os",
+        "import tempfile as _tempfile",
+        # Redirect scipy's pooch-backed datasets cache to a guaranteed-writable
+        # path; some environments (CI, sandboxed users) have a read-only
+        # ~/.cache. metis_simulations.sources calls scipy.datasets.face() at
+        # import time, which would otherwise fail with PermissionError.
+        "_os.environ.setdefault("
+        "'SCIPY_DATASETS_DIR', "
+        "_os.path.join(_tempfile.gettempdir(), 'scipy-data'))",
         f"sys.path.insert(0, {path_entry!r})",
         "",
     ]

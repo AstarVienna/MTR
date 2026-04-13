@@ -4,7 +4,8 @@ version = "0.1.0"
 description = "METIS Test Runner — GUI and CLI wrapper for end-to-end pipeline testing"
 requires-python = ">=3.10"
 dependencies = [
-    "PyQt6",
+    "PyQt6==6.6.0",
+    "Pyqt6-Qt6==6.6.0",
     "PyYAML",
 ]
 

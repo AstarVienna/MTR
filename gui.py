@@ -12,7 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QProcess, QSettings, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QProcess, QSettings, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QPalette, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
     QAbstractSpinBox, QApplication, QButtonGroup, QCheckBox, QComboBox,
@@ -450,7 +450,16 @@ class InstallWorker(QThread):
             )
             self.log.emit(result.stdout + result.stderr, "")
         elif target.is_dir():
-            self.log.emit(f"⚠ {target} exists but is not a git repo — skipping.\n", "yellow")
+            # Directory exists but is not a git repo. If it's empty (a common
+            # leftover from an aborted previous install) we can safely clone
+            # into it. Otherwise refuse — silently skipping would leave the
+            # rest of the install referencing a non-existent checkout.
+            if any(target.iterdir()):
+                raise RuntimeError(
+                    f"{target} exists but is not a git repo and is not empty. "
+                    f"Remove or rename it and re-run the install."
+                )
+            self._run(["git", "clone", "--depth", "1", url, str(target)])
         else:
             self._run(["git", "clone", "--depth", "1", url, str(target)])
 
@@ -467,8 +476,8 @@ class InstallWorker(QThread):
             '    "edps",\n'
             '    "pyesorex",\n'
             '    "adari_core",\n'
-            '    "scopesim",\n'
-            '    "scopesim_templates",\n'
+            '    "scopesim==0.11.2",\n'
+            '    "scopesim_templates==0.8.1",\n'
             '    "pyyaml",\n'
             "]\n"
             "\n"
@@ -1037,13 +1046,18 @@ class MainWindow(QMainWindow):
 
 def main() -> None:
     pink = "--pink" in sys.argv
-    argv = [a for a in sys.argv if a != "--pink"]
+    smoke_test = "--smoke-test" in sys.argv or os.environ.get("SMOKE_TEST")
+    argv = [a for a in sys.argv if a not in ("--pink", "--smoke-test")]
     app = QApplication(argv)
     app.setApplicationName("METIS Test Runner")
     initial = "pink" if pink else "dark"
     apply_theme(app, initial)
     win = MainWindow(initial_theme=initial)
     win.show()
+    if smoke_test:
+        # CI smoke test: exit cleanly once the event loop has started, so we
+        # exercise imports + Qt init + window construction without blocking.
+        QTimer.singleShot(0, app.quit)
     sys.exit(app.exec())
 
 

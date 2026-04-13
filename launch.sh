@@ -5,6 +5,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 _run_gui() {
     cd "$SCRIPT_DIR"
+    if [[ -n "${SMOKE_TEST:-}" ]]; then
+        exec uv run gui.py --smoke-test
+    fi
     exec uv run gui.py
 }
 
