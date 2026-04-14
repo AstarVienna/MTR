@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """gui.py — METIS Test Runner GUI
 
-Two-tab graphical front-end:
+Three-tab graphical front-end:
   Install  — runs the metis-meta-package bootstrap steps non-interactively
   Run      — wraps run_metis.py with a file-picker and options UI
+  Archive  — manage Podman-based archive stack and upload/download FITS files
 """
 
 import os
@@ -17,8 +18,9 @@ from PyQt6.QtGui import QColor, QFont, QPalette, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
     QAbstractSpinBox, QApplication, QButtonGroup, QCheckBox, QComboBox,
     QFileDialog, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-    QMainWindow, QMessageBox, QPushButton, QRadioButton,
-    QSpinBox, QTabBar, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
+    QMainWindow, QMessageBox, QProgressBar, QPushButton, QRadioButton,
+    QSpinBox, QStackedWidget, QTabBar, QTabWidget, QTextEdit, QVBoxLayout,
+    QWidget,
 )
 
 # ---------------------------------------------------------------------------
@@ -540,6 +542,10 @@ class InstallWorker(QThread):
             "port":         (r"^port=.*",         "port=4444"),
             "workflow_dir": (r"^workflow_dir=.*", f"workflow_dir={TARGET_A}/metisp/workflows"),
             "esorex_path":  (r"^esorex_path=.*",  "esorex_path=pyesorex"),
+            "association_preference": (
+                r"^association_preference=.*",
+                "association_preference=master_per_quality_level",
+            ),
         }
         for key, (pattern, replacement) in patches.items():
             text, count = re.subn(pattern, replacement, text, flags=re.MULTILINE)
@@ -615,7 +621,7 @@ class InstallTab(QWidget):
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setFont(QFont("Monospace", 9))
-        layout.addWidget(self.log_view)
+        layout.addWidget(self.log_view, stretch=1)
 
     def _start(self) -> None:
         self.log_view.clear()
@@ -627,6 +633,515 @@ class InstallTab(QWidget):
 
     def _on_done(self, success: bool) -> None:
         self.install_btn.setEnabled(True)
+
+
+# ---------------------------------------------------------------------------
+# Archive workers (background threads)
+# ---------------------------------------------------------------------------
+
+class PodmanInstallWorker(QThread):
+    """Install Podman via the system package manager."""
+
+    log  = pyqtSignal(str, str)
+    done = pyqtSignal(bool)
+
+    def __init__(self, distro_id: str) -> None:
+        super().__init__()
+        self._distro_id = distro_id
+
+    def run(self) -> None:
+        from archive import install_podman_commands
+        try:
+            cmds = install_podman_commands(self._distro_id)
+            for cmd in cmds:
+                self.log.emit(f"$ {' '.join(cmd)}\n", "cyan")
+                proc = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True,
+                )
+                for line in iter(proc.stdout.readline, ""):
+                    self.log.emit(line, "")
+                proc.wait()
+                if proc.returncode != 0:
+                    self.log.emit(
+                        f"\n✗ Install failed (exit code {proc.returncode}).\n",
+                        "red",
+                    )
+                    self.done.emit(False)
+                    return
+            self.log.emit("\n✓ Podman installed successfully.\n", "green")
+            self.done.emit(True)
+        except Exception as exc:
+            self.log.emit(f"\n✗ Failed: {exc}\n", "red")
+            self.done.emit(False)
+
+
+class ArchiveImageBuildWorker(QThread):
+    """Build the minimal archive container image."""
+
+    log  = pyqtSignal(str, str)
+    done = pyqtSignal(bool)
+
+    def __init__(self, credentials: str) -> None:
+        super().__init__()
+        self._credentials = credentials
+
+    def run(self) -> None:
+        from archive import build_archive_image, ARCHIVE_COMPOSE_DIR
+        try:
+            self.log.emit("Building archive image…\n", "")
+            rc = build_archive_image(
+                compose_dir=ARCHIVE_COMPOSE_DIR,
+                credentials=self._credentials,
+                on_output=lambda line: self.log.emit(line, ""),
+            )
+            if rc == 0:
+                self.log.emit("\n✓ Image built successfully.\n", "green")
+                self.done.emit(True)
+            else:
+                self.log.emit(f"\n✗ Build failed (exit code {rc}).\n", "red")
+                self.done.emit(False)
+        except Exception as exc:
+            self.log.emit(f"\n✗ Failed: {exc}\n", "red")
+            self.done.emit(False)
+
+
+class ArchiveStackWorker(QThread):
+    """Start or stop the archive container stack."""
+
+    log  = pyqtSignal(str, str)
+    done = pyqtSignal(bool)
+
+    def __init__(self, action: str) -> None:
+        super().__init__()
+        self._action = action  # "up" or "down"
+
+    def run(self) -> None:
+        from archive import archive_stack_up, archive_stack_down, ARCHIVE_COMPOSE_DIR
+        try:
+            if self._action == "up":
+                self.log.emit("Starting archive stack…\n", "")
+                result = archive_stack_up(ARCHIVE_COMPOSE_DIR)
+            else:
+                self.log.emit("Stopping archive stack…\n", "")
+                result = archive_stack_down(ARCHIVE_COMPOSE_DIR)
+            if result.stdout:
+                self.log.emit(result.stdout, "")
+            if result.stderr:
+                self.log.emit(result.stderr, "orange")
+            if result.returncode == 0:
+                verb = "started" if self._action == "up" else "stopped"
+                self.log.emit(f"\n✓ Archive stack {verb}.\n", "green")
+                self.done.emit(True)
+            else:
+                self.log.emit(f"\n✗ Failed (exit code {result.returncode}).\n", "red")
+                self.done.emit(False)
+        except Exception as exc:
+            self.log.emit(f"\n✗ Failed: {exc}\n", "red")
+            self.done.emit(False)
+
+
+class UploadWorker(QThread):
+    """Upload FITS files to the archive."""
+
+    log      = pyqtSignal(str, str)
+    progress = pyqtSignal(int, int)
+    done     = pyqtSignal(bool)
+
+    def __init__(self, files: list[Path]) -> None:
+        super().__init__()
+        self._files = files
+
+    def run(self) -> None:
+        from archive import upload_files, ARCHIVE_COMPOSE_DIR
+        try:
+            total = len(self._files)
+            count = [0]
+
+            def on_log(msg: str) -> None:
+                self.log.emit(msg + "\n", "")
+                if msg.startswith("["):
+                    try:
+                        idx = int(msg.split("/")[0].strip("["))
+                        self.progress.emit(idx, total)
+                    except (ValueError, IndexError):
+                        pass
+                    count[0] += 1
+
+            ingested = upload_files(self._files, ARCHIVE_COMPOSE_DIR, on_log=on_log)
+            self.log.emit(
+                f"\n✓ Uploaded {len(ingested)}/{total} file(s).\n", "green",
+            )
+            self.done.emit(True)
+        except Exception as exc:
+            self.log.emit(f"\n✗ Upload failed: {exc}\n", "red")
+            self.done.emit(False)
+
+
+class DownloadWorker(QThread):
+    """Download files from the archive."""
+
+    log      = pyqtSignal(str, str)
+    progress = pyqtSignal(int, int)
+    done     = pyqtSignal(bool)
+
+    def __init__(self, filenames: list[str], dest_dir: Path) -> None:
+        super().__init__()
+        self._filenames = filenames
+        self._dest_dir = dest_dir
+
+    def run(self) -> None:
+        from archive import download_file, ARCHIVE_COMPOSE_DIR
+        try:
+            total = len(self._filenames)
+            downloaded = 0
+            for i, fn in enumerate(self._filenames, 1):
+                self.progress.emit(i, total)
+                path = download_file(
+                    fn, self._dest_dir, ARCHIVE_COMPOSE_DIR,
+                    on_log=lambda msg: self.log.emit(msg + "\n", ""),
+                )
+                if path:
+                    downloaded += 1
+            self.log.emit(
+                f"\n✓ Downloaded {downloaded}/{total} file(s).\n", "green",
+            )
+            self.done.emit(True)
+        except Exception as exc:
+            self.log.emit(f"\n✗ Download failed: {exc}\n", "red")
+            self.done.emit(False)
+
+
+# ---------------------------------------------------------------------------
+# Archive tab
+# ---------------------------------------------------------------------------
+
+class ArchiveTab(QWidget):
+    """Third tab: manage the Podman archive stack and upload/download FITS."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._settings = QSettings("METIS", "TestRunner")
+        self._worker: QThread | None = None
+        self._build_ui()
+        self._load_settings()
+        self._check_state()
+
+    # ── UI construction ─────────────────────────────────────────────────────
+
+    def _build_ui(self) -> None:
+        outer = QVBoxLayout(self)
+        outer.setSpacing(14)
+        outer.setContentsMargins(20, 20, 20, 20)
+
+        self._stack = QStackedWidget()
+        outer.addWidget(self._stack)
+
+        # ── Page 0: Podman not installed ────────────────────────────────────
+        page0 = QWidget()
+        lay0 = QVBoxLayout(page0)
+        lay0.setSpacing(12)
+        desc0 = QLabel(
+            "<b>Archive Integration</b><br><br>"
+            "The archive requires <b>Podman</b> and <b>podman-compose</b> to "
+            "run a local data server in containers.<br><br>"
+            "Podman does not appear to be installed on this system."
+        )
+        desc0.setWordWrap(True)
+        desc0.setTextFormat(Qt.TextFormat.RichText)
+        lay0.addWidget(desc0)
+
+        self._os_label = QLabel()
+        self._os_label.setProperty("hint", "true")
+        lay0.addWidget(self._os_label)
+
+        self._install_podman_btn = QPushButton("Install Podman")
+        self._install_podman_btn.setProperty("role", "success")
+        self._install_podman_btn.setMinimumHeight(36)
+        self._install_podman_btn.setMaximumWidth(200)
+        self._install_podman_btn.clicked.connect(self._on_install_podman)
+        lay0.addWidget(self._install_podman_btn)
+
+        self._log0 = QTextEdit()
+        self._log0.setReadOnly(True)
+        self._log0.setFont(QFont("Monospace", 9))
+        lay0.addWidget(self._log0, stretch=1)
+        self._stack.addWidget(page0)
+
+        # ── Page 1: Stack management + archive operations ───────────────────
+        page1 = QWidget()
+        lay1 = QVBoxLayout(page1)
+        lay1.setSpacing(10)
+
+        desc1 = QLabel(
+            "<b>Archive Integration</b><br><br>"
+            "Manage the local archive stack and upload/download FITS files."
+        )
+        desc1.setWordWrap(True)
+        desc1.setTextFormat(Qt.TextFormat.RichText)
+        lay1.addWidget(desc1)
+
+        # -- Image build section --
+        img_grp = QGroupBox("Container Image")
+        img_lay = QVBoxLayout(img_grp)
+        img_lay.setSpacing(8)
+        img_info = QLabel(
+            "A container image is required before starting the stack. "
+            "Enter your OmegaCEN credentials to build it."
+        )
+        img_info.setWordWrap(True)
+        img_lay.addWidget(img_info)
+        cred_row = QWidget()
+        cred_h = QHBoxLayout(cred_row)
+        cred_h.setContentsMargins(0, 0, 0, 0)
+        cred_h.addWidget(QLabel("Credentials (user:pass):"))
+        self._cred_edit = QLineEdit()
+        self._cred_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._cred_edit.setPlaceholderText("username:password")
+        cred_h.addWidget(self._cred_edit)
+        img_lay.addWidget(cred_row)
+        self._build_img_btn = QPushButton("Build Image")
+        self._build_img_btn.setProperty("role", "info")
+        self._build_img_btn.setMinimumHeight(32)
+        self._build_img_btn.setMaximumWidth(160)
+        self._build_img_btn.clicked.connect(self._on_build_image)
+        img_lay.addWidget(self._build_img_btn)
+        self._img_status = QLabel()
+        self._img_status.setProperty("hint", "true")
+        img_lay.addWidget(self._img_status)
+        lay1.addWidget(img_grp)
+
+        # -- Stack control --
+        stack_grp = QGroupBox("Archive Stack")
+        stack_lay = QHBoxLayout(stack_grp)
+        self._start_btn = QPushButton("Start Stack")
+        self._start_btn.setProperty("role", "success")
+        self._start_btn.setMinimumHeight(32)
+        self._start_btn.clicked.connect(lambda: self._on_stack_action("up"))
+        self._stop_btn = QPushButton("Stop Stack")
+        self._stop_btn.setProperty("role", "danger")
+        self._stop_btn.setMinimumHeight(32)
+        self._stop_btn.clicked.connect(lambda: self._on_stack_action("down"))
+        self._stack_status = QLabel("Status: unknown")
+        stack_lay.addWidget(self._start_btn)
+        stack_lay.addWidget(self._stop_btn)
+        stack_lay.addWidget(self._stack_status)
+        stack_lay.addStretch()
+        lay1.addWidget(stack_grp)
+
+        # -- Upload section --
+        up_grp = QGroupBox("Upload FITS to Archive")
+        up_lay = QVBoxLayout(up_grp)
+        up_row = QHBoxLayout()
+        self._upload_list = QListWidget()
+        self._upload_list.setMaximumHeight(100)
+        up_row.addWidget(self._upload_list)
+        up_btns = QVBoxLayout()
+        add_btn = QPushButton("Add Files…")
+        add_btn.setProperty("role", "info")
+        add_btn.clicked.connect(self._on_add_upload_files)
+        clear_btn = QPushButton("Clear")
+        clear_btn.setProperty("role", "danger")
+        clear_btn.clicked.connect(self._upload_list.clear)
+        up_btns.addWidget(add_btn)
+        up_btns.addWidget(clear_btn)
+        up_btns.addStretch()
+        up_row.addLayout(up_btns)
+        up_lay.addLayout(up_row)
+        self._upload_btn = QPushButton("Upload to Archive")
+        self._upload_btn.setProperty("role", "success")
+        self._upload_btn.setMinimumHeight(32)
+        self._upload_btn.setMaximumWidth(200)
+        self._upload_btn.clicked.connect(self._on_upload)
+        up_lay.addWidget(self._upload_btn)
+        lay1.addWidget(up_grp)
+
+        # -- Download section --
+        dl_grp = QGroupBox("Download from Archive")
+        dl_lay = QVBoxLayout(dl_grp)
+        dl_top = QHBoxLayout()
+        self._archive_list = QListWidget()
+        self._archive_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self._archive_list.setMaximumHeight(100)
+        dl_top.addWidget(self._archive_list)
+        dl_btns = QVBoxLayout()
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.setProperty("role", "info")
+        refresh_btn.clicked.connect(self._on_refresh_archive)
+        dl_btns.addWidget(refresh_btn)
+        dl_btns.addStretch()
+        dl_top.addLayout(dl_btns)
+        dl_lay.addLayout(dl_top)
+        dl_row = QHBoxLayout()
+        self._download_btn = QPushButton("Download Selected")
+        self._download_btn.setProperty("role", "success")
+        self._download_btn.setMinimumHeight(32)
+        self._download_btn.setMaximumWidth(200)
+        self._download_btn.clicked.connect(self._on_download)
+        dl_row.addWidget(self._download_btn)
+        dl_row.addStretch()
+        dl_lay.addLayout(dl_row)
+        lay1.addWidget(dl_grp)
+
+        # -- Log view --
+        self._log1 = QTextEdit()
+        self._log1.setReadOnly(True)
+        self._log1.setFont(QFont("Monospace", 9))
+        lay1.addWidget(self._log1, stretch=1)
+        self._stack.addWidget(page1)
+
+    # ── State management ────────────────────────────────────────────────────
+
+    def _check_state(self) -> None:
+        """Determine which page to show based on Podman availability."""
+        from archive import podman_available, podman_compose_available, detect_os
+
+        os_family, distro_id = detect_os()
+        self._distro_id = distro_id
+        self._os_label.setText(f"Detected OS: {os_family} / {distro_id}")
+
+        if podman_available() and podman_compose_available():
+            self._stack.setCurrentIndex(1)
+            self._update_image_status()
+            self._update_stack_status()
+        else:
+            self._stack.setCurrentIndex(0)
+
+    def _update_image_status(self) -> None:
+        from archive import archive_image_exists
+        if archive_image_exists():
+            self._img_status.setText("✓ Image found")
+            self._build_img_btn.setText("Rebuild Image")
+        else:
+            self._img_status.setText("Image not built yet")
+
+    def _update_stack_status(self) -> None:
+        from archive import archive_stack_status, ARCHIVE_COMPOSE_DIR
+        status = archive_stack_status(ARCHIVE_COMPOSE_DIR)
+        if status:
+            parts = [f"{svc}: {st}" for svc, st in status.items()]
+            self._stack_status.setText("Status: " + ", ".join(parts))
+        else:
+            self._stack_status.setText("Status: not running")
+
+    # ── Podman install ──────────────────────────────────────────────────────
+
+    def _on_install_podman(self) -> None:
+        self._log0.clear()
+        self._install_podman_btn.setEnabled(False)
+        self._worker = PodmanInstallWorker(self._distro_id)
+        self._worker.log.connect(lambda t, c: log_append(self._log0, t, c))
+        self._worker.done.connect(self._on_podman_installed)
+        self._worker.start()
+
+    def _on_podman_installed(self, success: bool) -> None:
+        self._install_podman_btn.setEnabled(True)
+        if success:
+            self._check_state()
+
+    # ── Image build ─────────────────────────────────────────────────────────
+
+    def _on_build_image(self) -> None:
+        creds = self._cred_edit.text().strip()
+        if not creds:
+            QMessageBox.warning(
+                self, "Missing credentials",
+                "Enter OmegaCEN credentials (username:password) to build the image.",
+            )
+            return
+        self._log1.clear()
+        self._build_img_btn.setEnabled(False)
+        self._worker = ArchiveImageBuildWorker(creds)
+        self._worker.log.connect(lambda t, c: log_append(self._log1, t, c))
+        self._worker.done.connect(self._on_image_built)
+        self._worker.start()
+
+    def _on_image_built(self, success: bool) -> None:
+        self._build_img_btn.setEnabled(True)
+        self._update_image_status()
+
+    # ── Stack control ───────────────────────────────────────────────────────
+
+    def _on_stack_action(self, action: str) -> None:
+        self._log1.clear()
+        self._start_btn.setEnabled(False)
+        self._stop_btn.setEnabled(False)
+        self._worker = ArchiveStackWorker(action)
+        self._worker.log.connect(lambda t, c: log_append(self._log1, t, c))
+        self._worker.done.connect(self._on_stack_done)
+        self._worker.start()
+
+    def _on_stack_done(self, success: bool) -> None:
+        self._start_btn.setEnabled(True)
+        self._stop_btn.setEnabled(True)
+        self._update_stack_status()
+
+    # ── Upload ──────────────────────────────────────────────────────────────
+
+    def _on_add_upload_files(self) -> None:
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Select FITS files", str(REPO_ROOT), "FITS files (*.fits)",
+        )
+        existing = {
+            self._upload_list.item(i).text()
+            for i in range(self._upload_list.count())
+        }
+        for f in files:
+            if f not in existing:
+                self._upload_list.addItem(f)
+
+    def _on_upload(self) -> None:
+        if self._upload_list.count() == 0:
+            QMessageBox.warning(self, "No files", "Add FITS files to upload.")
+            return
+        files = [
+            Path(self._upload_list.item(i).text())
+            for i in range(self._upload_list.count())
+        ]
+        self._upload_btn.setEnabled(False)
+        self._worker = UploadWorker(files)
+        self._worker.log.connect(lambda t, c: log_append(self._log1, t, c))
+        self._worker.done.connect(lambda _ok: self._upload_btn.setEnabled(True))
+        self._worker.start()
+
+    # ── Download ────────────────────────────────────────────────────────────
+
+    def _on_refresh_archive(self) -> None:
+        from archive import query_archive, ARCHIVE_COMPOSE_DIR
+        self._archive_list.clear()
+        log_append(self._log1, "Querying archive…\n", "cyan")
+        items = query_archive(compose_dir=ARCHIVE_COMPOSE_DIR,
+                              on_log=lambda msg: log_append(self._log1, msg + "\n", ""))
+        for it in items:
+            label = it.get("filename", "?")
+            catg = it.get("pro_catg", "")
+            if catg:
+                label += f"  [{catg}]"
+            self._archive_list.addItem(label)
+        log_append(self._log1, f"Found {len(items)} item(s).\n", "green")
+
+    def _on_download(self) -> None:
+        selected = self._archive_list.selectedItems()
+        if not selected:
+            QMessageBox.warning(self, "No selection", "Select files to download.")
+            return
+        dest = QFileDialog.getExistingDirectory(self, "Download destination", str(REPO_ROOT))
+        if not dest:
+            return
+        filenames = [item.text().split("  [")[0] for item in selected]
+        self._download_btn.setEnabled(False)
+        self._worker = DownloadWorker(filenames, Path(dest))
+        self._worker.log.connect(lambda t, c: log_append(self._log1, t, c))
+        self._worker.done.connect(lambda _ok: self._download_btn.setEnabled(True))
+        self._worker.start()
+
+    # ── Settings ────────────────────────────────────────────────────────────
+
+    def _load_settings(self) -> None:
+        self._cred_edit.setText(self._settings.value("archive_cred", ""))
+
+    def _save_settings(self) -> None:
+        self._settings.setValue("archive_cred", self._cred_edit.text())
 
 
 # ---------------------------------------------------------------------------
@@ -711,6 +1226,20 @@ class RunTab(QWidget):
         cb_h.addWidget(self.calib_cb)
         cb_h.addStretch()
         opts_lay.addWidget(cb_row)
+
+        # Auto-fetch calibrations checkbox
+        af_row = QWidget()
+        af_h = QHBoxLayout(af_row)
+        af_h.setContentsMargins(0, 0, 0, 0)
+        af_lbl = QLabel("")
+        af_lbl.setFixedWidth(LABEL_W)
+        af_h.addWidget(af_lbl)
+        self.auto_fetch_cb = QCheckBox(
+            "Auto-fetch missing calibrations from archive  (--auto-fetch-calibrations)"
+        )
+        af_h.addWidget(self.auto_fetch_cb)
+        af_h.addStretch()
+        opts_lay.addWidget(af_row)
 
         # Cores
         self.cores_spin = QSpinBox()
@@ -806,7 +1335,7 @@ class RunTab(QWidget):
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setFont(QFont("Monospace", 9))
-        outer.addWidget(self.log_view)
+        outer.addWidget(self.log_view, stretch=1)
 
     # ── Output path info ─────────────────────────────────────────────────────
 
@@ -894,6 +1423,8 @@ class RunTab(QWidget):
             args += ["--simulations-dir", self.sim_dir_edit.text().strip()]
         if self.inst_edit.text().strip():
             args += ["--inst-pkgs", self.inst_edit.text().strip()]
+        if self.auto_fetch_cb.isChecked():
+            args.append("--auto-fetch-calibrations")
 
         for i in range(self.yaml_list.count()):
             args.append(self.yaml_list.item(i).text())
@@ -973,6 +1504,7 @@ class RunTab(QWidget):
         self.meta_pkg_edit.setText(s.value("meta_pkg", ""))
         self.sim_dir_edit.setText(s.value("sim_dir", ""))
         self.inst_edit.setText(s.value("inst_pkgs", ""))
+        self.auto_fetch_cb.setChecked(s.value("auto_fetch", False, type=bool))
         self.pipeline_input_edit.setText(s.value("pipeline_input", ""))
         for f in (s.value("yaml_files") or []):
             self.yaml_list.addItem(f)
@@ -993,6 +1525,7 @@ class RunTab(QWidget):
         s.setValue("meta_pkg", self.meta_pkg_edit.text())
         s.setValue("sim_dir", self.sim_dir_edit.text())
         s.setValue("inst_pkgs", self.inst_edit.text())
+        s.setValue("auto_fetch", self.auto_fetch_cb.isChecked())
         s.setValue("pipeline_input", self.pipeline_input_edit.text())
         s.setValue("yaml_files", [
             self.yaml_list.item(i).text() for i in range(self.yaml_list.count())
@@ -1036,7 +1569,7 @@ class MainWindow(QMainWindow):
     def __init__(self, initial_theme: str = "dark") -> None:
         super().__init__()
         self.setWindowTitle("METIS Test Runner")
-        self.resize(900, 720)
+        self.resize(1000, 900)
 
         self._current_theme = initial_theme
         self._home_dark = initial_theme  # "dark" or "pink" — the base non-light theme
@@ -1054,8 +1587,10 @@ class MainWindow(QMainWindow):
         tabs.setTabBar(_ExpandingTabBar())
         tabs.tabBar().setUsesScrollButtons(False)
         self._run_tab = RunTab()
+        self._archive_tab = ArchiveTab()
         tabs.addTab(self._run_tab, "Run")
         tabs.addTab(InstallTab(), "Install")
+        tabs.addTab(self._archive_tab, "Archive")
         self.setCentralWidget(tabs)
 
     def _update_theme_btn_label(self) -> None:
@@ -1074,6 +1609,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self._run_tab._save_settings()
+        self._archive_tab._save_settings()
         super().closeEvent(event)
 
 

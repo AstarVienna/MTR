@@ -33,6 +33,7 @@ If any block has catg="SCIENCE", the pipeline is run with -m science.
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -572,6 +573,38 @@ def _edps_cwd(runner, meta_pkg=None):
 
 
 # ---------------------------------------------------------------------------
+# EDPS association_preference runtime override
+# ---------------------------------------------------------------------------
+
+def _set_association_preference(value: str) -> str | None:
+    """Patch ``association_preference`` in ``~/.edps/application.properties``.
+
+    Returns the original value so it can be restored, or ``None`` if the
+    file doesn't exist (no patching needed).
+    """
+    props = Path.home() / ".edps" / "application.properties"
+    if not props.exists():
+        return None
+    text = props.read_text()
+    match = re.search(r"^association_preference=(.*)$", text, re.MULTILINE)
+    original = match.group(1) if match else None
+    new_text = re.sub(
+        r"^association_preference=.*",
+        f"association_preference={value}",
+        text,
+        flags=re.MULTILINE,
+    )
+    props.write_text(new_text)
+    return original
+
+
+def _restore_association_preference(original: str | None) -> None:
+    """Restore the original ``association_preference`` value."""
+    if original is not None:
+        _set_association_preference(original)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -648,6 +681,25 @@ def parse_args():
              "there on first use. "
              "For docker/podman runners supply the container-internal path; "
              "if omitted ScopeSim resolves ./inst_pkgs inside the container.",
+    )
+    p.add_argument(
+        "--auto-fetch-calibrations", action="store_true",
+        help="Automatically download missing master calibration files from "
+             "the archive data server before running the pipeline. "
+             "Requires the archive stack to be running (see Archive tab).",
+    )
+    p.add_argument(
+        "--archive-host", default="localhost",
+        help="Archive data server hostname [default: localhost]",
+    )
+    p.add_argument(
+        "--archive-port", type=int, default=8013,
+        help="Archive data server port [default: 8013]",
+    )
+    p.add_argument(
+        "--prefer-masters", action="store_true",
+        help="Set EDPS association_preference to 'master_per_quality_level' "
+             "for this run, preferring master calibrations over reduced raw data.",
     )
     return p.parse_args()
 
@@ -796,6 +848,33 @@ def main():
             sys.exit(f"Error: simulation step failed (exit code {rc}).")
 
     # -----------------------------------------------------------------------
+    # Step 1.5: Auto-fetch missing master calibrations (optional)
+    # -----------------------------------------------------------------------
+    if not args.no_pipeline and args.auto_fetch_calibrations:
+        from archive import fetch_missing_calibrations, ARCHIVE_COMPOSE_DIR
+
+        fetch_tags = yaml_tags
+        if args.no_sim:
+            fetch_tags = yaml_tags | collect_tags_from_fits(sim_out)
+
+        print("=== Checking for missing calibrations ===")
+        try:
+            fetched = fetch_missing_calibrations(
+                workflow=workflow,
+                data_tags=fetch_tags,
+                has_science=has_science,
+                dest_dir=sim_out,
+                compose_dir=ARCHIVE_COMPOSE_DIR,
+                on_log=lambda msg: print(f"  {msg}"),
+            )
+            if fetched:
+                print(f"  Downloaded {len(fetched)} master calibration file(s)")
+            else:
+                print("  No missing calibrations to fetch")
+        except Exception as exc:
+            print(f"  Warning: auto-fetch failed ({exc}); continuing without")
+
+    # -----------------------------------------------------------------------
     # Step 2: EDPS pipeline
     # -----------------------------------------------------------------------
     if not args.no_pipeline:
@@ -831,12 +910,19 @@ def main():
         if runner not in ("docker", "podman"):
             edps_cwd = str(pipe_out)
 
+        # If --prefer-masters, temporarily patch EDPS config
+        original_pref = None
+        if args.prefer_masters:
+            print("  Overriding association_preference → master_per_quality_level")
+            original_pref = _set_association_preference("master_per_quality_level")
+
         # Warm up: start the EDPS server and confirm it is ready before
         # submitting the reduction job.
         print("=== Starting EDPS server ===")
         print("=== Listing Workflows    ===")
         rc = subprocess.run(edps_cmd + ["-lw"], cwd=edps_cwd).returncode
         if rc != 0:
+            _restore_association_preference(original_pref)
             sys.exit(f"Error: EDPS server failed to start (exit code {rc}).")
 
         pipeline_rc = 1
@@ -854,6 +940,7 @@ def main():
             print("=== Stopping EDPS server ===")
             subprocess.run(edps_cmd + ["-s"], cwd=edps_cwd,
                            capture_output=True, timeout=15)
+            _restore_association_preference(original_pref)
         if pipeline_rc != 0:
             sys.exit(f"Error: pipeline step failed (exit code {pipeline_rc}).")
 

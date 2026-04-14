@@ -22,6 +22,9 @@ logs/
 uv-cache/
 EDPS_data/
 
+# Archive stack runtime data
+archive_stack/space/
+
 # Claude Code internal files
 .claude/
 

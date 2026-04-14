@@ -3,11 +3,12 @@ Unit tests for gui.py.
 
 Covers:
   - append_log helper
-  - MainWindow / tab construction
+  - MainWindow / tab construction (3 tabs: Run, Install, Archive)
   - Runner-dependent field visibility
-  - _build_cmd_args argument construction
-  - InstallWorker._patch_edps_config regex patching
+  - _build_cmd_args argument construction (including auto-fetch flag)
+  - InstallWorker._patch_edps_config regex patching (including association_preference)
   - InstallWorker._write_env file content
+  - ArchiveTab construction
 
 All tests run with QT_QPA_PLATFORM=offscreen (set in conftest.py) so no
 display is required.
@@ -75,13 +76,13 @@ class TestWindowConstruction:
         assert win is not None
         win.close()
 
-    def test_window_has_two_tabs(self, qapp):
+    def test_window_has_three_tabs(self, qapp):
         from PyQt6.QtWidgets import QTabWidget
         from gui import MainWindow
         win = MainWindow()
         tabs = win.findChild(QTabWidget)
         assert tabs is not None
-        assert tabs.count() == 2
+        assert tabs.count() == 3
         win.close()
 
     def test_tab_labels(self, qapp):
@@ -92,6 +93,7 @@ class TestWindowConstruction:
         labels = [tabs.tabText(i) for i in range(tabs.count())]
         assert "Install" in labels
         assert "Run" in labels
+        assert "Archive" in labels
         win.close()
 
 
@@ -301,9 +303,12 @@ class TestBuildCmdArgs:
 # ---------------------------------------------------------------------------
 
 class TestPatchEdpsConfig:
-    # All three keys must be present for _patch_edps_config to succeed — it
+    # All four keys must be present for _patch_edps_config to succeed — it
     # raises if any pattern matches zero times.
-    FULL_PROPS = "port=5000\nworkflow_dir=/old\nesorex_path=esorex\n"
+    FULL_PROPS = (
+        "port=5000\nworkflow_dir=/old\nesorex_path=esorex\n"
+        "association_preference=raw_per_quality_level\n"
+    )
 
     def _make_worker(self, qapp):
         from gui import InstallWorker
@@ -339,7 +344,8 @@ class TestPatchEdpsConfig:
         props = self._seed(
             tmp_path,
             "port=5000\nsome.other.key=value\n"
-            "workflow_dir=/old\nesorex_path=esorex\n",
+            "workflow_dir=/old\nesorex_path=esorex\n"
+            "association_preference=raw_per_quality_level\n",
         )
         self._make_worker(qapp)._patch_edps_config()
         assert "some.other.key=value" in props.read_text()
@@ -359,17 +365,29 @@ class TestPatchEdpsConfig:
         assert "esorex_path=pyesorex" in content
         assert "workflow_dir=/old" not in content
 
+    def test_patches_association_preference(self, qapp, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        props = self._seed(tmp_path, self.FULL_PROPS)
+        self._make_worker(qapp)._patch_edps_config()
+        assert "association_preference=master_per_quality_level" in props.read_text()
+
     def test_raises_when_port_key_absent(self, qapp, tmp_path, monkeypatch):
         # If EDPS drifts its config format, we want a loud error that names
         # the missing key, not a silent no-op that rewrites the file unchanged.
         monkeypatch.setenv("HOME", str(tmp_path))
-        self._seed(tmp_path, "workflow_dir=/old\nesorex_path=esorex\n")
+        self._seed(
+            tmp_path,
+            "workflow_dir=/old\nesorex_path=esorex\nassociation_preference=raw\n",
+        )
         with pytest.raises(RuntimeError, match="port"):
             self._make_worker(qapp)._patch_edps_config()
 
     def test_raises_when_workflow_dir_key_absent(self, qapp, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
-        self._seed(tmp_path, "port=5000\nesorex_path=esorex\n")
+        self._seed(
+            tmp_path,
+            "port=5000\nesorex_path=esorex\nassociation_preference=raw\n",
+        )
         with pytest.raises(RuntimeError, match="workflow_dir"):
             self._make_worker(qapp)._patch_edps_config()
 
@@ -447,3 +465,46 @@ class TestCloneOrUpdateSubmodule:
         assert invoked, "_clone_or_update should have called _run for fetch"
         assert "fetch" in invoked[0]
         # Did not raise the "not a git repo and is not empty" error.
+
+
+# ---------------------------------------------------------------------------
+# Auto-fetch checkbox in RunTab
+# ---------------------------------------------------------------------------
+
+class TestAutoFetchCheckbox:
+    def test_auto_fetch_flag_when_checked(self, qapp):
+        tab = _make_run_tab(qapp)
+        tab.yaml_list.addItem("obs.yaml")
+        tab.auto_fetch_cb.setChecked(True)
+        args = tab._build_cmd_args()
+        assert "--auto-fetch-calibrations" in args
+
+    def test_auto_fetch_flag_absent_when_unchecked(self, qapp):
+        tab = _make_run_tab(qapp)
+        tab.yaml_list.addItem("obs.yaml")
+        tab.auto_fetch_cb.setChecked(False)
+        args = tab._build_cmd_args()
+        assert "--auto-fetch-calibrations" not in args
+
+    def test_auto_fetch_unchecked_by_default(self, qapp):
+        tab = _make_run_tab(qapp)
+        assert not tab.auto_fetch_cb.isChecked()
+
+
+# ---------------------------------------------------------------------------
+# ArchiveTab construction
+# ---------------------------------------------------------------------------
+
+class TestArchiveTab:
+    def test_archive_tab_creates(self, qapp):
+        from gui import ArchiveTab
+        tab = ArchiveTab()
+        assert tab is not None
+
+    def test_archive_tab_has_stacked_widget(self, qapp):
+        from PyQt6.QtWidgets import QStackedWidget
+        from gui import ArchiveTab
+        tab = ArchiveTab()
+        stack = tab.findChild(QStackedWidget)
+        assert stack is not None
+        assert stack.count() == 2
