@@ -696,17 +696,31 @@ def _get_task_chain(workflow: str) -> list[tuple[str, str, str | None]]:
     return WORKFLOW_TASK_CHAIN.get(workflow, [])
 
 
+def _task_covered(task_name: str, raw_tag: str, data_tags: set[str]) -> bool:
+    """Return True if *task_name* is satisfied by files the user already has.
+
+    A task is covered when either its raw-input classification tag or its
+    master ``PRO.CATG`` appears in *data_tags*.  This lets pre-computed
+    master files on disk short-circuit an archive download.
+    """
+    if raw_tag in data_tags:
+        return True
+    pro_catg = TASK_TO_MASTER_PROCATG.get(task_name)
+    return bool(pro_catg and pro_catg in data_tags)
+
+
 def identify_missing_calibrations(
     workflow: str,
     data_tags: set[str],
     has_science: bool,
 ) -> list[tuple[str, str]]:
-    """Identify master calibrations needed but not available as raw data.
+    """Identify master calibrations needed but not available locally.
 
-    Walks the ``WORKFLOW_TASK_CHAIN`` for *workflow*.  For each non-science
-    task whose raw-input classification tag is **not** in *data_tags* but
-    which is upstream of a task that **is**, its master product category is
-    returned.
+    Walks the ``WORKFLOW_TASK_CHAIN`` for *workflow*.  A task is considered
+    covered when either its raw-input classification tag or its master
+    ``PRO.CATG`` is present in *data_tags*.  For each non-science task that
+    is **not** covered but is upstream of one that **is**, the master product
+    category is returned.
 
     Returns a list of ``(task_name, master_pro_catg)`` pairs.
     """
@@ -714,26 +728,26 @@ def identify_missing_calibrations(
     if not chain:
         return []
 
-    # Find the deepest task whose raw tag IS present (the target).
+    # Find the deepest task that is covered (the target).
     deepest_present_idx = -1
-    for idx, (_task, tag, meta) in enumerate(chain):
+    for idx, (task_name, tag, meta) in enumerate(chain):
         if meta == "science":
             continue
-        if tag in data_tags:
+        if _task_covered(task_name, tag, data_tags):
             deepest_present_idx = idx
 
     if deepest_present_idx < 0:
         return []
 
-    # All tasks upstream of (and including) the deepest present task
-    # whose raw tag is NOT present need their master products.
+    # All tasks upstream of (and including) the deepest covered task
+    # that are NOT themselves covered need their master products.
     missing: list[tuple[str, str]] = []
     for idx, (task_name, tag, meta) in enumerate(chain):
         if idx > deepest_present_idx:
             break
         if meta == "science":
             continue
-        if tag not in data_tags:
+        if not _task_covered(task_name, tag, data_tags):
             pro_catg = TASK_TO_MASTER_PROCATG.get(task_name)
             if pro_catg:
                 missing.append((task_name, pro_catg))

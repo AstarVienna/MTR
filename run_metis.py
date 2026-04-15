@@ -300,9 +300,13 @@ def infer_workflow(yaml_files):
 def collect_tags_from_fits(fits_dir):
     """Return the set of EDPS classification tags present in a FITS directory.
 
-    Reads ``HIERARCH ESO DPR CATG/TYPE/TECH`` from each ``.fits`` file and
-    maps the triple to a tag name via ``DPR_TO_TAG``.  Files whose headers
-    don't match any known rule are silently skipped.  Requires astropy.
+    For each ``.fits`` file, reads ``HIERARCH ESO DPR CATG/TYPE/TECH`` and
+    maps the triple to a raw-file tag name via ``DPR_TO_TAG``.  If no DPR
+    headers are present, falls back to ``HIERARCH ESO PRO CATG`` and adds
+    that value as-is (e.g. ``MASTER_DARK_2RG``).  This lets pre-computed
+    master calibration files register as "covered" for downstream gap
+    detection.  Files whose headers don't match any known rule are silently
+    skipped.  Requires astropy.
     """
     try:
         from astropy.io import fits as afits
@@ -317,10 +321,13 @@ def collect_tags_from_fits(fits_dir):
                 catg = hdr.get("HIERARCH ESO DPR CATG", "").strip()
                 typ  = hdr.get("HIERARCH ESO DPR TYPE", "").strip()
                 tech = hdr.get("HIERARCH ESO DPR TECH", "").strip()
+                pro_catg = hdr.get("HIERARCH ESO PRO CATG", "").strip()
             if catg:
                 tag = DPR_TO_TAG.get((catg, typ, tech))
                 if tag:
                     tags.add(tag)
+            elif pro_catg:
+                tags.add(pro_catg)
         except Exception:
             continue
     return tags

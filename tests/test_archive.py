@@ -274,6 +274,53 @@ class TestIdentifyMissingCalibrations:
         assert "metis_lm_img_basic_reduce_sci" not in task_names
         assert "metis_lm_img_basic_reduce_std" not in task_names
 
+    def test_master_pro_catg_covers_task(self):
+        # User has flat raw + master dark + master linearity: nothing to fetch
+        missing = archive.identify_missing_calibrations(
+            "metis.metis_lm_img_wkf",
+            data_tags={"LM_FLAT_LAMP_RAW", "MASTER_DARK_2RG", "LINEARITY_2RG"},
+            has_science=False,
+        )
+        assert missing == []
+
+    def test_master_fills_partial_gap(self):
+        # Flat raw + master dark, but no linearity master or raw — only
+        # lingain should still be listed as missing.
+        missing = archive.identify_missing_calibrations(
+            "metis.metis_lm_img_wkf",
+            data_tags={"LM_FLAT_LAMP_RAW", "MASTER_DARK_2RG"},
+            has_science=False,
+        )
+        task_names = [t for t, _ in missing]
+        assert task_names == ["metis_lm_img_lingain"]
+        assert missing == [("metis_lm_img_lingain", "LINEARITY_2RG")]
+
+    def test_only_masters_no_raw(self):
+        # All-masters coverage up through flat: flat is the deepest covered
+        # task (via its PRO.CATG), and dark + lingain are also covered.
+        missing = archive.identify_missing_calibrations(
+            "metis.metis_lm_img_wkf",
+            data_tags={
+                "MASTER_DARK_2RG",
+                "LINEARITY_2RG",
+                "MASTER_IMG_FLAT_LAMP_LM",
+            },
+            has_science=False,
+        )
+        assert missing == []
+
+    def test_raw_and_master_same_task(self):
+        # Providing both the raw and the master for dark must not confuse
+        # the gap walk — lingain is still missing.
+        missing = archive.identify_missing_calibrations(
+            "metis.metis_lm_img_wkf",
+            data_tags={"DARK_2RG_RAW", "MASTER_DARK_2RG"},
+            has_science=False,
+        )
+        task_names = [t for t, _ in missing]
+        assert task_names == ["metis_lm_img_lingain"]
+        assert "metis_lm_img_dark" not in task_names
+
 
 # ---------------------------------------------------------------------------
 # Archive image check
