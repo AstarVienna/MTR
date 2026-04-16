@@ -151,6 +151,36 @@ THEMES: dict[str, dict[str, str]] = {
         "log_gray":       "#9f6fb0",
         "log_default":    "#f5d0fe",
     },
+    "pink_light": {
+        # Soft pastel pink — light counterpart to "pink", centred on #FFD7EE
+        "window":         "#fff4f9",
+        "window_text":    "#5c3a4e",
+        "base":           "#ffe8f2",
+        "alt_base":       "#ffd7ee",
+        "button":         "#ffd7ee",
+        "button_text":    "#5c3a4e",
+        "highlight":      "#f06292",
+        "highlight_text": "#fff4f9",
+        "placeholder":    "#c9a0b4",
+        "tooltip_base":   "#ffd7ee",
+        "tooltip_text":   "#5c3a4e",
+        "border":         "#e8b8d0",
+        "accent":         "#f06292",
+        "accent_dim":     "#f8bbd0",
+        "btn_success_bg": "#c8e6c9",   # pastel green
+        "btn_success_fg": "#2e4830",
+        "btn_danger_bg":  "#f8b8c4",   # pastel red-pink
+        "btn_danger_fg":  "#4a1e28",
+        "btn_info_bg":    "#f8bbd0",   # pastel pink
+        "btn_info_fg":    "#4a1e30",
+        "log_green":      "#2e7d32",
+        "log_red":        "#c62828",
+        "log_cyan":       "#00838f",
+        "log_yellow":     "#f57f17",
+        "log_orange":     "#e65100",
+        "log_gray":       "#c9a0b4",
+        "log_default":    "#5c3a4e",
+    },
 }
 
 # Mutable mapping updated by apply_theme(); used by log_append()
@@ -197,8 +227,8 @@ def apply_theme(app: QApplication, name: str) -> None:
     s_bg  = t["btn_success_bg"];  s_fg  = t["btn_success_fg"]
     d_bg  = t["btn_danger_bg"];   d_fg  = t["btn_danger_fg"]
     i_bg  = t["btn_info_bg"];     i_fg  = t["btn_info_fg"]
-    # hover colours: slightly darker for light theme, lighter for dark/pink
-    _shift = (lambda col: QColor(col).darker(110).name()) if name == "light" \
+    # hover colours: slightly darker for light themes, lighter for dark/pink
+    _shift = (lambda col: QColor(col).darker(110).name()) if name in ("light", "pink_light") \
              else (lambda col: QColor(col).lighter(118).name())
     s_hov = _shift(s_bg); d_hov = _shift(d_bg)
     i_hov = _shift(i_bg); a_hov = _shift(accent)
@@ -1526,6 +1556,7 @@ class MainWindow(QMainWindow):
 
         self._current_theme = initial_theme
         self._home_dark = initial_theme  # "dark" or "pink" — the base non-light theme
+        self._home_light = "pink_light" if initial_theme == "pink" else "light"
 
         toolbar = self.addToolBar("Theme")
         toolbar.setMovable(False)
@@ -1547,16 +1578,16 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(tabs)
 
     def _update_theme_btn_label(self) -> None:
-        if self._current_theme == "light":
+        if self._current_theme in ("light", "pink_light"):
             self._theme_btn.setText("Dark theme")
         else:
             self._theme_btn.setText("Light theme")
 
     def _toggle_theme(self) -> None:
-        if self._current_theme == "light":
+        if self._current_theme in ("light", "pink_light"):
             self._current_theme = self._home_dark
         else:
-            self._current_theme = "light"
+            self._current_theme = self._home_light
         apply_theme(QApplication.instance(), self._current_theme)
         self._update_theme_btn_label()
 
