@@ -415,6 +415,9 @@ class InstallWorker(QThread):
             self._step("Writing .env…")
             self._write_env()
 
+            self._step("Checking for existing EDPS configuration…")
+            self._backup_edps_config()
+
             self._step("Initialising EDPS…")
             self._init_edps()
 
@@ -482,6 +485,17 @@ class InstallWorker(QThread):
             self._run(["git", "clone", "--depth", "1", url, str(target)])
         else:
             self._run(["git", "clone", "--depth", "1", url, str(target)])
+
+    def _backup_edps_config(self) -> None:
+        """If an existing application.properties exists, back it up."""
+        props = Path.home() / ".edps" / "application.properties"
+        if props.exists():
+            backup = props.with_name("application.properties_backup")
+            props.rename(backup)
+            self.log.emit(
+                f"Existing {props} found — backed up to {backup}\n",
+                "yellow",
+            )
 
     def _init_edps(self) -> None:
         """Run edps once to generate ~/.edps/application.properties, then stop it.

@@ -415,6 +415,47 @@ class TestPatchEdpsConfig:
 
 
 # ---------------------------------------------------------------------------
+# InstallWorker._backup_edps_config
+# ---------------------------------------------------------------------------
+
+class TestBackupEdpsConfig:
+    def _make_worker(self, qapp):
+        from gui import InstallWorker
+        return InstallWorker()
+
+    def _seed(self, tmp_path, content):
+        edps = tmp_path / ".edps"
+        edps.mkdir()
+        props = edps / "application.properties"
+        props.write_text(content)
+        return props
+
+    def test_backs_up_existing_config(self, qapp, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        props = self._seed(tmp_path, "port=5000\n")
+        self._make_worker(qapp)._backup_edps_config()
+        assert not props.exists()
+        backup = props.with_name("application.properties_backup")
+        assert backup.exists()
+        assert backup.read_text() == "port=5000\n"
+
+    def test_noop_when_no_config(self, qapp, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        self._make_worker(qapp)._backup_edps_config()
+        edps = tmp_path / ".edps"
+        assert not edps.exists()
+
+    def test_overwrites_previous_backup(self, qapp, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        props = self._seed(tmp_path, "port=9999\n")
+        old_backup = props.with_name("application.properties_backup")
+        old_backup.write_text("port=1111\n")
+        self._make_worker(qapp)._backup_edps_config()
+        assert not props.exists()
+        assert old_backup.read_text() == "port=9999\n"
+
+
+# ---------------------------------------------------------------------------
 # InstallWorker._write_env
 # ---------------------------------------------------------------------------
 
