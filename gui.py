@@ -400,22 +400,17 @@ class InstallWorker(QThread):
 
     def run(self) -> None:
         try:
-            META_PKG.mkdir(parents=True, exist_ok=True)
-
             self._step(f"Cloning / updating METIS_Pipeline  →  {TARGET_A}")
             self._clone_or_update(REPO_A_URL, TARGET_A)
 
             self._step(f"Cloning / updating METIS_Simulations  →  {TARGET_B}")
             self._clone_or_update(REPO_B_URL, TARGET_B)
 
-            self._step(f"Writing {META_PKG / 'pyproject.toml'}…")
-            self._write_pyproject_toml()
-
-            self._step("Installing Python dependencies (uv sync)…")
+            self._step("Installing Python dependencies (uv sync --group pipeline)…")
             recipe_dir = str(TARGET_A / "metisp" / "pyrecipes") + "/"
             os.environ["PYCPL_RECIPE_DIR"] = recipe_dir
             os.environ["PYESOREX_PLUGIN_DIR"] = recipe_dir
-            self._run(["uv", "sync"], cwd=META_PKG)
+            self._run(["uv", "sync", "--group", "pipeline"], cwd=REPO_ROOT)
 
             self._step("Writing .env…")
             self._write_env()
@@ -488,33 +483,6 @@ class InstallWorker(QThread):
         else:
             self._run(["git", "clone", "--depth", "1", url, str(target)])
 
-    def _write_pyproject_toml(self) -> None:
-        path = META_PKG / "pyproject.toml"
-        path.write_text(
-            "[project]\n"
-            'name = "metis-meta-package"\n'
-            'version = "0.1.0"\n'
-            'description = "Meta package for METIS Pipeline ESO stack"\n'
-            'requires-python = ">=3.11, <3.14"\n'
-            "dependencies = [\n"
-            '    "pycpl==1.0.3.post9",\n'
-            '    "edps",\n'
-            '    "pyesorex",\n'
-            '    "adari_core",\n'
-            '    "scopesim==0.11.2",\n'
-            '    "scopesim_templates==0.8.1",\n'
-            '    "pyyaml",\n'
-            "]\n"
-            "\n"
-            "[tool.uv]\n"
-            "package = false\n"
-            "extra-index-url = [\n"
-            '    "https://ivh.github.io/pycpl/simple/",\n'
-            '    "https://ftp.eso.org/pub/dfs/pipelines/libraries/",\n'
-            "]\n"
-        )
-        self.log.emit(f"Written {path}\n", "")
-
     def _init_edps(self) -> None:
         """Run edps once to generate ~/.edps/application.properties, then stop it.
 
@@ -522,12 +490,13 @@ class InstallWorker(QThread):
         to accept the default.  After edps daemonises the process exits, then we
         issue -s to stop the background server.
         """
-        env_file = META_PKG / ".env"
-        base = ["uv", "run", "--env-file", str(env_file), "edps", "-P", "4444"]
+        env_file = REPO_ROOT / ".env"
+        base = ["uv", "run", "--no-sync", "--env-file", str(env_file),
+                "edps", "-P", "4444"]
         try:
-            self._run(base, cwd=META_PKG, stdin_text="\n", timeout=60)
+            self._run(base, cwd=REPO_ROOT, stdin_text="\n", timeout=60)
         finally:
-            subprocess.run(base + ["-s"], cwd=str(META_PKG),
+            subprocess.run(base + ["-s"], cwd=str(REPO_ROOT),
                            capture_output=True, timeout=15,
                            env=_child_env())
 
@@ -558,7 +527,7 @@ class InstallWorker(QThread):
         self.log.emit(f"Patched {props}\n", "")
 
     def _write_env(self) -> None:
-        env_path = META_PKG / ".env"
+        env_path = REPO_ROOT / ".env"
         env_path.write_text(
             f"PYTHONPATH={TARGET_B}:{TARGET_A}/metisp/pymetis/src/\n"
             f"PYCPL_RECIPE_DIR={TARGET_A}/metisp/pyrecipes/\n"
@@ -601,8 +570,8 @@ class InstallTab(QWidget):
             "<ol>"
             f"<li>Clone or update <b>METIS_Pipeline</b> and <b>METIS_Simulations</b> "
             f"into <code>{REPO_ROOT}</code></li>"
-            "<li>Install all Python dependencies via <code>uv sync</code></li>"
-            f"<li>Write <code>{META_PKG / '.env'}</code></li>"
+            "<li>Install all Python dependencies via <code>uv sync --group pipeline</code></li>"
+            f"<li>Write <code>{REPO_ROOT / '.env'}</code></li>"
             "<li>Initialise and configure EDPS on port 4444</li>"
             "</ol>"
             "Re-running is safe — existing repositories will be updated, not re-cloned."
@@ -1423,7 +1392,13 @@ class RunTab(QWidget):
         if runner in ("docker", "podman") and self.container_edit.text().strip():
             args += ["--container", self.container_edit.text().strip()]
         if runner == "metapkg":
-            args += ["--meta-pkg", self.meta_pkg_edit.text().strip() or str(META_PKG)]
+            if (REPO_ROOT / ".env").exists():
+                meta_pkg_dir = str(REPO_ROOT)
+            elif self.meta_pkg_edit.text().strip():
+                meta_pkg_dir = self.meta_pkg_edit.text().strip()
+            else:
+                meta_pkg_dir = str(META_PKG)
+            args += ["--meta-pkg", meta_pkg_dir]
         if self.sim_dir_edit.text().strip():
             args += ["--simulations-dir", self.sim_dir_edit.text().strip()]
         if self.inst_edit.text().strip():
@@ -1461,7 +1436,9 @@ class RunTab(QWidget):
             qenv.insert(k, v)
         self._process.setProcessEnvironment(qenv)
 
-        venv_python = META_PKG / ".venv" / "bin" / "python3"
+        venv_python = REPO_ROOT / ".venv" / "bin" / "python3"
+        if not venv_python.exists():
+            venv_python = META_PKG / ".venv" / "bin" / "python3"
         python_exe = str(venv_python) if venv_python.exists() else sys.executable
         log_append(self.log_view, f"$ {python_exe} {script} {' '.join(args)}\n\n", "cyan")
         self._process.start(python_exe, ["-u", script] + args)

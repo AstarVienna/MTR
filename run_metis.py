@@ -415,6 +415,11 @@ def _build_sim_script(out_dir, do_calib, do_static, n_cores, yaml_list,
     overrides ScopeSim's local_packages_path and auto-downloads the instrument
     packages into that directory if the METIS package is not yet present.
     """
+    # runSimulationBlock() re-parses its third arg with argparse; --doStatic
+    # uses action="store_true" (default False), so passing [] silently
+    # overwrites params['doStatic'] back to False.  Mirror the flag here.
+    _sim_args = ["--doStatic"] if do_static else []
+
     path_entry = str(sims_root) if sims_root is not None else "python"
     # metis_simulations submodules read DEFAULT_IRDB_LOCATION at import time;
     # it must be set in the environment before the package is imported.
@@ -506,7 +511,7 @@ def _build_sim_script(out_dir, do_calib, do_static, n_cores, yaml_list,
         "    testRun   = False,",
         ")",
         "try:",
-        f"    rsb.runSimulationBlock({yaml_list!r}, params, [])",
+        f"    rsb.runSimulationBlock({yaml_list!r}, params, {_sim_args!r})",
         "except ValueError as _exc:",
         "    if 'Package could not be found' in str(_exc):",
         "        import sys as _sys",
@@ -576,7 +581,7 @@ def _run_simulation(runner, container, sim_code, sims_cwd, meta_pkg=None):
     try:
         if runner == "metapkg":
             cmd = [
-                "uv", "run",
+                "uv", "run", "--no-sync",
                 "--project", str(meta_pkg),
                 "--env-file", str(meta_pkg / ".env"),
                 "python", tmp.name,
@@ -595,7 +600,7 @@ def _edps_base_cmd(runner, container, edps_port, meta_pkg=None):
     base = ["edps", "-P", str(edps_port)]
     if runner == "metapkg":
         _check_metapkg_env(runner, meta_pkg)
-        return ["uv", "run", "--project", str(meta_pkg),
+        return ["uv", "run", "--no-sync", "--project", str(meta_pkg),
                 "--env-file", str(meta_pkg / ".env")] + base
     if runner in ("docker", "podman"):
         return [runner, "exec", container] + base
@@ -777,8 +782,8 @@ def main():
         yaml_files.append(p)
 
     # Locate the pipeline environment directory (metapkg runner only).
-    # Prefers ./pipeline (installed via the MTR Install tab), then falls back
-    # to ./metis-meta-package (installed via the standalone bootstrap).
+    # Prefers the repo root (consolidated install via the MTR Install tab),
+    # then ./pipeline, then ./metis-meta-package (legacy standalone bootstrap).
     meta_pkg = None
     if runner == "metapkg":
         if args.meta_pkg:
@@ -787,14 +792,16 @@ def main():
             _env_pkg = os.environ.get("METIS_META_PKG")
             candidates = (
                 ([Path(_env_pkg)] if _env_pkg else []) +
-                [Path.cwd() / "pipeline", Path.cwd() / "metis-meta-package"]
+                [Path.cwd(),
+                 Path.cwd() / "pipeline",
+                 Path.cwd() / "metis-meta-package"]
             )
             for candidate in candidates:
                 if (candidate / ".env").exists():
                     meta_pkg = candidate
                     break
             else:
-                meta_pkg = Path(_env_pkg) if _env_pkg else Path.cwd() / "pipeline"
+                meta_pkg = Path(_env_pkg) if _env_pkg else Path.cwd()
         if not (meta_pkg / ".env").exists():
             sys.exit(
                 f"Error: pipeline environment not found at {meta_pkg}\n"

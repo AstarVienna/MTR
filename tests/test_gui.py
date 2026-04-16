@@ -425,31 +425,31 @@ class TestWriteEnv:
 
     def test_env_file_created(self, qapp, tmp_path, monkeypatch):
         import gui
-        monkeypatch.setattr(gui, "META_PKG", tmp_path)
+        monkeypatch.setattr(gui, "REPO_ROOT", tmp_path)
         self._make_worker(qapp)._write_env()
         assert (tmp_path / ".env").exists()
 
     def test_env_contains_pythonpath(self, qapp, tmp_path, monkeypatch):
         import gui
-        monkeypatch.setattr(gui, "META_PKG", tmp_path)
+        monkeypatch.setattr(gui, "REPO_ROOT", tmp_path)
         self._make_worker(qapp)._write_env()
         assert "PYTHONPATH" in (tmp_path / ".env").read_text()
 
     def test_env_contains_pycpl_recipe_dir(self, qapp, tmp_path, monkeypatch):
         import gui
-        monkeypatch.setattr(gui, "META_PKG", tmp_path)
+        monkeypatch.setattr(gui, "REPO_ROOT", tmp_path)
         self._make_worker(qapp)._write_env()
         assert "PYCPL_RECIPE_DIR" in (tmp_path / ".env").read_text()
 
     def test_env_contains_pyesorex_plugin_dir(self, qapp, tmp_path, monkeypatch):
         import gui
-        monkeypatch.setattr(gui, "META_PKG", tmp_path)
+        monkeypatch.setattr(gui, "REPO_ROOT", tmp_path)
         self._make_worker(qapp)._write_env()
         assert "PYESOREX_PLUGIN_DIR" in (tmp_path / ".env").read_text()
 
     def test_env_paths_reference_target_a(self, qapp, tmp_path, monkeypatch):
         import gui
-        monkeypatch.setattr(gui, "META_PKG", tmp_path)
+        monkeypatch.setattr(gui, "REPO_ROOT", tmp_path)
         self._make_worker(qapp)._write_env()
         content = (tmp_path / ".env").read_text()
         assert str(gui.TARGET_A) in content

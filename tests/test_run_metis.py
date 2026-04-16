@@ -585,24 +585,30 @@ class TestBuildSimScript:
         assert "\nimport runSimulationBlock" not in script
 
     def test_script_passes_args_to_runSimulationBlock(self):
-        script = _build_sim_script(**self._base_kwargs)
-        assert "params, []" in script
+        script = _build_sim_script(**{**self._base_kwargs, "do_static": False})
+        assert "params, [])" in script
 
     def test_script_do_static_true(self):
         script = _build_sim_script(**{**self._base_kwargs, "do_static": True})
         assert "doStatic  = True" in script
+        # runSimulationBlock() re-parses its third arg with argparse;
+        # --doStatic must be mirrored there to survive the override.
+        assert "params, ['--doStatic'])" in script
 
     def test_script_do_static_false(self):
         script = _build_sim_script(**{**self._base_kwargs, "do_static": False})
         assert "doStatic  = False" in script
+        assert "params, [])" in script
 
     def test_script_do_static_coerces_int(self):
         # The CLI passes the value as int (0 or 1); the script must still
         # emit a real Python bool so `if params['doStatic'] == True:` holds.
         script = _build_sim_script(**{**self._base_kwargs, "do_static": 1})
         assert "doStatic  = True" in script
+        assert "['--doStatic']" in script
         script = _build_sim_script(**{**self._base_kwargs, "do_static": 0})
         assert "doStatic  = False" in script
+        assert "params, [])" in script
 
     def test_script_sys_path_uses_sims_root(self):
         script = _build_sim_script(**self._base_kwargs)
@@ -635,7 +641,7 @@ class TestEdpsBaseCmd:
         meta_pkg.mkdir()
         (meta_pkg / ".env").write_text("")
         cmd = _edps_base_cmd("metapkg", None, 4444, meta_pkg=meta_pkg)
-        assert cmd[:2] == ["uv", "run"]
+        assert cmd[:3] == ["uv", "run", "--no-sync"]
         assert "edps" in cmd
         assert "-P" in cmd
         assert "4444" in cmd

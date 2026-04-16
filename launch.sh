@@ -5,10 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 _run_gui() {
     cd "$SCRIPT_DIR"
+    uv sync --inexact
     if [[ -n "${SMOKE_TEST:-}" ]]; then
-        exec uv run gui.py --smoke-test
+        exec .venv/bin/python gui.py --smoke-test
     fi
-    exec uv run gui.py
+    exec .venv/bin/python gui.py
 }
 
 # Check PATH

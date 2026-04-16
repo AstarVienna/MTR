@@ -2,7 +2,7 @@
 name = "mtr"
 version = "0.1.0"
 description = "METIS Test Runner — GUI and CLI wrapper for end-to-end pipeline testing"
-requires-python = ">=3.10"
+requires-python = ">=3.11, <3.14"
 dependencies = [
     "PyQt6==6.6.0",
     "Pyqt6-Qt6==6.6.0",
@@ -11,6 +11,20 @@ dependencies = [
 
 [dependency-groups]
 dev = ["pytest"]
+pipeline = [
+    "pycpl==1.0.3.post9",
+    "edps",
+    "pyesorex",
+    "adari_core",
+    "scopesim==0.11.2",
+    "scopesim_templates==0.8.1",
+]
+
+[tool.uv]
+extra-index-url = [
+    "https://ivh.github.io/pycpl/simple/",
+    "https://ftp.eso.org/pub/dfs/pipelines/libraries/",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

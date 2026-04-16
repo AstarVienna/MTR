@@ -17,7 +17,7 @@ cd MTR
 ./launch.sh
 ```
 
-`launch.sh` boots the GUI via `uv`. If `uv` is not already installed, it will prompt you once to install it, then proceed. After the first launch — once `uv` is on your PATH — you can also start the GUI directly with `uv run gui.py`.
+`launch.sh` boots the GUI via `uv`. If `uv` is not already installed, it will prompt you once to install it, then proceed. Always use `launch.sh` to start the GUI — it uses `uv sync --inexact` to preserve pipeline dependencies that the Install tab adds later.
 
 From there, everything — installing the pipeline, selecting a runner, picking YAML inputs, and watching live pipeline output — is available as point-and-click controls.
 
@@ -28,8 +28,7 @@ The GUI is the recommended way to drive the test runner. It exposes every CLI fl
 Launch it with:
 
 ```bash
-./launch.sh         # first time (also installs uv if missing)
-uv run gui.py       # any subsequent launch
+./launch.sh         # installs uv if missing, then launches the GUI
 ```
 
 A **Light / Dark theme** button lives in the toolbar and toggles on the fly.
@@ -38,11 +37,10 @@ A **Light / Dark theme** button lives in the toolbar and toggles on the fly.
 
 The Install tab performs the full pipeline bootstrap non-interactively. Use it if you do **not** already have the pipeline installed. Clicking **Install / Update** will:
 
-1. Install `uv` if it is not on PATH
-2. Clone (or update, if already present) `METIS_Pipeline` and `METIS_Simulations` into the repo root
-3. Run `uv sync` to install all Python dependencies
+1. Clone (or update, if already present) `METIS_Pipeline` and `METIS_Simulations` into the repo root
+2. Run `uv sync --group pipeline` to install all pipeline Python dependencies into the main virtual environment
+3. Write `.env` in the repo root (environment variables for PYTHONPATH, plugin directories, etc.)
 4. Initialise and configure EDPS on port 4444
-5. Write `metis-meta-package/.env`
 
 Re-running is safe — existing repositories are updated in place rather than re-cloned.
 
@@ -69,17 +67,16 @@ Settings are persisted via `QSettings` and restored on next launch, so you can r
 
 Regardless of whether you drive the runner from the GUI or the CLI, the underlying pipeline tools have to live *somewhere*. Three layouts are supported — pick the one that matches your install:
 
-**Option A — metis-meta-package** (runner `metapkg`, default)
+**Option A — consolidated install** (runner `metapkg`, default)
 
-The Install tab takes care of this automatically. Equivalent shell version:
+The Install tab takes care of this automatically. It installs all pipeline
+dependencies into the main `.venv` alongside the GUI dependencies and writes a
+`.env` file in the repo root. The runner looks for `.env` in the current
+working directory first, then falls back to `./pipeline/` and
+`./metis-meta-package/` for backwards compatibility with standalone installs.
 
-```bash
-git clone <metis-meta-package-url> ~/metis-meta-package
-cd ~/metis-meta-package
-bash bootstrap.sh
-```
-
-The runner looks for `./metis-meta-package/` and `./METIS_Simulations/` in the current working directory by default. Use the GUI's *Meta-package dir* field (or `--meta-pkg` / `--simulations-dir`) to override.
+Use the GUI's *Meta-package dir* field (or `--meta-pkg` / `--simulations-dir`)
+to point at an external installation if needed.
 
 **Option B — Docker or Podman container** (runner `docker` / `podman`)
 
@@ -170,15 +167,15 @@ python run_metis.py [OPTIONS] yaml1.yaml [yaml2.yaml ...]
 | `--no-sim` | off | Skip simulation; run pipeline on existing FITS data (source defaults to `<output>/sim/` — override with `--pipeline-input`) |
 | `--pipeline-input DIR` | `<output>/sim/` | Directory containing FITS files to feed the pipeline (only with `--no-sim`) |
 | `--no-pipeline` | off | Run simulation only; skip EDPS pipeline |
-| `--meta-pkg PATH` | `./metis-meta-package` | Path to the meta-package install (`metapkg` runner only) |
+| `--meta-pkg PATH` | `.` (repo root) | Path to the pipeline environment directory (`metapkg` runner only). Falls back to `./pipeline/` then `./metis-meta-package/`. |
 | `--simulations-dir PATH` | `./METIS_Simulations` (host) or `/home/metis/METIS_Simulations` (container) | Path to ScopeSim scripts |
-| `--inst-pkgs PATH` | see below | Path to ScopeSim instrument packages (Armazones, ELT, METIS). Defaults to `<meta-pkg>/inst_pkgs` for `metapkg`, `./inst_pkgs` (CWD) for `native`, and container-resolved `./inst_pkgs` for `docker`/`podman` |
+| `--inst-pkgs PATH` | see below | Path to ScopeSim instrument packages (Armazones, ELT, METIS). Defaults to `./inst_pkgs` for `metapkg`/`native`, and container-resolved `./inst_pkgs` for `docker`/`podman` |
 
 ### Runner modes
 
 | Mode | When to use |
 |---|---|
-| `metapkg` (default) | You ran `metis-meta-package/bootstrap.sh` (or the GUI's Install tab). Tools are managed by `uv` inside the meta-package. |
+| `metapkg` (default) | You used the GUI's Install tab (or an external `metis-meta-package` install). Tools are managed by `uv` in the project's virtual environment. |
 | `native` | Tools (`edps`, `python`, ScopeSim) are installed directly on PATH — e.g. you are running **inside** a Docker/Podman container, or have a bare-metal install. |
 | `docker` / `podman` | Tools live inside a container and you are running the script **outside** it. The runner wraps every command with `docker exec` / `podman exec`. |
 
@@ -228,8 +225,8 @@ MTR/
 
 ## Related Repositories
 
-This runner is designed to work alongside the following repos, which are installed via the GUI's Install tab (or the `metis-meta-package` bootstrap):
+This runner is designed to work alongside the following repos, which are installed via the GUI's Install tab:
 
 - **[METIS_Pipeline](https://github.com/AstarVienna/METIS_Pipeline)** — the core Python/C pipeline, EDPS workflows, and PyEsoRex recipes
 - **[METIS_Simulations](https://github.com/AstarVienna/METIS_Simulations)** — ScopeSim scripts that generate synthetic FITS observations for each observing mode
-- **[metis-meta-package](https://github.com/eiseleb47/metis-meta-package)** — meta-installer that sets up `uv`, EDPS, PyEsoRex, and all dependencies in one step
+- **[metis-meta-package](https://github.com/eiseleb47/metis-meta-package)** — legacy standalone meta-installer (still supported as a fallback; the Install tab now installs pipeline dependencies directly into the main virtual environment)
