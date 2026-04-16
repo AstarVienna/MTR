@@ -286,7 +286,11 @@ class TestBuildCmdArgs:
         tab.container_edit.setText("ignored")
         assert "--container" not in tab._build_cmd_args()
 
-    def test_meta_pkg_included_for_metapkg_runner(self, qapp):
+    def test_meta_pkg_included_for_metapkg_runner(self, qapp, tmp_path, monkeypatch):
+        # Use a REPO_ROOT without .env so the meta_pkg_edit branch is reached;
+        # when .env exists _build_cmd_args intentionally prefers REPO_ROOT.
+        import gui
+        monkeypatch.setattr(gui, "REPO_ROOT", tmp_path)
         tab = self._tab_with_yaml(qapp, "obs.yaml")
         tab.runner_combo.setCurrentText("metapkg")
         tab.meta_pkg_edit.setText("/opt/meta")
