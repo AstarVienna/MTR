@@ -650,6 +650,147 @@ class TestBuildSimScript:
             "from metis_simulations"
         )
 
+    # -- macOS spawn-safety guards ------------------------------------------
+
+    def test_script_has_main_guard(self):
+        """Generated script must wrap the simulation call in an
+        ``if __name__ == "__main__":`` guard so that macOS spawn-mode
+        multiprocessing workers do not re-execute the simulation."""
+        script = _build_sim_script(**self._base_kwargs)
+        assert 'if __name__ == "__main__":' in script
+
+    def test_simulation_call_inside_main_guard(self):
+        """runSimulationBlock() call (not the import) must appear only
+        inside the __main__ guard, never at module level."""
+        script = _build_sim_script(**self._base_kwargs)
+        lines = script.splitlines()
+        guard_line = next(
+            i for i, l in enumerate(lines)
+            if '__name__' in l and '__main__' in l
+        )
+        sim_call_lines = [
+            i for i, l in enumerate(lines)
+            if 'runSimulationBlock' in l and 'import' not in l
+        ]
+        for idx in sim_call_lines:
+            assert idx > guard_line, (
+                f"runSimulationBlock call at line {idx} is before the "
+                f"__main__ guard at line {guard_line}"
+            )
+            assert lines[idx].startswith("    "), (
+                f"runSimulationBlock call at line {idx} is not indented "
+                f"under the __main__ guard"
+            )
+
+    def test_monkey_patch_outside_main_guard(self):
+        """The skycalc_ipy monkey-patch must remain at module level so that
+        spawn-mode workers execute it when they re-import __main__."""
+        script = _build_sim_script(**self._base_kwargs)
+        lines = script.splitlines()
+        guard_line = next(
+            i for i, l in enumerate(lines)
+            if '__name__' in l and '__main__' in l
+        )
+        patch_lines = [
+            i for i, l in enumerate(lines)
+            if '_skc_safe_call' in l or '_skc_orig_call' in l
+        ]
+        assert patch_lines, "Monkey-patch lines not found in generated script"
+        for idx in patch_lines:
+            assert idx < guard_line, (
+                f"Monkey-patch at line {idx} should be before the "
+                f"__main__ guard at line {guard_line}"
+            )
+
+    def test_static_calibs_inside_main_guard(self):
+        """Static calibration generation must also be inside the guard."""
+        script = _build_sim_script(
+            **{**self._base_kwargs, "do_static": True},
+            static_calibs_dir="/output/static_calibs",
+        )
+        lines = script.splitlines()
+        guard_line = next(
+            i for i, l in enumerate(lines)
+            if '__name__' in l and '__main__' in l
+        )
+        static_lines = [
+            i for i, l in enumerate(lines)
+            if 'generateStaticCalibs' in l
+        ]
+        for idx in static_lines:
+            assert idx > guard_line
+            assert lines[idx].startswith("    ")
+
+
+# ---------------------------------------------------------------------------
+# Spawn-mode safety (simulates macOS multiprocessing behavior on Linux)
+# ---------------------------------------------------------------------------
+
+class TestSpawnSafety:
+    """Verify generated scripts survive multiprocessing spawn mode
+    (the default on macOS since Python 3.8)."""
+
+    @staticmethod
+    def _mock_modules():
+        """Build a dict of mocked modules for exec'ing the generated script.
+
+        ``from metis_simulations import runSimulationBlock as rsb`` resolves
+        *rsb* to ``sys.modules["metis_simulations"].runSimulationBlock``, so
+        we wire the mock_rsb_module into both places.
+        """
+        from unittest.mock import MagicMock
+
+        mock_rsb_module = MagicMock()
+        mock_metis = MagicMock()
+        mock_metis.runSimulationBlock = mock_rsb_module
+        return {
+            "scopesim": MagicMock(),
+            "scopesim.rc": MagicMock(),
+            "skycalc_ipy": MagicMock(),
+            "skycalc_ipy.core": MagicMock(),
+            "metis_simulations": mock_metis,
+            "metis_simulations.runSimulationBlock": mock_rsb_module,
+        }, mock_rsb_module
+
+    _base_kwargs = dict(
+        out_dir="/tmp/sim",
+        do_calib=False,
+        do_static=False,
+        n_cores=4,
+        yaml_list=["/data/obs.yaml"],
+        sims_root="/fake/METIS_Simulations",
+    )
+
+    def test_spawn_worker_does_not_re_execute_simulation(self):
+        """When a spawn-mode worker re-imports __main__, __name__ is set to
+        '__mp_main__'.  The simulation call must NOT execute in that case."""
+        from unittest.mock import patch
+
+        script = _build_sim_script(**self._base_kwargs)
+        code = compile(script, "<spawn_test>", "exec")
+        mock_modules, mock_rsb = self._mock_modules()
+
+        ns = {"__name__": "__mp_main__", "__builtins__": __builtins__}
+        with patch.dict("sys.modules", mock_modules):
+            exec(code, ns)
+
+        mock_rsb.runSimulationBlock.assert_not_called()
+
+    def test_main_process_does_execute_simulation(self):
+        """When __name__ is "__main__" (the parent process), the simulation
+        call must execute exactly once."""
+        from unittest.mock import patch
+
+        script = _build_sim_script(**self._base_kwargs)
+        code = compile(script, "<main_test>", "exec")
+        mock_modules, mock_rsb = self._mock_modules()
+
+        ns = {"__name__": "__main__", "__builtins__": __builtins__}
+        with patch.dict("sys.modules", mock_modules):
+            exec(code, ns)
+
+        mock_rsb.runSimulationBlock.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # _edps_base_cmd and _edps_cwd

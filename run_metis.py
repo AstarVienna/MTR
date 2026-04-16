@@ -483,8 +483,9 @@ def _build_sim_script(out_dir, do_calib, do_static, n_cores, yaml_list,
         "# worker to reach a cold cache wins the write; every other worker crashes",
         "# the pool with OSError('File ... already exists'). We cannot patch",
         "# METIS_Simulations (vendored, out of scope), so we patch the underlying",
-        "# skycalc_ipy method here. multiprocessing on Linux forks, so the patch",
-        "# installed in the parent process is inherited by every Pool worker.",
+        "# skycalc_ipy method here. This patch lives at module level (outside the",
+        "# if __name__ guard) so it is picked up both by forked workers on Linux",
+        "# and by spawn-mode workers on macOS (which re-import this script).",
         "try:",
         "    import skycalc_ipy.core as _skc_core",
         "    _skc_orig_call = _skc_core.SkyModel.__call__",
@@ -505,37 +506,38 @@ def _build_sim_script(out_dir, do_calib, do_static, n_cores, yaml_list,
         "",
         "from metis_simulations import runSimulationBlock as rsb",
         "",
-        "params = dict(",
-        f"    outputDir = {out_dir!r},",
-        "    small     = False,",
-        "    doStatic  = False,",
-        f"    doCalib   = {do_calib!r},",
-        "    sequence  = False,",
-        "    startMJD  = None,",
-        "    calibFile = None,",
-        f"    nCores    = {n_cores!r},",
-        "    testRun   = False,",
-        ")",
-        "try:",
-        f"    rsb.runSimulationBlock({yaml_list!r}, params, [])",
-        "except ValueError as _exc:",
-        "    if 'Package could not be found' in str(_exc):",
-        "        import sys as _sys",
-        "        print('', file=_sys.stderr)",
-        "        print('HINT: ScopeSim could not find the instrument packages.', file=_sys.stderr)",
+        'if __name__ == "__main__":',
+        "    params = dict(",
+        f"        outputDir = {out_dir!r},",
+        "        small     = False,",
+        "        doStatic  = False,",
+        f"        doCalib   = {do_calib!r},",
+        "        sequence  = False,",
+        "        startMJD  = None,",
+        "        calibFile = None,",
+        f"        nCores    = {n_cores!r},",
+        "        testRun   = False,",
+        "    )",
+        "    try:",
+        f"        rsb.runSimulationBlock({yaml_list!r}, params, [])",
+        "    except ValueError as _exc:",
+        "        if 'Package could not be found' in str(_exc):",
+        "            import sys as _sys",
+        "            print('', file=_sys.stderr)",
+        "            print('HINT: ScopeSim could not find the instrument packages.', file=_sys.stderr)",
     ]
     if inst_pkgs_path is not None:
         lines.append(
-            f"        print('  Instrument packages path: {inst_pkgs_path}', file=_sys.stderr)"
+            f"            print('  Instrument packages path: {inst_pkgs_path}', file=_sys.stderr)"
         )
     else:
         lines.append(
-            "        print('  No instrument packages path was configured.', file=_sys.stderr)"
+            "            print('  No instrument packages path was configured.', file=_sys.stderr)"
         )
     lines += [
-        "        print('  In the GUI: set the Instrument packages field in the Run tab.', file=_sys.stderr)",
-        "        print('  On the command line: pass --inst-pkgs <path>.', file=_sys.stderr)",
-        "    raise",
+        "            print('  In the GUI: set the Instrument packages field in the Run tab.', file=_sys.stderr)",
+        "            print('  On the command line: pass --inst-pkgs <path>.', file=_sys.stderr)",
+        "        raise",
     ]
 
     # --- Static calibration prototypes (cached) -----------------------------
@@ -544,15 +546,15 @@ def _build_sim_script(out_dir, do_calib, do_static, n_cores, yaml_list,
     if do_static and static_calibs_dir is not None:
         lines += [
             "",
-            "# --- Generate static calibration prototypes (cached) ---",
-            f"_static_dir = {static_calibs_dir!r}",
-            "if not _os.path.isfile(_os.path.join(_static_dir, 'PERSISTENCE_MAP_LM.fits')):",
-            "    _os.makedirs(_static_dir, exist_ok=True)",
-            "    from metis_simulations import makeCalibPrototypes as _mcp",
-            "    _mcp.generateStaticCalibs(_static_dir)",
-            "    print(f'Generated static calibration prototypes in {_static_dir}')",
-            "else:",
-            "    print(f'Static calibration prototypes already cached in {_static_dir}')",
+            "    # --- Generate static calibration prototypes (cached) ---",
+            f"    _static_dir = {static_calibs_dir!r}",
+            "    if not _os.path.isfile(_os.path.join(_static_dir, 'PERSISTENCE_MAP_LM.fits')):",
+            "        _os.makedirs(_static_dir, exist_ok=True)",
+            "        from metis_simulations import makeCalibPrototypes as _mcp",
+            "        _mcp.generateStaticCalibs(_static_dir)",
+            "        print(f'Generated static calibration prototypes in {_static_dir}')",
+            "    else:",
+            "        print(f'Static calibration prototypes already cached in {_static_dir}')",
         ]
 
     return "\n".join(lines) + "\n"
