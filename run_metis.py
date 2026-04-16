@@ -946,7 +946,7 @@ def main():
     # Step 1.5: Auto-fetch missing master calibrations (optional)
     # -----------------------------------------------------------------------
     if not args.no_pipeline and args.auto_fetch_calibrations:
-        from archive import fetch_missing_calibrations, ARCHIVE_COMPOSE_DIR
+        from archive import fetch_missing_calibrations
 
         fetch_tags = yaml_tags
         if args.no_sim:
@@ -959,7 +959,6 @@ def main():
                 data_tags=fetch_tags,
                 has_science=has_science,
                 dest_dir=sim_out,
-                compose_dir=ARCHIVE_COMPOSE_DIR,
                 on_log=lambda msg: print(f"  {msg}"),
             )
             if fetched:

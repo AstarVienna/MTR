@@ -2,17 +2,14 @@
 Unit tests for archive.py.
 
 Covers:
-  - OS detection
-  - Podman availability checks
+  - MetisWISE availability check
   - Install command generation
-  - Archive stack file generation
+  - Stale Environment.cfg detection
+  - Upload / query / download with mocked MetisWISE
   - Missing calibration identification
-  - Container exec command construction
 """
 
-import json
-import subprocess
-import textwrap
+import shutil
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -22,81 +19,18 @@ import archive
 
 
 # ---------------------------------------------------------------------------
-# OS detection
+# MetisWISE availability
 # ---------------------------------------------------------------------------
 
 
-class TestDetectOs:
-    def test_linux_ubuntu(self, tmp_path):
-        os_release = tmp_path / "os-release"
-        os_release.write_text('ID=ubuntu\nVERSION_ID="22.04"\n')
-        with patch("archive.platform.system", return_value="Linux"), \
-             patch.object(Path, "exists", return_value=True), \
-             patch.object(Path, "read_text",
-                          return_value='ID=ubuntu\nVERSION_ID="22.04"\n'):
-            family, distro = archive.detect_os()
-            assert family == "linux"
-            assert distro == "ubuntu"
-
-    def test_linux_arch(self):
-        with patch("archive.platform.system", return_value="Linux"), \
-             patch("archive.Path.exists", return_value=True), \
-             patch("archive.Path.read_text", return_value="ID=arch\n"):
-            family, distro = archive.detect_os()
-            assert family == "linux"
-            assert distro == "arch"
-
-    def test_linux_no_os_release(self):
-        with patch("archive.platform.system", return_value="Linux"), \
-             patch("archive.Path.exists", return_value=False):
-            family, distro = archive.detect_os()
-            assert family == "linux"
-            assert distro == "unknown"
-
-    def test_macos(self):
-        with patch("archive.platform.system", return_value="Darwin"):
-            family, distro = archive.detect_os()
-            assert family == "darwin"
-            assert distro == "macos"
-
-    def test_windows(self):
-        with patch("archive.platform.system", return_value="Windows"):
-            family, distro = archive.detect_os()
-            assert family == "windows"
-            assert distro == "unknown"
-
-
-# ---------------------------------------------------------------------------
-# Podman availability
-# ---------------------------------------------------------------------------
-
-
-class TestPodmanAvailable:
+class TestMetisWISEAvailable:
     def test_available(self):
-        with patch("archive.subprocess.run") as mock:
-            mock.return_value = MagicMock(returncode=0)
-            assert archive.podman_available() is True
-            mock.assert_called_once()
+        with patch.dict("sys.modules", {"metiswise": MagicMock()}):
+            assert archive.metiswise_available() is True
 
     def test_not_installed(self):
-        with patch("archive.subprocess.run", side_effect=FileNotFoundError):
-            assert archive.podman_available() is False
-
-    def test_timeout(self):
-        with patch("archive.subprocess.run",
-                   side_effect=subprocess.TimeoutExpired("podman", 10)):
-            assert archive.podman_available() is False
-
-
-class TestPodmanComposeAvailable:
-    def test_available(self):
-        with patch("archive.subprocess.run") as mock:
-            mock.return_value = MagicMock(returncode=0)
-            assert archive.podman_compose_available() is True
-
-    def test_not_installed(self):
-        with patch("archive.subprocess.run", side_effect=FileNotFoundError):
-            assert archive.podman_compose_available() is False
+        with patch.dict("sys.modules", {"metiswise": None}):
+            assert archive.metiswise_available() is False
 
 
 # ---------------------------------------------------------------------------
@@ -104,99 +38,267 @@ class TestPodmanComposeAvailable:
 # ---------------------------------------------------------------------------
 
 
-class TestInstallPodmanCommands:
-    def test_ubuntu_as_non_root(self):
-        with patch("archive.os.getuid", return_value=1000), \
-             patch("archive.shutil.which", return_value="/usr/bin/sudo"):
-            cmds = archive.install_podman_commands("ubuntu")
-            assert len(cmds) == 2
-            # First command: apt-get update
-            assert cmds[0][0] == "sudo"
-            assert "apt-get" in cmds[0]
-            assert "update" in cmds[0]
-            # Second command: apt-get install
-            assert cmds[1][0] == "sudo"
-            assert "apt-get" in cmds[1]
-            assert "podman" in cmds[1]
-            assert "podman-compose" in cmds[1]
+class TestInstallMetisWiseCommand:
+    def test_command_structure(self):
+        cmd = archive.install_metiswise_command("user:secret")
+        assert cmd[0:3] == ["uv", "pip", "install"]
+        assert "--python" in cmd
+        assert "metiswise" in cmd
 
-    def test_ubuntu_as_root_skips_sudo(self):
-        with patch("archive.os.getuid", return_value=0):
-            cmds = archive.install_podman_commands("ubuntu")
-            assert len(cmds) == 2
-            assert cmds[0][0] == "apt-get"
-            for cmd in cmds:
-                assert "sudo" not in cmd
+    def test_credentials_in_url(self):
+        cmd = archive.install_metiswise_command("alice:p4ss")
+        urls = [arg for arg in cmd if "entropynaut" in arg]
+        assert len(urls) == 1
+        assert "alice:p4ss@pip.entropynaut.com" in urls[0]
 
-    def test_non_root_without_sudo_raises(self):
-        with patch("archive.os.getuid", return_value=1000), \
-             patch("archive.shutil.which", return_value=None):
-            with pytest.raises(RuntimeError, match="Root privileges"):
-                archive.install_podman_commands("ubuntu")
+    def test_extra_index_urls(self):
+        cmd = archive.install_metiswise_command("u:p")
+        idx_flags = [i for i, a in enumerate(cmd) if a == "--extra-index-url"]
+        assert len(idx_flags) == 3
+        urls = [cmd[i + 1] for i in idx_flags]
+        assert any("ftp.eso.org" in u for u in urls)
+        assert any("ivh.github.io" in u for u in urls)
+        assert any("entropynaut" in u for u in urls)
 
-    def test_fedora(self):
-        with patch("archive.os.getuid", return_value=0):
-            cmds = archive.install_podman_commands("fedora")
-            assert len(cmds) == 1
-            assert "dnf" in cmds[0]
-            assert "podman" in cmds[0]
+    def test_uses_unsafe_best_match(self):
+        cmd = archive.install_metiswise_command("u:p")
+        assert "--index-strategy" in cmd
+        idx = cmd.index("--index-strategy")
+        assert cmd[idx + 1] == "unsafe-best-match"
 
-    def test_arch(self):
-        with patch("archive.os.getuid", return_value=0):
-            cmds = archive.install_podman_commands("arch")
-            assert len(cmds) == 1
-            assert "pacman" in cmds[0]
-            assert "podman" in cmds[0]
+    def test_targets_project_venv(self):
+        cmd = archive.install_metiswise_command("u:p")
+        python_idx = cmd.index("--python")
+        python_path = cmd[python_idx + 1]
+        assert ".venv" in python_path
+        assert python_path.endswith("python")
 
-    def test_macos(self):
-        with patch("archive.os.getuid", return_value=1000), \
-             patch("archive.shutil.which", return_value="/usr/bin/sudo"):
-            cmds = archive.install_podman_commands("macos")
-            assert len(cmds) == 1
-            assert cmds[0][0] == "brew"
-            assert "podman" in cmds[0]
-
-    def test_unknown_raises(self):
-        with pytest.raises(ValueError, match="Unsupported distribution"):
-            archive.install_podman_commands("gentoo")
+    def test_does_not_include_pymetis(self):
+        cmd = archive.install_metiswise_command("u:p")
+        git_args = [a for a in cmd if a.startswith("git+")]
+        assert len(git_args) == 0
 
 
 # ---------------------------------------------------------------------------
-# Archive stack file generation
+# Stale Environment.cfg detection
 # ---------------------------------------------------------------------------
 
 
-class TestEnsureArchiveStackFiles:
-    def test_creates_all_files(self, tmp_path):
-        compose_dir = tmp_path / "stack"
-        result = archive.ensure_archive_stack_files(compose_dir, "testimg")
-        assert result == compose_dir
-        assert (compose_dir / "compose.yml").exists()
-        assert (compose_dir / "Containerfile").exists()
-        assert (compose_dir / "scripts" / "ds.cfg").exists()
-        assert (compose_dir / "scripts" / "entrypoint_dataserver.sh").exists()
-        assert (compose_dir / "scripts" / "Environment.cfg").exists()
-        assert (compose_dir / "space" / "inbox").is_dir()
-        assert (compose_dir / "space" / "outbox").is_dir()
+class TestCheckStaleEnvironmentCfg:
+    def test_no_file(self, tmp_path):
+        with patch("archive.Path.home", return_value=tmp_path):
+            assert archive.check_stale_environment_cfg() is None
 
-    def test_compose_contains_image_name(self, tmp_path):
-        compose_dir = tmp_path / "stack"
-        archive.ensure_archive_stack_files(compose_dir, "myimage")
-        content = (compose_dir / "compose.yml").read_text()
-        assert "myimage:latest" in content
+    def test_production_config_no_warning(self, tmp_path):
+        awe = tmp_path / ".awe"
+        awe.mkdir()
+        (awe / "Environment.cfg").write_text(
+            "data_server : metis-ds.hpc.rug.nl\n"
+        )
+        with patch("archive.Path.home", return_value=tmp_path):
+            assert archive.check_stale_environment_cfg() is None
 
-    def test_does_not_overwrite_existing(self, tmp_path):
-        compose_dir = tmp_path / "stack"
-        archive.ensure_archive_stack_files(compose_dir, "img1")
-        (compose_dir / "compose.yml").write_text("custom content")
-        archive.ensure_archive_stack_files(compose_dir, "img2")
-        assert (compose_dir / "compose.yml").read_text() == "custom content"
+    def test_stale_container_config_warns(self, tmp_path):
+        awe = tmp_path / ".awe"
+        awe.mkdir()
+        (awe / "Environment.cfg").write_text(
+            "data_server : dataserver\ndata_port : 8013\n"
+        )
+        with patch("archive.Path.home", return_value=tmp_path):
+            warning = archive.check_stale_environment_cfg()
+            assert warning is not None
+            assert "dataserver" in warning
 
-    def test_entrypoint_is_executable(self, tmp_path):
-        compose_dir = tmp_path / "stack"
-        archive.ensure_archive_stack_files(compose_dir)
-        sh = compose_dir / "scripts" / "entrypoint_dataserver.sh"
-        assert sh.stat().st_mode & 0o111  # has execute bits
+
+# ---------------------------------------------------------------------------
+# Upload files (mocked MetisWISE)
+# ---------------------------------------------------------------------------
+
+
+class TestUploadFiles:
+    def test_upload_raw_file(self, tmp_path):
+        fits_file = tmp_path / "raw.fits"
+        fits_file.write_bytes(b"dummy")
+
+        mock_fits = MagicMock()
+        mock_hdus = MagicMock()
+        mock_hdus.__getitem__ = MagicMock(
+            return_value=MagicMock(header={"ESO DPR CATG": "FLAT"})
+        )
+        mock_fits.open.return_value = mock_hdus
+
+        mock_raw_cls = MagicMock()
+        mock_raw_inst = MagicMock()
+        mock_raw_cls.return_value = mock_raw_inst
+
+        mock_astropy_io = MagicMock(fits=mock_fits)
+        mock_mw_main = MagicMock()
+        mock_mw_main.raw = MagicMock(Raw=mock_raw_cls)
+        mock_mw_main.pro = MagicMock()
+
+        with patch.dict("sys.modules", {
+            "astropy": MagicMock(),
+            "astropy.io": mock_astropy_io,
+            "astropy.io.fits": mock_fits,
+            "metiswise": MagicMock(),
+            "metiswise.main": mock_mw_main,
+            "metiswise.main.raw": MagicMock(Raw=mock_raw_cls),
+            "metiswise.main.pro": MagicMock(),
+        }):
+            import importlib
+            importlib.reload(archive)
+
+            result = archive.upload_files([fits_file])
+            assert result == ["raw.fits"]
+            mock_raw_inst.store.assert_called_once()
+            mock_raw_inst.commit.assert_called_once()
+
+            importlib.reload(archive)
+
+    def test_upload_skips_unknown_header(self, tmp_path):
+        fits_file = tmp_path / "unknown.fits"
+        fits_file.write_bytes(b"dummy")
+
+        mock_fits = MagicMock()
+        mock_hdus = MagicMock()
+        mock_hdus.__getitem__ = MagicMock(
+            return_value=MagicMock(header={})
+        )
+        mock_fits.open.return_value = mock_hdus
+
+        with patch.dict("sys.modules", {
+            "astropy": MagicMock(),
+            "astropy.io": MagicMock(),
+            "astropy.io.fits": mock_fits,
+            "metiswise": MagicMock(),
+            "metiswise.main": MagicMock(),
+            "metiswise.main.raw": MagicMock(),
+            "metiswise.main.pro": MagicMock(),
+        }):
+            import importlib
+            importlib.reload(archive)
+
+            logs = []
+            result = archive.upload_files([fits_file], on_log=logs.append)
+            assert result == []
+            assert any("Skipping" in msg for msg in logs)
+
+            importlib.reload(archive)
+
+
+# ---------------------------------------------------------------------------
+# Query archive (mocked MetisWISE)
+# ---------------------------------------------------------------------------
+
+
+class TestQueryArchive:
+    def test_query_all(self):
+        mock_item = MagicMock()
+        mock_item.filename = "test.fits"
+        mock_item.pro_catg = "MASTER_DARK"
+        type(mock_item).__name__ = "Pro"
+
+        mock_dataitem = MagicMock()
+        mock_dataitem.select_all.return_value = [mock_item]
+
+        with patch.dict("sys.modules", {
+            "metiswise": MagicMock(),
+            "metiswise.main": MagicMock(),
+            "metiswise.main.aweimports": MagicMock(),
+            "metiswise.main.dataitem": MagicMock(DataItem=mock_dataitem),
+            "metiswise.main.pro": MagicMock(),
+        }):
+            import importlib
+            importlib.reload(archive)
+
+            items = archive.query_archive()
+            assert len(items) == 1
+            assert items[0]["filename"] == "test.fits"
+
+            importlib.reload(archive)
+
+    def test_query_by_pro_catg(self):
+        mock_item = MagicMock()
+        mock_item.filename = "master.fits"
+        mock_item.pro_catg = "MASTER_DARK"
+        type(mock_item).__name__ = "Pro"
+
+        mock_pro = MagicMock()
+        mock_pro.pro_catg.__eq__ = MagicMock(return_value=[mock_item])
+
+        with patch.dict("sys.modules", {
+            "metiswise": MagicMock(),
+            "metiswise.main": MagicMock(),
+            "metiswise.main.aweimports": MagicMock(),
+            "metiswise.main.dataitem": MagicMock(),
+            "metiswise.main.pro": MagicMock(Pro=mock_pro),
+        }):
+            import importlib
+            importlib.reload(archive)
+
+            items = archive.query_archive(pro_catg="MASTER_DARK")
+            assert len(items) == 1
+            assert items[0]["filename"] == "master.fits"
+
+            importlib.reload(archive)
+
+
+# ---------------------------------------------------------------------------
+# Download file (mocked MetisWISE)
+# ---------------------------------------------------------------------------
+
+
+class TestDownloadFile:
+    def test_download_success(self, tmp_path):
+        # Create a fake source file that MetisWISE would "retrieve"
+        src_dir = tmp_path / "retrieve_dir"
+        src_dir.mkdir()
+        (src_dir / "data.fits").write_bytes(b"fits data")
+
+        mock_item = MagicMock()
+        mock_item.filename = "data.fits"
+        mock_item.pathname = str(src_dir)
+        mock_item.retrieve = MagicMock()
+
+        mock_dataitem = MagicMock()
+        mock_dataitem.filename.__eq__ = MagicMock(return_value=[mock_item])
+
+        dest_dir = tmp_path / "downloads"
+
+        with patch.dict("sys.modules", {
+            "metiswise": MagicMock(),
+            "metiswise.main": MagicMock(),
+            "metiswise.main.dataitem": MagicMock(DataItem=mock_dataitem),
+        }):
+            import importlib
+            importlib.reload(archive)
+
+            result = archive.download_file("data.fits", dest_dir)
+            assert result is not None
+            assert result == dest_dir / "data.fits"
+            assert result.exists()
+            mock_item.retrieve.assert_called_once()
+
+            importlib.reload(archive)
+
+    def test_download_not_found(self, tmp_path):
+        mock_dataitem = MagicMock()
+        mock_dataitem.filename.__eq__ = MagicMock(return_value=[])
+
+        dest_dir = tmp_path / "downloads"
+
+        with patch.dict("sys.modules", {
+            "metiswise": MagicMock(),
+            "metiswise.main": MagicMock(),
+            "metiswise.main.dataitem": MagicMock(DataItem=mock_dataitem),
+        }):
+            import importlib
+            importlib.reload(archive)
+
+            result = archive.download_file("missing.fits", dest_dir)
+            assert result is None
+
+            importlib.reload(archive)
 
 
 # ---------------------------------------------------------------------------
@@ -320,70 +422,3 @@ class TestIdentifyMissingCalibrations:
         task_names = [t for t, _ in missing]
         assert task_names == ["metis_lm_img_lingain"]
         assert "metis_lm_img_dark" not in task_names
-
-
-# ---------------------------------------------------------------------------
-# Archive image check
-# ---------------------------------------------------------------------------
-
-
-class TestArchiveImageExists:
-    def test_exists(self):
-        with patch("archive.subprocess.run") as mock:
-            mock.return_value = MagicMock(returncode=0)
-            assert archive.archive_image_exists("myimg") is True
-
-    def test_not_exists(self):
-        with patch("archive.subprocess.run") as mock:
-            mock.return_value = MagicMock(returncode=1)
-            assert archive.archive_image_exists("myimg") is False
-
-
-# ---------------------------------------------------------------------------
-# Stack status
-# ---------------------------------------------------------------------------
-
-
-class TestArchiveStackStatus:
-    def test_parses_json_output(self, tmp_path):
-        containers = [
-            {"Service": "postgres", "State": "running"},
-            {"Service": "dataserver", "State": "running"},
-        ]
-        with patch("archive.subprocess.run") as mock:
-            mock.return_value = MagicMock(
-                returncode=0, stdout=json.dumps(containers),
-            )
-            status = archive.archive_stack_status(tmp_path)
-            assert status == {"postgres": "running", "dataserver": "running"}
-
-    def test_returns_empty_on_failure(self, tmp_path):
-        with patch("archive.subprocess.run") as mock:
-            mock.return_value = MagicMock(returncode=1, stdout="")
-            status = archive.archive_stack_status(tmp_path)
-            assert status == {}
-
-    def test_handles_not_installed(self, tmp_path):
-        with patch("archive.subprocess.run", side_effect=FileNotFoundError):
-            status = archive.archive_stack_status(tmp_path)
-            assert status == {}
-
-
-# ---------------------------------------------------------------------------
-# Compose exec helper
-# ---------------------------------------------------------------------------
-
-
-class TestComposeExec:
-    def test_calls_podman_compose_exec(self, tmp_path):
-        with patch("archive.subprocess.run") as mock:
-            mock.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
-            rc, out, err = archive._compose_exec(
-                "print('hello')", compose_dir=tmp_path,
-            )
-            assert rc == 0
-            assert out == "ok"
-            cmd = mock.call_args[0][0]
-            assert cmd[:3] == ["podman-compose", "exec", "-T"]
-            assert "dataserver" in cmd
-            assert "python" in cmd
