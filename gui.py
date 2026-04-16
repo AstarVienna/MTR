@@ -529,6 +529,11 @@ class InstallWorker(QThread):
                 r"^association_preference=.*",
                 "association_preference=master_per_quality_level",
             ),
+            "categories": (r"^categories=.*", "categories=.*"),
+            "pattern": (
+                r"^pattern=.*",
+                "pattern=$TASK/$TIMESTAMP/$object$_$pro.catg$.$EXT",
+            ),
         }
         for key, (pattern, replacement) in patches.items():
             text, count = re.subn(pattern, replacement, text, flags=re.MULTILINE)

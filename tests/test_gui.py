@@ -334,6 +334,7 @@ class TestPatchEdpsConfig:
     FULL_PROPS = (
         "port=5000\nworkflow_dir=/old\nesorex_path=esorex\n"
         "association_preference=raw_per_quality_level\n"
+        "categories=\npattern=$DATASET/$TIMESTAMP/$object$_$pro.catg$.$EXT\n"
     )
 
     def _make_worker(self, qapp):
@@ -371,7 +372,8 @@ class TestPatchEdpsConfig:
             tmp_path,
             "port=5000\nsome.other.key=value\n"
             "workflow_dir=/old\nesorex_path=esorex\n"
-            "association_preference=raw_per_quality_level\n",
+            "association_preference=raw_per_quality_level\n"
+            "categories=\npattern=$DATASET/$TIMESTAMP/$object$_$pro.catg$.$EXT\n",
         )
         self._make_worker(qapp)._patch_edps_config()
         assert "some.other.key=value" in props.read_text()
@@ -396,6 +398,18 @@ class TestPatchEdpsConfig:
         props = self._seed(tmp_path, self.FULL_PROPS)
         self._make_worker(qapp)._patch_edps_config()
         assert "association_preference=master_per_quality_level" in props.read_text()
+
+    def test_patches_categories(self, qapp, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        props = self._seed(tmp_path, self.FULL_PROPS)
+        self._make_worker(qapp)._patch_edps_config()
+        assert "categories=.*" in props.read_text()
+
+    def test_patches_pattern_with_task(self, qapp, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        props = self._seed(tmp_path, self.FULL_PROPS)
+        self._make_worker(qapp)._patch_edps_config()
+        assert "$TASK/" in props.read_text()
 
     def test_raises_when_port_key_absent(self, qapp, tmp_path, monkeypatch):
         # If EDPS drifts its config format, we want a loud error that names
