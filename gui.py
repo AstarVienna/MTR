@@ -9,12 +9,13 @@ Three-tab graphical front-end:
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QProcess, QProcessEnvironment, QSettings, QThread, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QPalette, QTextCharFormat, QTextCursor
+from PyQt6.QtCore import Qt, QProcess, QProcessEnvironment, QSettings, QThread, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import QColor, QDesktopServices, QFont, QPalette, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
     QAbstractSpinBox, QApplication, QButtonGroup, QCheckBox, QComboBox,
     QFileDialog, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
@@ -53,7 +54,13 @@ def _child_env() -> dict[str, str]:
     env = os.environ.copy()
     env.pop("VIRTUAL_ENV", None)
     env.pop("UV_PROJECT_ENVIRONMENT", None)
+    env["PYTHONUNBUFFERED"] = "1"
     return env
+
+
+def _installation_complete() -> bool:
+    """Return True if the essential install artifacts exist."""
+    return (TARGET_A / ".git").exists() and (REPO_ROOT / ".env").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -1276,8 +1283,14 @@ class RunTab(QWidget):
         self.stop_btn.setMaximumWidth(120)
         self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self._stop)
+        self.open_folder_btn = QPushButton("Open Folder")
+        self.open_folder_btn.setProperty("role", "info")
+        self.open_folder_btn.setMinimumHeight(36)
+        self.open_folder_btn.setMaximumWidth(120)
+        self.open_folder_btn.clicked.connect(self._open_folder)
         run_row.addWidget(self.run_btn)
         run_row.addWidget(self.stop_btn)
+        run_row.addWidget(self.open_folder_btn)
         run_row.addStretch()
         outer.addLayout(run_row)
 
@@ -1464,6 +1477,48 @@ class RunTab(QWidget):
         else:
             log_append(self.log_view, f"\n✗ Exited with code {exit_code}.\n", "red")
 
+    # ── Open output folder ───────────────────────────────────────────────────
+
+    def _open_folder(self) -> None:
+        """Open the output directory in the system file manager or a terminal."""
+        text = self.output_edit.text().strip()
+        target = Path(text) if text else REPO_ROOT / "output"
+
+        if not target.exists():
+            QMessageBox.information(
+                self, "Directory not found",
+                f"The output directory does not exist yet:\n\n{target}\n\n"
+                "Run the pipeline first to create it.",
+            )
+            return
+
+        url = QUrl.fromLocalFile(str(target))
+        if QDesktopServices.openUrl(url):
+            return
+
+        # No file manager — fall back to opening a terminal at the directory.
+        for term in ("x-terminal-emulator", "xterm", "konsole",
+                     "gnome-terminal", "xfce4-terminal"):
+            exe = shutil.which(term)
+            if not exe:
+                continue
+            try:
+                if term == "gnome-terminal":
+                    subprocess.Popen([exe, "--working-directory", str(target)])
+                elif term == "konsole":
+                    subprocess.Popen([exe, "--workdir", str(target)])
+                else:
+                    subprocess.Popen([exe], cwd=str(target))
+                return
+            except OSError:
+                continue
+
+        QMessageBox.information(
+            self, "Cannot open folder",
+            f"No file manager or terminal emulator found.\n\n"
+            f"Output directory:\n{target}",
+        )
+
     # ── Settings persistence ─────────────────────────────────────────────────
 
     def _load_settings(self) -> None:
@@ -1575,6 +1630,8 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._run_tab, "Run")
         tabs.addTab(InstallTab(), "Install")
         tabs.addTab(self._archive_tab, "Archive")
+        if not _installation_complete():
+            tabs.setCurrentIndex(1)  # Install tab
         self.setCentralWidget(tabs)
 
     def _update_theme_btn_label(self) -> None:
