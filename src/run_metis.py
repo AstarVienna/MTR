@@ -685,7 +685,9 @@ def parse_args(argv=None):
     )
     p.add_argument(
         "-o", "--output", metavar="DIR",
-        help="Root output directory [default: ./output/<timestamp>]",
+        default=os.environ.get("METIS_OUTPUT_DIR"),
+        help="Root output directory [default: ./output/<timestamp>] "
+             "(env: METIS_OUTPUT_DIR)",
     )
     p.add_argument(
         "--calib", type=int, nargs="?", const=1, default=1, metavar="N",
@@ -713,9 +715,12 @@ def parse_args(argv=None):
     )
     p.add_argument(
         "--pipeline-input", metavar="DIR", action="append",
+        default=([os.environ["METIS_PIPELINE_INPUT"]]
+                 if os.environ.get("METIS_PIPELINE_INPUT") else None),
         help="Directory containing FITS files to use as pipeline input. "
              "May be specified multiple times. Only used with --no-sim. "
-             "When omitted, defaults to <output>/sim/.",
+             "When omitted, defaults to <output>/sim/. "
+             "(env: METIS_PIPELINE_INPUT)",
     )
     p.add_argument(
         "--no-pipeline", action="store_true",
@@ -739,17 +744,21 @@ def parse_args(argv=None):
     p.add_argument(
         "--meta-pkg", metavar="DIR",
         help="Path to the metis-meta-package directory "
-             "[default: ./metis-meta-package] (metapkg runner only)",
+             "[default: ./metis-meta-package] (metapkg runner only) "
+             "(env: METIS_META_PKG)",
     )
     p.add_argument(
         "--simulations-dir", metavar="DIR",
+        default=os.environ.get("METIS_SIMULATIONS_DIR"),
         help="Path to the METIS_Simulations repository. For docker/podman "
              "runners this must be the path *inside* the container "
              "[default: ./METIS_Simulations for native/metapkg, "
-             "/home/metis/METIS_Simulations for docker/podman]",
+             "/home/metis/METIS_Simulations for docker/podman] "
+             "(env: METIS_SIMULATIONS_DIR)",
     )
     p.add_argument(
         "--inst-pkgs", metavar="DIR",
+        default=os.environ.get("METIS_INST_PKGS"),
         help="Path to the ScopeSim instrument packages directory "
              "(Armazones, ELT, METIS, …). "
              "For the metapkg runner this defaults to <meta-pkg>/inst_pkgs. "
@@ -757,7 +766,8 @@ def parse_args(argv=None):
              "the current working directory — ScopeSim will download packages "
              "there on first use. "
              "For docker/podman runners supply the container-internal path; "
-             "if omitted ScopeSim resolves ./inst_pkgs inside the container.",
+             "if omitted ScopeSim resolves ./inst_pkgs inside the container. "
+             "(env: METIS_INST_PKGS)",
     )
     p.add_argument(
         "--auto-fetch-calibrations", action="store_true",

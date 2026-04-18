@@ -31,7 +31,8 @@ from PyQt6.QtWidgets import (
 REPO_ROOT   = Path(__file__).resolve().parent.parent
 META_PKG    = Path(os.environ.get("METIS_META_PKG", str(REPO_ROOT / "metis-meta-package")))
 TARGET_A    = REPO_ROOT / "METIS_Pipeline"
-TARGET_B    = REPO_ROOT / "METIS_Simulations"
+TARGET_B    = Path(os.environ.get("METIS_SIMULATIONS_DIR", str(REPO_ROOT / "METIS_Simulations")))
+INST_PKGS   = Path(os.environ.get("METIS_INST_PKGS", str(REPO_ROOT / "inst_pkgs")))
 REPO_A_URL  = "https://github.com/AstarVienna/METIS_Pipeline.git"
 REPO_B_URL  = "https://github.com/AstarVienna/METIS_Simulations.git"
 
@@ -1266,6 +1267,7 @@ class RunTab(QWidget):
         # Instrument packages  [always visible]
         self.inst_edit = QLineEdit()
         inst_browse = _dir_picker(self.inst_edit, self)
+        self.inst_edit.setPlaceholderText(str(INST_PKGS))
         opts_lay.addWidget(_labeled("Instrument packages  (--inst-pkgs):", self.inst_edit, inst_browse))
 
         outer.addWidget(opts_grp)

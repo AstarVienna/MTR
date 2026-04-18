@@ -21,6 +21,42 @@ cd MTR
 
 From there, everything — installing the pipeline, selecting a runner, picking YAML inputs, and watching live pipeline output — is available as point-and-click controls.
 
+## System Dependencies
+
+The GUI requires a handful of system libraries for Qt6 / OpenGL rendering. Python, Git, and basic CLI tools (`curl`, `tar`, …) are assumed to already be present.
+
+**Debian / Ubuntu**
+
+```bash
+sudo apt install \
+  libgl1 libegl1 libglib2.0-0 libxkbcommon0 \
+  libfontconfig1 libfreetype6 libdbus-1-3 \
+  libxkbcommon-x11-0 libxcb-cursor0 libxcb-keysyms1 libxcb-icccm4 libxcb-shape0
+```
+
+**Fedora**
+
+```bash
+sudo dnf install \
+  mesa-libGL mesa-libEGL glib2 libxkbcommon \
+  fontconfig freetype dbus-libs \
+  libxkbcommon-x11 xcb-util-cursor xcb-util-keysyms xcb-util-wm
+```
+
+**macOS (Homebrew)**
+
+On macOS, Qt uses the native Cocoa backend so X11/xcb packages are not needed:
+
+```bash
+brew install freetype fontconfig glib
+```
+
+> **Tip:** if the GUI crashes at startup with *"could not find or load the Qt platform plugin"*, set `QT_DEBUG_PLUGINS=1` to get detailed diagnostics:
+> ```bash
+> QT_DEBUG_PLUGINS=1 ./launch.sh
+> ```
+> The output will list exactly which shared library failed to load.
+
 ## The GUI
 
 The GUI is the recommended way to drive the test runner. It exposes every CLI flag through labelled controls, remembers your settings between sessions, and streams colour-coded live output from the pipeline.
@@ -159,17 +195,17 @@ python src/run_metis.py [OPTIONS] yaml1.yaml [yaml2.yaml ...]
 
 | Flag | Default | Description |
 |---|---|---|
-| `-o / --output` | `./output/<timestamp>` | Root directory for all outputs |
+| `-o / --output` | `./output/<timestamp>` | Root directory for all outputs (env: `METIS_OUTPUT_DIR`) |
 | `--runner {metapkg,native,docker,podman}` | `metapkg` | Execution mode (see below; env: `METIS_RUNNER`) |
 | `--container NAME` | — | Container name/ID for `docker` / `podman` runners (env: `METIS_CONTAINER`) |
 | `--calib [N]` | `1` | Auto-generate N calibration frames (dark/flat) per unique config, inferred from YAML. Pass `--calib 0` to disable. |
 | `--cores N` | `4` | CPU cores used for parallel simulations |
 | `--no-sim` | off | Skip simulation; run pipeline on existing FITS data (source defaults to `<output>/sim/` — override with `--pipeline-input`) |
-| `--pipeline-input DIR` | `<output>/sim/` | Directory containing FITS files to feed the pipeline (only with `--no-sim`) |
+| `--pipeline-input DIR` | `<output>/sim/` | Directory containing FITS files to feed the pipeline (only with `--no-sim`; env: `METIS_PIPELINE_INPUT`) |
 | `--no-pipeline` | off | Run simulation only; skip EDPS pipeline |
-| `--meta-pkg PATH` | `.` (repo root) | Path to the pipeline environment directory (`metapkg` runner only). Falls back to `./pipeline/` then `./metis-meta-package/`. |
-| `--simulations-dir PATH` | `./METIS_Simulations` (host) or `/home/metis/METIS_Simulations` (container) | Path to ScopeSim scripts |
-| `--inst-pkgs PATH` | see below | Path to ScopeSim instrument packages (Armazones, ELT, METIS). Defaults to `./inst_pkgs` for `metapkg`/`native`, and container-resolved `./inst_pkgs` for `docker`/`podman` |
+| `--meta-pkg PATH` | `.` (repo root) | Path to the pipeline environment directory (`metapkg` runner only). Falls back to `./pipeline/` then `./metis-meta-package/`. (env: `METIS_META_PKG`) |
+| `--simulations-dir PATH` | `./METIS_Simulations` (host) or `/home/metis/METIS_Simulations` (container) | Path to ScopeSim scripts (env: `METIS_SIMULATIONS_DIR`) |
+| `--inst-pkgs PATH` | see below | Path to ScopeSim instrument packages (Armazones, ELT, METIS). Defaults to `./inst_pkgs` for `metapkg`/`native`, and container-resolved `./inst_pkgs` for `docker`/`podman` (env: `METIS_INST_PKGS`) |
 
 ### Runner modes
 
