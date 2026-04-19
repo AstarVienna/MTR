@@ -469,7 +469,7 @@ def _build_sim_script(out_dir, do_calib, do_static, n_cores, yaml_list,
             "if not (_inst_dir / 'METIS').is_dir():",
             f"    print('Instrument packages not found at {inst_pkgs_path}. Downloading \u2026')",
             "    _inst_dir.mkdir(parents=True, exist_ok=True)",
-            "    sim.download_packages('METIS', release='2026-02-18')",
+            "    sim.download_packages('METIS', release='2026-04-17')",
             "    sim.download_packages('ELT', release='2025-10-26')",
             "    sim.download_packages('Armazones', release='2023-07-11')"
         ]

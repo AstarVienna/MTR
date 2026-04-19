@@ -16,7 +16,7 @@ pipeline = [
     "edps",
     "pyesorex",
     "adari_core",
-    "scopesim==0.11.2",
+    "scopesim==0.11.3",
     "scopesim_templates==0.8.1",
 ]
 
