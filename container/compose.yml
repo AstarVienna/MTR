@@ -8,6 +8,7 @@ services:
       context: ..
       dockerfile: container/Dockerfile
     userns_mode: keep-id
+    network_mode: host
     volumes:
       # Full repo — source, cloned repos, and runtime data
       - type: bind
