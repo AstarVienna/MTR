@@ -74,7 +74,7 @@ A **Light / Dark theme** button lives in the toolbar and toggles on the fly.
 The Install tab performs the full pipeline bootstrap non-interactively. Use it if you do **not** already have the pipeline installed. Clicking **Install / Update** will:
 
 1. Clone (or update, if already present) `METIS_Pipeline` and `METIS_Simulations` into the repo root
-2. Run `uv sync --group pipeline` to install all pipeline Python dependencies into the main virtual environment
+2. Run `uv sync --group pipeline --inexact` to install all pipeline Python dependencies into the main virtual environment (the `--inexact` flag preserves packages installed out-of-band, such as MetisWISE from the Archive tab)
 3. Write `.env` in the repo root (environment variables for PYTHONPATH, plugin directories, etc.)
 4. Initialise and configure EDPS on port 4444
 

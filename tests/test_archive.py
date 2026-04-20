@@ -12,8 +12,6 @@ Covers:
 
 from unittest.mock import patch, MagicMock
 
-import pytest
-
 import archive
 
 # Mocks for the commonwise database modules imported by _ensure_db_connection().
