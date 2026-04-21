@@ -89,25 +89,31 @@ def _ensure_metiswise_imports() -> None:
     global _metiswise_imports_done
     if _metiswise_imports_done:
         return
-    _metiswise_imports_done = True
 
+    import importlib
     import sys
 
     drld_path = str(DRLD_DIR)
     if drld_path not in sys.path:
         sys.path.insert(0, drld_path)
 
-    try:
-        from codes.drld_parser.data_reduction_library_design import (
-            DataReductionLibraryDesign,  # noqa: F401
-        )
-    except ImportError:
+    # Clone METIS_DRLD on first use.  Must happen before the import so that
+    # Python's finder sees a real ``codes`` package on sys.path; a failed
+    # import populates a negative cache that persists for the process, which
+    # is why invalidate_caches() is called after the clone.
+    if not (DRLD_DIR / "codes").is_dir():
         subprocess.run(
             ["git", "clone", "--depth", "1", DRLD_REPO_URL, str(DRLD_DIR)],
             check=True,
         )
+        importlib.invalidate_caches()
 
+    from codes.drld_parser.data_reduction_library_design import (
+        DataReductionLibraryDesign,  # noqa: F401
+    )
     import metiswise.main.aweimports  # noqa: F401
+
+    _metiswise_imports_done = True
 
 
 # ---------------------------------------------------------------------------
@@ -321,30 +327,36 @@ def query_archive(
     if on_log:
         on_log("Querying archive…")
 
-    try:
-        if category:
-            cls = _resolve_dataitem_class(category, DataItem)
-            if cls is None:
-                if on_log:
-                    on_log(f"Unknown category: {category}")
-                return []
-            results = cls.select_all()
-        else:
-            results = DataItem.select_all()
+    if category:
+        cls = _resolve_dataitem_class(category, DataItem)
+        if cls is None:
+            if on_log:
+                on_log(f"Unknown category: {category}")
+            return []
+        results = cls.select_all()
+    else:
+        results = DataItem.select_all()
 
-        items = []
+    # ``results`` may be a MetisWISE Select query object whose __bool__ raises
+    # "Select object cannot be used without an operator in conditional
+    # statements", so never evaluate it in a boolean context — just iterate.
+    items = []
+    if results is not None:
         for r in results:
+            # Skip malformed / empty rows (e.g. a None sentinel returned by the
+            # MetisWISE ORM when the archive has no data) rather than aborting
+            # the whole query with an AttributeError.
+            if r is None:
+                continue
+            filename = getattr(r, "filename", None)
+            if filename is None:
+                continue
             items.append({
-                "filename": r.filename,
+                "filename": filename,
                 "pro_catg": getattr(r, "pro_catg", ""),
                 "class_name": type(r).__name__,
             })
-        return items
-
-    except Exception as exc:
-        if on_log:
-            on_log(f"Query failed: {exc}")
-        return []
+    return items
 
 
 def download_file(
@@ -388,7 +400,10 @@ def download_file(
 
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / filename
-        shutil.copy2(str(src), str(dest))
+        # MetisWISE may retrieve directly into *dest_dir* (e.g. cwd),
+        # in which case copy2() would error with "same file".
+        if src.resolve() != dest.resolve():
+            shutil.copy2(str(src), str(dest))
         if on_log:
             on_log(f"Downloaded {filename} → {dest}")
         return dest
