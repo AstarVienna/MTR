@@ -865,10 +865,13 @@ def main():
                 "Pass --simulations-dir if it is installed elsewhere."
             )
 
-    # Infer workflow and collect data tags from YAML (if provided)
+    # Infer workflow and collect data tags from YAML (if provided).
+    # In --no-sim mode YAML content is ignored — workflow and tags come from
+    # the FITS headers in --pipeline-input, so a leftover YAML from a previous
+    # simulate+run cannot force the wrong workflow here.
     print(f"  Runner    : {runner}"
           + (f" (container: {args.container})" if args.container else ""))
-    if yaml_files:
+    if yaml_files and not args.no_sim:
         print("Analysing YAML file(s) …")
         try:
             workflow, has_science, yaml_tags = infer_workflow(yaml_files)
@@ -877,7 +880,9 @@ def main():
         print(f"  Workflow  : {workflow}")
         print(f"  Data tags : {sorted(yaml_tags) or '(none found)'}")
     else:
-        # Pipeline-only with no YAML: workflow will be inferred from FITS headers
+        if yaml_files:
+            print(f"  Note      : ignoring {len(yaml_files)} YAML file(s) "
+                  "in --no-sim mode")
         workflow = None
         has_science = False
         yaml_tags = set()
@@ -1020,18 +1025,23 @@ def main():
                 fits_tags |= collect_tags_from_fits(d)
             if fits_tags:
                 print(f"  FITS tags found : {sorted(fits_tags)}")
-            data_tags = yaml_tags | fits_tags
-            if workflow is None:
-                last_err = None
-                for d in input_dirs:
-                    try:
-                        workflow = infer_workflow_from_fits(d)
-                        print(f"  Workflow  : {workflow}")
-                        break
-                    except ValueError as exc:
-                        last_err = exc
-                if workflow is None and last_err is not None:
-                    sys.exit(f"Error: {last_err}")
+            data_tags = fits_tags
+            last_err = None
+            for d in input_dirs:
+                try:
+                    workflow = infer_workflow_from_fits(d)
+                    print(f"  Workflow  : {workflow}")
+                    break
+                except ValueError as exc:
+                    last_err = exc
+            if workflow is None and last_err is not None:
+                sys.exit(f"Error: {last_err}")
+            # Re-derive has_science from the FITS tags + workflow chain so the
+            # -m science flag is added when science raws are present.
+            has_science = any(
+                meta == "science" and tag in data_tags
+                for _, tag, meta in WORKFLOW_TASK_CHAIN.get(workflow, [])
+            )
         else:
             data_tags = yaml_tags
 
