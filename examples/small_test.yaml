@@ -9,7 +9,7 @@ LMS_RAD_01_DARK_IFU_RAW_03:
     ndit: 3
     wavelen: 3.555
     filter_name: "open"
-    ndfilter_name: "open"
+    nd_filter_name: "open"
     tech: "LMS"
     type: "DARK"
     catg: "CALIB"
@@ -28,7 +28,7 @@ DETLIN_IFU_RAW1:
     ndit: 4
     wavelen: 5.2294
     filter_name: "open"
-    ndfilter_name: "open"
+    nd_filter_name: "open"
     detector_readout_mode: "slow"
     catg: "CALIB"
     tech: "LMS"
