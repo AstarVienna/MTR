@@ -12,7 +12,7 @@ dependencies = [
 [dependency-groups]
 dev = ["pytest"]
 pipeline = [
-    "pycpl==1.0.3.post9",
+    "pycpl==1.0.3.post10",
     "edps",
     "pyesorex",
     "adari_core",
