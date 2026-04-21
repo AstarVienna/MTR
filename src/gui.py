@@ -454,6 +454,17 @@ class InstallWorker(QThread):
             self._run(["uv", "sync", "--group", "pipeline", "--inexact"],
                       cwd=REPO_ROOT)
 
+            self._step("Installing METIS_Simulations (editable) into .venv…")
+            # METIS_Simulations is not tracked in pyproject.toml because the
+            # checkout only exists after the clone above — a fresh `./launch.sh`
+            # would otherwise fail to resolve it.  Install it out-of-band;
+            # --inexact on subsequent `uv sync` runs preserves it.
+            self._run(
+                ["uv", "pip", "install", "--editable", str(TARGET_B),
+                 "--python", str(REPO_ROOT / ".venv" / "bin" / "python")],
+                cwd=REPO_ROOT,
+            )
+
             self._step("Writing .env…")
             self._write_env()
 

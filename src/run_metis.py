@@ -409,7 +409,7 @@ def infer_edps_target(workflow, data_tags, has_science):
 
 def _build_sim_script(out_dir, do_calib, do_static, n_cores, yaml_list,
                       inst_pkgs_path=None, sims_root=None,
-                      static_calibs_dir=None):
+                      static_calibs_dir=None, do_sim=True):
     """Return the simulation driver script as a string.
 
     When *inst_pkgs_path* is given (metapkg and native runners) the script
@@ -421,6 +421,11 @@ def _build_sim_script(out_dir, do_calib, do_static, n_cores, yaml_list,
     into that directory instead of the simulation output, reusing any files
     that already exist there.  This avoids regenerating ~200 MB of FITS files
     on every run.
+
+    When *do_sim* is False, the runSimulationBlock() call is omitted so the
+    script only runs the static calibration generation block.  Used by the
+    pipeline-only (--no-sim) path to populate the static calibs cache when
+    it is missing, without re-running any of the sim blocks.
     """
     # Static calibration generation is handled separately (see end of script)
     # so we never let runSimulationBlock() do it via doStatic.  The upstream
@@ -504,41 +509,44 @@ def _build_sim_script(out_dir, do_calib, do_static, n_cores, yaml_list,
         "    pass",
         "# ---------------------------------------------------------------------",
         "",
-        "from metis_simulations import runSimulationBlock as rsb",
-        "",
         'if __name__ == "__main__":',
-        "    params = dict(",
-        f"        outputDir = {out_dir!r},",
-        "        small     = False,",
-        "        doStatic  = False,",
-        f"        doCalib   = {do_calib!r},",
-        "        sequence  = False,",
-        "        startMJD  = None,",
-        "        calibFile = None,",
-        f"        nCores    = {n_cores!r},",
-        "        testRun   = False,",
-        "    )",
-        "    try:",
-        f"        rsb.runSimulationBlock({yaml_list!r}, params, [])",
-        "    except ValueError as _exc:",
-        "        if 'Package could not be found' in str(_exc):",
-        "            import sys as _sys",
-        "            print('', file=_sys.stderr)",
-        "            print('HINT: ScopeSim could not find the instrument packages.', file=_sys.stderr)",
+        "    pass",
     ]
-    if inst_pkgs_path is not None:
-        lines.append(
-            f"            print('  Instrument packages path: {inst_pkgs_path}', file=_sys.stderr)"
-        )
-    else:
-        lines.append(
-            "            print('  No instrument packages path was configured.', file=_sys.stderr)"
-        )
-    lines += [
-        "            print('  In the GUI: set the Instrument packages field in the Run tab.', file=_sys.stderr)",
-        "            print('  On the command line: pass --inst-pkgs <path>.', file=_sys.stderr)",
-        "        raise",
-    ]
+    if do_sim:
+        lines += [
+            "    from metis_simulations import runSimulationBlock as rsb",
+            "    params = dict(",
+            f"        outputDir = {out_dir!r},",
+            "        small     = False,",
+            "        doStatic  = False,",
+            f"        doCalib   = {do_calib!r},",
+            "        sequence  = False,",
+            "        startMJD  = None,",
+            "        calibFile = None,",
+            f"        nCores    = {n_cores!r},",
+            "        testRun   = False,",
+            "    )",
+            "    try:",
+            f"        rsb.runSimulationBlock({yaml_list!r}, params, [])",
+            "    except ValueError as _exc:",
+            "        if 'Package could not be found' in str(_exc):",
+            "            import sys as _sys",
+            "            print('', file=_sys.stderr)",
+            "            print('HINT: ScopeSim could not find the instrument packages.', file=_sys.stderr)",
+        ]
+        if inst_pkgs_path is not None:
+            lines.append(
+                f"            print('  Instrument packages path: {inst_pkgs_path}', file=_sys.stderr)"
+            )
+        else:
+            lines.append(
+                "            print('  No instrument packages path was configured.', file=_sys.stderr)"
+            )
+        lines += [
+            "            print('  In the GUI: set the Instrument packages field in the Run tab.', file=_sys.stderr)",
+            "            print('  On the command line: pass --inst-pkgs <path>.', file=_sys.stderr)",
+            "        raise",
+        ]
 
     # --- Static calibration prototypes (cached) -----------------------------
     # Generate PERSISTENCE_MAP, ATM_PROFILE, REF_STD_CAT, etc. into a shared
@@ -944,6 +952,32 @@ def main():
                              meta_pkg=meta_pkg)
         if rc != 0:
             sys.exit(f"Error: simulation step failed (exit code {rc}).")
+
+    # -----------------------------------------------------------------------
+    # Step 1.25: Static calibration prototypes (pipeline-only path)
+    # -----------------------------------------------------------------------
+    # When --no-sim is set the simulation step is skipped entirely, so the
+    # statics that would normally be produced alongside the sim are never
+    # generated. Run the same sim script with do_sim=False (which keeps only
+    # the static calib block) when the shared cache is empty.
+    elif not args.no_pipeline and args.static \
+            and not (static_calibs_dir / "PERSISTENCE_MAP_LM.fits").is_file():
+        sim_code = _build_sim_script(
+            out_dir            = str(sim_out),
+            do_calib           = 0,
+            do_static          = args.static,
+            n_cores            = args.cores,
+            yaml_list          = [],
+            inst_pkgs_path     = None,
+            sims_root          = sims_root,
+            static_calibs_dir  = str(static_calibs_dir),
+            do_sim             = False,
+        )
+        print("=== Generating static calibration prototypes ===")
+        rc = _run_simulation(runner, args.container, sim_code, sims_cwd,
+                             meta_pkg=meta_pkg)
+        if rc != 0:
+            sys.exit(f"Error: static calibration generation failed (exit code {rc}).")
 
     # -----------------------------------------------------------------------
     # Step 1.5: Auto-fetch missing master calibrations (optional)

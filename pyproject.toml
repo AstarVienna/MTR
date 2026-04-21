@@ -2,7 +2,7 @@
 name = "mtr"
 version = "0.1.0"
 description = "METIS Test Runner — GUI and CLI wrapper for end-to-end pipeline testing"
-requires-python = ">=3.11, <3.14"
+requires-python = ">=3.12, <3.14"
 dependencies = [
     "PyQt6==6.6.0",
     "Pyqt6-Qt6==6.6.0",
