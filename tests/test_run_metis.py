@@ -505,6 +505,23 @@ class TestCollectTagsFromFits:
         tags = collect_tags_from_fits(tmp_path)
         assert tags == set()
 
+    def test_recurses_into_subdirectories(self, tmp_path):
+        """--pipeline-input may point at an output-root; raw FITS live in
+        sub-directories (e.g. ``sim/``) and must still be classified."""
+        pytest.importorskip("astropy")
+        from astropy.io import fits as afits
+
+        sim_dir = tmp_path / "sim"
+        sim_dir.mkdir()
+        hdr = afits.Header()
+        hdr["HIERARCH ESO DPR CATG"] = "CALIB"
+        hdr["HIERARCH ESO DPR TYPE"] = "DARK"
+        hdr["HIERARCH ESO DPR TECH"] = "IFU"
+        afits.HDUList([afits.PrimaryHDU(header=hdr)]).writeto(sim_dir / "dark.fits")
+
+        tags = collect_tags_from_fits(tmp_path)
+        assert "DARK_IFU_RAW" in tags
+
 
 # ---------------------------------------------------------------------------
 # classify_fits_file

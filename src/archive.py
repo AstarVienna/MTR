@@ -17,6 +17,7 @@ import re
 import shutil
 import subprocess
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -567,36 +568,62 @@ def upload_file(
 # Section D — Master calibration auto-download
 # ---------------------------------------------------------------------------
 
-# Maps pipeline task names to the PRO.CATG of the master product they create.
-TASK_TO_MASTER_PROCATG: dict[str, str] = {
+# Canonical source of truth for what each EDPS task produces and consumes
+# lives in METIS_Pipeline/metisp/workflows/metis/metis_*_wkf.py (see
+# `.with_main_input(...)` / `.with_associated_input(...)` calls). The mapping
+# below mirrors that graph for the subset of tasks whose master products we
+# can fetch from the archive. Static reference files (PERSISTENCE_MAP,
+# ATM_PROFILE, REF_STD_CAT, etc.) are intentionally absent: they are
+# regenerated locally in run_metis.py's pre-pipeline prelude via
+# metis_simulations.makeCalibPrototypes.generateStaticCalibs().
+
+
+@dataclass(frozen=True)
+class TaskProducts:
+    """Archive-relevant I/O for a single EDPS task.
+
+    ``produces`` are the ``PRO.CATG`` names of the master products the task
+    writes; all must be present for the task to be considered covered by
+    local files. ``consumes`` lists non-static ancillary masters that are
+    required as input but are *not* produced by another task in the chain —
+    today this stays empty for every task (all such inputs are either
+    chain outputs or locally generated static calibs), and is retained as a
+    schema slot for the rare future case that needs it.
+    """
+
+    produces: tuple[str, ...]
+    consumes: tuple[str, ...] = ()
+
+
+TASK_PRODUCTS: dict[str, TaskProducts] = {
     # LM IMG
-    "metis_lm_img_lingain":          "LINEARITY_2RG",
-    "metis_lm_img_dark":             "MASTER_DARK_2RG",
-    "metis_lm_img_flat":             "MASTER_IMG_FLAT_LAMP_LM",
-    "metis_lm_img_distortion":       "LM_DISTORTION_TABLE",
+    "metis_lm_img_lingain":          TaskProducts(produces=("LINEARITY_2RG", "GAIN_MAP_2RG")),
+    "metis_lm_img_dark":             TaskProducts(produces=("MASTER_DARK_2RG",)),
+    "metis_lm_img_flat":             TaskProducts(produces=("MASTER_IMG_FLAT_LAMP_LM",)),
+    "metis_lm_img_distortion":       TaskProducts(produces=("LM_DISTORTION_TABLE",)),
     # N IMG
-    "metis_n_img_lingain":           "LINEARITY_GEO",
-    "metis_n_img_dark":              "MASTER_DARK_GEO",
-    "metis_n_img_flat":              "MASTER_IMG_FLAT_LAMP_N",
-    "metis_n_img_distortion":        "N_DISTORTION_TABLE",
+    "metis_n_img_lingain":           TaskProducts(produces=("LINEARITY_GEO", "GAIN_MAP_GEO")),
+    "metis_n_img_dark":              TaskProducts(produces=("MASTER_DARK_GEO",)),
+    "metis_n_img_flat":              TaskProducts(produces=("MASTER_IMG_FLAT_LAMP_N",)),
+    "metis_n_img_distortion":        TaskProducts(produces=("N_DISTORTION_TABLE",)),
     # IFU
-    "metis_ifu_lingain":             "LINEARITY_IFU",
-    "metis_ifu_dark":                "MASTER_DARK_IFU",
-    "metis_ifu_distortion":          "IFU_DISTORTION_TABLE",
-    "metis_ifu_wavecal":             "IFU_WAVECAL",
-    "metis_ifu_rsrf":                "MASTER_IFU_RSRF",
+    "metis_ifu_lingain":             TaskProducts(produces=("LINEARITY_IFU", "GAIN_MAP_IFU")),
+    "metis_ifu_dark":                TaskProducts(produces=("MASTER_DARK_IFU",)),
+    "metis_ifu_distortion":          TaskProducts(produces=("IFU_DISTORTION_TABLE",)),
+    "metis_ifu_wavecal":             TaskProducts(produces=("IFU_WAVECAL",)),
+    "metis_ifu_rsrf":                TaskProducts(produces=("MASTER_IFU_RSRF",)),
     # LM LSS
-    "metis_lm_lss_lingain":          "LINEARITY_2RG",
-    "metis_lm_lss_dark":             "MASTER_DARK_2RG",
-    "metis_lm_lss_rsrf":             "LM_LSS_MASTER_RSRF",
-    "metis_lm_lss_trace":            "LM_LSS_TRACE_TABLE",
-    "metis_lm_lss_wave":             "LM_LSS_WAVECAL",
+    "metis_lm_lss_lingain":          TaskProducts(produces=("LINEARITY_2RG", "GAIN_MAP_2RG")),
+    "metis_lm_lss_dark":             TaskProducts(produces=("MASTER_DARK_2RG",)),
+    "metis_lm_lss_rsrf":             TaskProducts(produces=("LM_LSS_MASTER_RSRF",)),
+    "metis_lm_lss_trace":            TaskProducts(produces=("LM_LSS_TRACE_TABLE",)),
+    "metis_lm_lss_wave":             TaskProducts(produces=("LM_LSS_WAVECAL",)),
     # N LSS
-    "metis_n_lss_lingain":           "LINEARITY_GEO",
-    "metis_n_lss_dark":              "MASTER_DARK_GEO",
-    "metis_n_lss_rsrf":              "N_LSS_MASTER_RSRF",
-    "metis_n_lss_trace":             "N_LSS_TRACE_TABLE",
-    "metis_n_lss_wave":              "N_LSS_WAVECAL",
+    "metis_n_lss_lingain":           TaskProducts(produces=("LINEARITY_GEO", "GAIN_MAP_GEO")),
+    "metis_n_lss_dark":              TaskProducts(produces=("MASTER_DARK_GEO",)),
+    "metis_n_lss_rsrf":              TaskProducts(produces=("N_LSS_MASTER_RSRF",)),
+    "metis_n_lss_trace":             TaskProducts(produces=("N_LSS_TRACE_TABLE",)),
+    "metis_n_lss_wave":              TaskProducts(produces=("N_LSS_WAVECAL",)),
 }
 
 
@@ -609,14 +636,19 @@ def _get_task_chain(workflow: str) -> list[tuple[str, str, str | None]]:
 def _task_covered(task_name: str, raw_tag: str, data_tags: set[str]) -> bool:
     """Return True if *task_name* is satisfied by files the user already has.
 
-    A task is covered when either its raw-input classification tag or its
-    master ``PRO.CATG`` appears in *data_tags*.  This lets pre-computed
-    master files on disk short-circuit an archive download.
+    A task is covered when either its raw-input classification tag is in
+    *data_tags*, or **every** ``PRO.CATG`` the task produces is in
+    *data_tags*.  Requiring all products (not any) matters for multi-output
+    tasks: e.g. if ``LINEARITY_2RG`` is on disk but its sibling
+    ``GAIN_MAP_2RG`` is not, downstream tasks still cannot run and the
+    missing sibling must be fetched.
     """
     if raw_tag in data_tags:
         return True
-    pro_catg = TASK_TO_MASTER_PROCATG.get(task_name)
-    return bool(pro_catg and pro_catg in data_tags)
+    entry = TASK_PRODUCTS.get(task_name)
+    if entry is None or not entry.produces:
+        return False
+    return all(catg in data_tags for catg in entry.produces)
 
 
 def identify_missing_calibrations(
@@ -626,13 +658,13 @@ def identify_missing_calibrations(
 ) -> list[tuple[str, str]]:
     """Identify master calibrations needed but not available locally.
 
-    Walks the ``WORKFLOW_TASK_CHAIN`` for *workflow*.  A task is considered
-    covered when either its raw-input classification tag or its master
-    ``PRO.CATG`` is present in *data_tags*.  For each non-science task that
-    is **not** covered but is upstream of one that **is**, the master product
-    category is returned.
+    Walks the ``WORKFLOW_TASK_CHAIN`` for *workflow*.  For each non-science
+    task that is **not** covered but is upstream of one that **is**, every
+    ``PRO.CATG`` the task produces that is missing from *data_tags* is
+    returned as its own entry.
 
-    Returns a list of ``(task_name, master_pro_catg)`` pairs.
+    Returns a list of ``(task_name, master_pro_catg)`` pairs; a single task
+    may appear multiple times when it produces more than one master.
     """
     chain = _get_task_chain(workflow)
     if not chain:
@@ -654,9 +686,13 @@ def identify_missing_calibrations(
             break
         if meta == "science":
             continue
-        if not _task_covered(task_name, tag, data_tags):
-            pro_catg = TASK_TO_MASTER_PROCATG.get(task_name)
-            if pro_catg:
+        if _task_covered(task_name, tag, data_tags):
+            continue
+        entry = TASK_PRODUCTS.get(task_name)
+        if entry is None:
+            continue
+        for pro_catg in entry.produces:
+            if pro_catg not in data_tags:
                 missing.append((task_name, pro_catg))
     return missing
 

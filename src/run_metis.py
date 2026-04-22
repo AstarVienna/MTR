@@ -330,11 +330,13 @@ def classify_fits_file(path):
 def collect_tags_from_fits(fits_dir):
     """Return the set of EDPS classification tags present in a FITS directory.
 
+    Walks *fits_dir* recursively so that ``--pipeline-input`` pointing at an
+    output-root (containing ``sim/``, ``pipeline/``, …) still finds raw FITS.
     For each ``.fits`` file, delegates to :func:`classify_fits_file`.  Files
     whose headers don't match any known rule are silently skipped.
     """
     tags = set()
-    for f in Path(fits_dir).glob("*.fits"):
+    for f in Path(fits_dir).rglob("*.fits"):
         tag = classify_fits_file(f)
         if tag:
             tags.add(tag)
@@ -352,7 +354,7 @@ def infer_workflow_from_fits(fits_dir):
         raise ValueError("astropy is required to infer workflow from FITS headers.")
 
     techs = []
-    for f in Path(fits_dir).glob("*.fits"):
+    for f in Path(fits_dir).rglob("*.fits"):
         try:
             with afits.open(f, memmap=True) as hdul:
                 tech = hdul[0].header.get("HIERARCH ESO DPR TECH", "").strip()

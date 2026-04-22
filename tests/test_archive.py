@@ -1012,7 +1012,12 @@ class TestIdentifyMissingCalibrations:
     def test_master_pro_catg_covers_task(self):
         missing = archive.identify_missing_calibrations(
             "metis.metis_lm_img_wkf",
-            data_tags={"LM_FLAT_LAMP_RAW", "MASTER_DARK_2RG", "LINEARITY_2RG"},
+            data_tags={
+                "LM_FLAT_LAMP_RAW",
+                "MASTER_DARK_2RG",
+                "LINEARITY_2RG",
+                "GAIN_MAP_2RG",
+            },
             has_science=False,
         )
         assert missing == []
@@ -1023,9 +1028,10 @@ class TestIdentifyMissingCalibrations:
             data_tags={"LM_FLAT_LAMP_RAW", "MASTER_DARK_2RG"},
             has_science=False,
         )
-        task_names = [t for t, _ in missing]
-        assert task_names == ["metis_lm_img_lingain"]
-        assert missing == [("metis_lm_img_lingain", "LINEARITY_2RG")]
+        assert missing == [
+            ("metis_lm_img_lingain", "LINEARITY_2RG"),
+            ("metis_lm_img_lingain", "GAIN_MAP_2RG"),
+        ]
 
     def test_only_masters_no_raw(self):
         missing = archive.identify_missing_calibrations(
@@ -1033,6 +1039,7 @@ class TestIdentifyMissingCalibrations:
             data_tags={
                 "MASTER_DARK_2RG",
                 "LINEARITY_2RG",
+                "GAIN_MAP_2RG",
                 "MASTER_IMG_FLAT_LAMP_LM",
             },
             has_science=False,
@@ -1046,5 +1053,26 @@ class TestIdentifyMissingCalibrations:
             has_science=False,
         )
         task_names = [t for t, _ in missing]
-        assert task_names == ["metis_lm_img_lingain"]
+        assert set(task_names) == {"metis_lm_img_lingain"}
         assert "metis_lm_img_dark" not in task_names
+
+    def test_multi_output_lingain_all_missing(self):
+        """A task with >1 produces emits one missing entry per PRO.CATG."""
+        missing = archive.identify_missing_calibrations(
+            "metis.metis_lm_img_wkf",
+            data_tags={"LM_FLAT_LAMP_RAW"},
+            has_science=False,
+        )
+        lingain_catgs = [
+            catg for task, catg in missing if task == "metis_lm_img_lingain"
+        ]
+        assert set(lingain_catgs) == {"LINEARITY_2RG", "GAIN_MAP_2RG"}
+
+    def test_multi_output_lingain_partial_present(self):
+        """Providing one sibling master does not cover a multi-output task."""
+        missing = archive.identify_missing_calibrations(
+            "metis.metis_lm_img_wkf",
+            data_tags={"LM_FLAT_LAMP_RAW", "MASTER_DARK_2RG", "LINEARITY_2RG"},
+            has_science=False,
+        )
+        assert missing == [("metis_lm_img_lingain", "GAIN_MAP_2RG")]
