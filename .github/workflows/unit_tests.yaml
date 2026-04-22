@@ -28,7 +28,7 @@ jobs:
             libfontconfig1 libfreetype6 libdbus-1-3
 
       - name: Install Python dependencies
-        run: pip install pyqt6 pyyaml pytest
+        run: pip install pyqt6 pyyaml pytest astropy
 
       - name: Run tests
         env:
