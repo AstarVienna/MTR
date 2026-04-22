@@ -335,6 +335,7 @@ class TestPatchEdpsConfig:
         "port=5000\nworkflow_dir=/old\nesorex_path=esorex\n"
         "association_preference=raw_per_quality_level\n"
         "categories=\npattern=$DATASET/$TIMESTAMP/$object$_$pro.catg$.$EXT\n"
+        "truncate=False\n"
     )
 
     def _make_worker(self, qapp):
@@ -373,7 +374,8 @@ class TestPatchEdpsConfig:
             "port=5000\nsome.other.key=value\n"
             "workflow_dir=/old\nesorex_path=esorex\n"
             "association_preference=raw_per_quality_level\n"
-            "categories=\npattern=$DATASET/$TIMESTAMP/$object$_$pro.catg$.$EXT\n",
+            "categories=\npattern=$DATASET/$TIMESTAMP/$object$_$pro.catg$.$EXT\n"
+            "truncate=False\n",
         )
         self._make_worker(qapp)._patch_edps_config()
         assert "some.other.key=value" in props.read_text()
@@ -429,6 +431,29 @@ class TestPatchEdpsConfig:
             "port=5000\nesorex_path=esorex\nassociation_preference=raw\n",
         )
         with pytest.raises(RuntimeError, match="workflow_dir"):
+            self._make_worker(qapp)._patch_edps_config()
+
+    def test_patches_truncate_to_true(self, qapp, tmp_path, monkeypatch):
+        # EDPS wipes db.json on server startup only when truncate=True.
+        # Without this, stale "complete" job UUIDs from previous runs whose
+        # on-disk outputs have been deleted will collide with fresh submissions
+        # and cause cascading FileNotFoundError failures. The installer must
+        # pin this to True, not merely rewrite it to whatever EDPS defaults to.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        props = self._seed(tmp_path, self.FULL_PROPS)
+        self._make_worker(qapp)._patch_edps_config()
+        content = props.read_text()
+        assert "truncate=True" in content
+        assert "truncate=False" not in content
+
+    def test_raises_when_truncate_key_absent(self, qapp, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        self._seed(
+            tmp_path,
+            "port=5000\nworkflow_dir=/old\nesorex_path=esorex\n"
+            "association_preference=raw\ncategories=\npattern=x\n",
+        )
+        with pytest.raises(RuntimeError, match="truncate"):
             self._make_worker(qapp)._patch_edps_config()
 
 
@@ -588,4 +613,208 @@ class TestArchiveTab:
         tab = ArchiveTab()
         stack = tab.findChild(QStackedWidget)
         assert stack is not None
-        assert stack.count() == 2
+        assert stack.count() == 3
+
+
+# ---------------------------------------------------------------------------
+# ArchiveTab — upload page (page 2)
+# ---------------------------------------------------------------------------
+
+class TestArchiveTabUploadPage:
+    """Exercise the Page 2 staging table, add/remove handlers, and upload
+    gating on unresolved rows.  Classification is stubbed out so the tests
+    don't depend on astropy."""
+
+    def _make_tab(self, qapp, monkeypatch, classify=None):
+        """Create an ArchiveTab with classify_fits_file patched."""
+        import run_metis
+        if classify is None:
+            classify = lambda _p: "LM_FLAT_LAMP_RAW"
+        monkeypatch.setattr(run_metis, "classify_fits_file", classify)
+        from gui import ArchiveTab
+        return ArchiveTab()
+
+    def test_page_upload_table_has_three_columns(self, qapp, monkeypatch):
+        tab = self._make_tab(qapp, monkeypatch)
+        assert tab._stage_table.columnCount() == 3
+        headers = [
+            tab._stage_table.horizontalHeaderItem(c).text()
+            for c in range(3)
+        ]
+        assert headers == ["Filename", "DataItem class", "Full path"]
+
+    def test_add_staged_file_appends_row_with_auto_class(
+        self, qapp, tmp_path, monkeypatch,
+    ):
+        tab = self._make_tab(qapp, monkeypatch,
+                             classify=lambda _p: "LM_FLAT_LAMP_RAW")
+        fits = tmp_path / "flat.fits"
+        fits.write_bytes(b"")
+        tab._add_staged_file(fits)
+        assert tab._stage_table.rowCount() == 1
+        assert tab._stage_table.item(0, 0).text() == "flat.fits"
+        assert tab._stage_table.item(0, 1).text() == "LM_FLAT_LAMP_RAW"
+        assert tab._stage_table.item(0, 2).text() == str(fits)
+
+    def test_add_staged_file_unknown_uses_placeholder(
+        self, qapp, tmp_path, monkeypatch,
+    ):
+        tab = self._make_tab(qapp, monkeypatch, classify=lambda _p: None)
+        fits = tmp_path / "u.fits"
+        fits.write_bytes(b"")
+        tab._add_staged_file(fits)
+        assert tab._stage_table.item(0, 1).text() == tab._UNKNOWN_CLASS_PLACEHOLDER
+
+    def test_add_staged_file_dedupes_by_full_path(
+        self, qapp, tmp_path, monkeypatch,
+    ):
+        tab = self._make_tab(qapp, monkeypatch)
+        fits = tmp_path / "x.fits"
+        fits.write_bytes(b"")
+        tab._add_staged_file(fits)
+        tab._add_staged_file(fits)
+        assert tab._stage_table.rowCount() == 1
+
+    def test_on_remove_staged_removes_selected_rows(
+        self, qapp, tmp_path, monkeypatch,
+    ):
+        tab = self._make_tab(qapp, monkeypatch)
+        for n in ("a.fits", "b.fits", "c.fits"):
+            p = tmp_path / n
+            p.write_bytes(b"")
+            tab._add_staged_file(p)
+        assert tab._stage_table.rowCount() == 3
+        tab._stage_table.selectRow(1)
+        tab._on_remove_staged()
+        remaining = [tab._stage_table.item(r, 0).text()
+                     for r in range(tab._stage_table.rowCount())]
+        assert remaining == ["a.fits", "c.fits"]
+
+    def test_candidate_class_names_includes_raw_tags_and_masters(
+        self, qapp, monkeypatch,
+    ):
+        tab = self._make_tab(qapp, monkeypatch)
+        candidates = tab._candidate_class_names()
+        # Covers raw tags (from DPR_TO_TAG) and master pro_catgs.
+        assert "LM_FLAT_LAMP_RAW" in candidates
+        assert "DARK_IFU_RAW" in candidates
+        assert "MASTER_DARK_2RG" in candidates
+
+    def test_on_upload_blocks_unresolved_rows(
+        self, qapp, tmp_path, monkeypatch,
+    ):
+        from unittest.mock import patch as mock_patch
+        tab = self._make_tab(qapp, monkeypatch, classify=lambda _p: None)
+        fits = tmp_path / "u.fits"
+        fits.write_bytes(b"")
+        tab._add_staged_file(fits)
+        # Select the one unresolved row, then click Upload.
+        tab._stage_table.selectRow(0)
+        with mock_patch("gui.QMessageBox.warning") as warn:
+            tab._on_upload()
+        warn.assert_called_once()
+        # Upload button stays enabled when the guard fires (no worker dispatched).
+        assert tab._upload_btn.isEnabled()
+
+    def test_on_upload_dispatches_worker_when_all_resolved(
+        self, qapp, tmp_path, monkeypatch,
+    ):
+        from unittest.mock import patch as mock_patch, MagicMock
+        tab = self._make_tab(qapp, monkeypatch,
+                             classify=lambda _p: "LM_FLAT_LAMP_RAW")
+        fits = tmp_path / "ok.fits"
+        fits.write_bytes(b"")
+        tab._add_staged_file(fits)
+
+        captured = {}
+        class StubWorker:
+            def __init__(self, entries):
+                captured["entries"] = entries
+                self.log = MagicMock()
+                self.done = MagicMock()
+                self.log.connect = MagicMock()
+                self.done.connect = MagicMock()
+            def start(self):
+                captured["started"] = True
+
+        with mock_patch("gui.UploadWorker", StubWorker):
+            tab._on_upload()
+        assert captured.get("started") is True
+        assert captured["entries"] == [(fits, "LM_FLAT_LAMP_RAW")]
+
+    def test_page_1_has_continue_to_upload_button(self, qapp, monkeypatch):
+        tab = self._make_tab(qapp, monkeypatch)
+        assert hasattr(tab, "_to_upload_btn")
+        # Clicking the button moves the stack to index 2 (upload page).
+        tab._to_upload_btn.click()
+        assert tab._stack.currentIndex() == 2
+
+
+# ---------------------------------------------------------------------------
+# UploadWorker
+# ---------------------------------------------------------------------------
+
+class TestUploadWorker:
+    """Run the worker's body synchronously (call .run() directly) so we can
+    observe signal emissions without a Qt event loop."""
+
+    def _connect(self, worker):
+        emitted = {"log": [], "progress": [], "done": []}
+        worker.log.connect(lambda t, c: emitted["log"].append((t, c)))
+        worker.progress.connect(lambda i, n: emitted["progress"].append((i, n)))
+        worker.done.connect(lambda ok: emitted["done"].append(ok))
+        return emitted
+
+    def test_all_succeed(self, qapp, tmp_path):
+        from unittest.mock import patch as mock_patch
+        from gui import UploadWorker
+        entries = [
+            (tmp_path / "a.fits", "LM_FLAT_LAMP_RAW"),
+            (tmp_path / "b.fits", "DARK_IFU_RAW"),
+        ]
+        worker = UploadWorker(entries)
+        emitted = self._connect(worker)
+        with mock_patch("archive.upload_file", return_value=True):
+            worker.run()
+        assert emitted["done"] == [True]
+        # Summary log mentions 2/2.
+        summary = "".join(t for t, _ in emitted["log"])
+        assert "2/2" in summary
+
+    def test_partial_failure_still_reports_success_signal(self, qapp, tmp_path):
+        from unittest.mock import patch as mock_patch
+        from gui import UploadWorker
+        entries = [
+            (tmp_path / "a.fits", "X"),
+            (tmp_path / "b.fits", "Y"),
+            (tmp_path / "c.fits", "Z"),
+        ]
+        worker = UploadWorker(entries)
+        emitted = self._connect(worker)
+        with mock_patch("archive.upload_file", side_effect=[True, False, True]):
+            worker.run()
+        assert emitted["done"] == [True]
+        summary = "".join(t for t, _ in emitted["log"])
+        assert "2/3" in summary
+
+    def test_exception_emits_false_done(self, qapp, tmp_path):
+        from unittest.mock import patch as mock_patch
+        from gui import UploadWorker
+        worker = UploadWorker([(tmp_path / "a.fits", "X")])
+        emitted = self._connect(worker)
+        with mock_patch("archive.upload_file",
+                        side_effect=RuntimeError("boom")):
+            worker.run()
+        assert emitted["done"] == [False]
+        log_text = "".join(t for t, _ in emitted["log"])
+        assert "Upload failed" in log_text
+
+    def test_progress_emits_per_file(self, qapp, tmp_path):
+        from unittest.mock import patch as mock_patch
+        from gui import UploadWorker
+        entries = [(tmp_path / f"{n}.fits", "X") for n in ("a", "b", "c")]
+        worker = UploadWorker(entries)
+        emitted = self._connect(worker)
+        with mock_patch("archive.upload_file", return_value=True):
+            worker.run()
+        assert emitted["progress"] == [(1, 3), (2, 3), (3, 3)]

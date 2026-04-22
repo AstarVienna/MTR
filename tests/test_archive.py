@@ -12,6 +12,11 @@ Covers:
 
 from unittest.mock import patch, MagicMock
 
+# Import astropy.io.fits once at module load: re-importing it after
+# importlib.reload(archive) in later tests trips astropy's logger which has
+# global warnings.showwarning state.
+from astropy.io import fits as _afits
+
 import archive
 
 # Mocks for the commonwise database modules imported by _ensure_db_connection().
@@ -530,6 +535,410 @@ class TestDownloadFile:
             result = archive.download_file("missing.fits", dest_dir)
             assert result is None
 
+            importlib.reload(archive)
+
+
+# ---------------------------------------------------------------------------
+# Upload file (mocked MetisWISE)
+# ---------------------------------------------------------------------------
+
+
+def _write_fits(path, header_kv: dict[str, str] | None = None):
+    """Write a minimal real FITS file at *path* with the given HIERARCH keys."""
+    hdr = _afits.Header()
+    for k, v in (header_kv or {}).items():
+        hdr[k] = v
+    _afits.PrimaryHDU(header=hdr).writeto(str(path), overwrite=True)
+
+
+class TestUploadFile:
+    """Mirror the MetisWISE tools/ingest_file.py duplicate-check + store/commit
+    flow with mocked DataItem / Raw / Pro."""
+
+    def _patch_modules(self, dataitem, raw, pro=None):
+        return patch.dict("sys.modules", {
+            **_DB_MOCKS,
+            **_IMPORT_MOCKS,
+            "metiswise": MagicMock(),
+            "metiswise.main": MagicMock(),
+            "metiswise.main.dataitem": MagicMock(DataItem=dataitem),
+            "metiswise.main.raw": MagicMock(Raw=raw),
+            "metiswise.main.pro": pro if pro is not None else MagicMock(),
+        })
+
+    def test_missing_file_returns_false(self, tmp_path):
+        logs: list[str] = []
+        with self._patch_modules(MagicMock(), MagicMock()):
+            import importlib
+            importlib.reload(archive)
+            result = archive.upload_file(
+                tmp_path / "nope.fits", on_log=logs.append,
+            )
+            assert result is False
+            assert any("not found" in m.lower() for m in logs)
+            importlib.reload(archive)
+
+    def test_duplicate_returns_true_without_store(self, tmp_path):
+        fits = tmp_path / "dup.fits"
+        _write_fits(fits, {"HIERARCH ESO DPR CATG": "CALIB"})
+
+        mock_dataitem = MagicMock()
+        mock_dataitem.filename.__eq__ = MagicMock(return_value=[MagicMock()])
+        mock_raw = MagicMock()
+
+        logs: list[str] = []
+        with self._patch_modules(mock_dataitem, mock_raw):
+            import importlib
+            importlib.reload(archive)
+            result = archive.upload_file(fits, on_log=logs.append)
+            assert result is True
+            mock_raw.assert_not_called()
+            assert any("already in archive" in m for m in logs)
+            importlib.reload(archive)
+
+    def test_auto_classify_raw_uses_raw_constructor(self, tmp_path):
+        fits = tmp_path / "flat.fits"
+        _write_fits(fits, {"HIERARCH ESO DPR CATG": "CALIB"})
+
+        mock_dataitem = MagicMock()
+        mock_dataitem.filename.__eq__ = MagicMock(return_value=[])
+
+        mock_di = MagicMock()
+        type(mock_di).__name__ = "LM_FLAT_LAMP_RAW"
+        mock_raw = MagicMock(return_value=mock_di)
+
+        logs: list[str] = []
+        with self._patch_modules(mock_dataitem, mock_raw):
+            import importlib
+            importlib.reload(archive)
+            result = archive.upload_file(fits, on_log=logs.append)
+            assert result is True
+            mock_raw.assert_called_once_with(str(fits))
+            mock_di.store.assert_called_once()
+            mock_di.commit.assert_called_once()
+            importlib.reload(archive)
+
+    def test_auto_classify_pro_uses_build_helper(self, tmp_path):
+        """PRO CATG header routes through _build_pro_dataitem, ignoring Raw()."""
+        fits = tmp_path / "master.fits"
+        _write_fits(fits, {"HIERARCH ESO PRO CATG": "FAKE_MASTER"})
+
+        class _DataItem:
+            pass
+        _DataItem.filename = MagicMock()
+        _DataItem.filename.__eq__ = MagicMock(return_value=[])
+
+        class _Pro(_DataItem):
+            class_from_procatg: dict = {}
+            @classmethod
+            def get_persistent_properties(cls):
+                return []
+
+        constructed: list = []
+
+        class FAKE_MASTER(_Pro):
+            def __init__(self):
+                constructed.append(self)
+                self.pathname = ""
+                self.stored = False
+                self.committed = False
+            def store(self): self.stored = True
+            def commit(self): self.committed = True
+        _Pro.class_from_procatg["FAKE_MASTER"] = FAKE_MASTER
+
+        pro_mod = MagicMock()
+        pro_mod.Pro = _Pro
+        pro_mod.get_provenance_from_header = lambda h: []
+        pro_mod.get_optional_dataitem_from_filename = lambda n: None
+
+        mock_raw = MagicMock()
+        with self._patch_modules(_DataItem, mock_raw, pro=pro_mod):
+            import importlib
+            importlib.reload(archive)
+            result = archive.upload_file(fits)
+            assert result is True
+            mock_raw.assert_not_called()
+            assert len(constructed) == 1
+            assert constructed[0].stored and constructed[0].committed
+            assert constructed[0].pathname == str(fits)
+            importlib.reload(archive)
+
+    def test_pro_upload_filters_none_provenance(self, tmp_path):
+        """Regression: master upload must not fail with bare TypeError when
+        upstream ``get_optional_dataitem_from_filename`` returns ``None`` for
+        provenance raws that aren't yet in the archive."""
+        fits = tmp_path / "master.fits"
+        _write_fits(fits, {
+            "HIERARCH ESO PRO CATG": "FAKE_MASTER",
+            "HIERARCH ESO PRO REC1 RAW1 NAME": "missing1.fits",
+            "HIERARCH ESO PRO REC1 RAW1 CATG": "FAKE_RAW",
+            "HIERARCH ESO PRO REC1 RAW2 NAME": "missing2.fits",
+            "HIERARCH ESO PRO REC1 RAW2 CATG": "FAKE_RAW",
+        })
+
+        class _DataItem:
+            pass
+        _DataItem.filename = MagicMock()
+        _DataItem.filename.__eq__ = MagicMock(return_value=[])
+
+        class _Pro(_DataItem):
+            class_from_procatg: dict = {}
+            @classmethod
+            def get_persistent_properties(cls):
+                return []
+
+        # Simulate upstream typed_list: rejects any None in list assignment.
+        class _StrictList(list):
+            def __init__(self, items):
+                if any(i is None for i in items):
+                    raise TypeError  # matches typed_list.py:134
+                super().__init__(items)
+
+        class FAKE_MASTER(_Pro):
+            def __init__(self):
+                self._raws: list = []
+                self._calibs: list = []
+                self.pathname = ""
+                self.stored = False
+                self.committed = False
+            @property
+            def raws(self): return self._raws
+            @raws.setter
+            def raws(self, v):
+                self._raws = _StrictList(v)
+            @property
+            def calibs(self): return self._calibs
+            @calibs.setter
+            def calibs(self, v):
+                self._calibs = _StrictList(v)
+            def store(self): self.stored = True
+            def commit(self): self.committed = True
+        _Pro.class_from_procatg["FAKE_MASTER"] = FAKE_MASTER
+
+        def fake_provenance(hdr):
+            return [(
+                [("missing1.fits", "FAKE_RAW", None),
+                 ("missing2.fits", "FAKE_RAW", None)],
+                [],
+                [],
+            )]
+
+        pro_mod = MagicMock()
+        pro_mod.Pro = _Pro
+        pro_mod.get_provenance_from_header = fake_provenance
+        pro_mod.get_optional_dataitem_from_filename = lambda n: None
+
+        with self._patch_modules(_DataItem, MagicMock(), pro=pro_mod):
+            import importlib
+            importlib.reload(archive)
+            logs: list[str] = []
+            result = archive.upload_file(fits, on_log=logs.append)
+            assert result is True, f"Upload failed with logs: {logs}"
+            assert "Upload failed" not in "\n".join(logs)
+            importlib.reload(archive)
+
+    def test_pro_upload_with_resolved_provenance(self, tmp_path):
+        """Real provenance DataItems pass through — only None gets filtered."""
+        fits = tmp_path / "master.fits"
+        _write_fits(fits, {
+            "HIERARCH ESO PRO CATG": "FAKE_MASTER",
+            "HIERARCH ESO PRO REC1 RAW1 NAME": "here.fits",
+            "HIERARCH ESO PRO REC1 RAW1 CATG": "FAKE_RAW",
+            "HIERARCH ESO PRO REC1 RAW2 NAME": "missing.fits",
+            "HIERARCH ESO PRO REC1 RAW2 CATG": "FAKE_RAW",
+        })
+
+        class _DataItem:
+            pass
+        _DataItem.filename = MagicMock()
+        _DataItem.filename.__eq__ = MagicMock(return_value=[])
+
+        class _Pro(_DataItem):
+            class_from_procatg: dict = {}
+            @classmethod
+            def get_persistent_properties(cls):
+                return []
+
+        real_di = object()
+        assigned: dict = {}
+
+        class FAKE_MASTER(_Pro):
+            def __init__(self):
+                self.pathname = ""
+            def store(self): pass
+            def commit(self): pass
+            def __setattr__(self, k, v):
+                assigned[k] = v
+                object.__setattr__(self, k, v)
+        _Pro.class_from_procatg["FAKE_MASTER"] = FAKE_MASTER
+
+        def fake_provenance(hdr):
+            return [(
+                [("here.fits", "FAKE_RAW", None),
+                 ("missing.fits", "FAKE_RAW", None)],
+                [],
+                [],
+            )]
+
+        def fake_get_optional(name):
+            return real_di if name == "here.fits" else None
+
+        pro_mod = MagicMock()
+        pro_mod.Pro = _Pro
+        pro_mod.get_provenance_from_header = fake_provenance
+        pro_mod.get_optional_dataitem_from_filename = fake_get_optional
+
+        with self._patch_modules(_DataItem, MagicMock(), pro=pro_mod):
+            import importlib
+            importlib.reload(archive)
+            result = archive.upload_file(fits)
+            assert result is True
+            assert assigned["raws"] == [real_di]         # None filtered
+            assert assigned["raw1"] is real_di           # positional preserved
+            assert assigned["raw2"] is None              # missing -> None OK
+            assert assigned["raw9"] is None              # padded
+            importlib.reload(archive)
+
+    def test_pro_upload_unknown_procatg(self, tmp_path):
+        """Unknown PRO.CATG logs a message and returns False (no crash)."""
+        fits = tmp_path / "u.fits"
+        _write_fits(fits, {"HIERARCH ESO PRO CATG": "WEIRD_CATG"})
+
+        class _DataItem:
+            pass
+        _DataItem.filename = MagicMock()
+        _DataItem.filename.__eq__ = MagicMock(return_value=[])
+
+        class _Pro(_DataItem):
+            class_from_procatg: dict = {}
+
+        pro_mod = MagicMock()
+        pro_mod.Pro = _Pro
+        pro_mod.get_provenance_from_header = lambda h: []
+        pro_mod.get_optional_dataitem_from_filename = lambda n: None
+
+        logs: list[str] = []
+        with self._patch_modules(_DataItem, MagicMock(), pro=pro_mod):
+            import importlib
+            importlib.reload(archive)
+            result = archive.upload_file(fits, on_log=logs.append)
+            assert result is False
+            assert any("WEIRD_CATG" in m for m in logs)
+            importlib.reload(archive)
+
+    def test_manual_override_fallback(self, tmp_path):
+        """class_name is used only when headers don't identify the file."""
+        fits = tmp_path / "custom.fits"
+        _write_fits(fits, {})  # neither DPR nor PRO CATG
+
+        class _DataItem:
+            pass
+        _DataItem.filename = MagicMock()
+        _DataItem.filename.__eq__ = MagicMock(return_value=[])
+
+        constructed: list = []
+
+        class LM_FLAT_LAMP_RAW(_DataItem):
+            def __init__(self, filename):
+                constructed.append(filename)
+                self.stored = False
+                self.committed = False
+            def store(self): self.stored = True
+            def commit(self): self.committed = True
+
+        mock_raw = MagicMock()
+        with self._patch_modules(_DataItem, mock_raw):
+            import importlib
+            importlib.reload(archive)
+            result = archive.upload_file(fits, class_name="LM_FLAT_LAMP_RAW")
+            assert result is True
+            assert constructed == [str(fits)]
+            mock_raw.assert_not_called()
+            importlib.reload(archive)
+
+    def test_unclassifiable_without_class_name(self, tmp_path):
+        """Neither header present and no class_name override → False."""
+        fits = tmp_path / "headerless.fits"
+        _write_fits(fits, {})
+
+        class _DataItem:
+            pass
+        _DataItem.filename = MagicMock()
+        _DataItem.filename.__eq__ = MagicMock(return_value=[])
+
+        logs: list[str] = []
+        with self._patch_modules(_DataItem, MagicMock()):
+            import importlib
+            importlib.reload(archive)
+            result = archive.upload_file(fits, on_log=logs.append)
+            assert result is False
+            assert any("Cannot classify" in m for m in logs)
+            importlib.reload(archive)
+
+    def test_unknown_class_name_returns_false(self, tmp_path):
+        fits = tmp_path / "u.fits"
+        _write_fits(fits, {})
+
+        class _DataItem:
+            pass
+        _DataItem.filename = MagicMock()
+        _DataItem.filename.__eq__ = MagicMock(return_value=[])
+
+        logs: list[str] = []
+        with self._patch_modules(_DataItem, MagicMock()):
+            import importlib
+            importlib.reload(archive)
+            result = archive.upload_file(
+                fits, class_name="DOES_NOT_EXIST", on_log=logs.append,
+            )
+            assert result is False
+            assert any("Unknown DataItem class" in m for m in logs)
+            importlib.reload(archive)
+
+    def test_store_exception_returns_false(self, tmp_path):
+        fits = tmp_path / "bad.fits"
+        _write_fits(fits, {"HIERARCH ESO DPR CATG": "CALIB"})
+
+        mock_dataitem = MagicMock()
+        mock_dataitem.filename.__eq__ = MagicMock(return_value=[])
+
+        mock_di = MagicMock()
+        mock_di.store.side_effect = RuntimeError("server exploded")
+        mock_raw = MagicMock(return_value=mock_di)
+
+        logs: list[str] = []
+        with self._patch_modules(mock_dataitem, mock_raw):
+            import importlib
+            importlib.reload(archive)
+            result = archive.upload_file(fits, on_log=logs.append)
+            assert result is False
+            assert any("Upload failed" in m for m in logs)
+            assert any("server exploded" in m for m in logs)
+            mock_di.commit.assert_not_called()
+            importlib.reload(archive)
+
+    def test_empty_exception_message_is_labelled(self, tmp_path):
+        """Bare ``TypeError()`` must produce a meaningful log line, not
+        'Upload failed for foo:' with nothing after the colon."""
+        fits = tmp_path / "bad.fits"
+        _write_fits(fits, {"HIERARCH ESO DPR CATG": "CALIB"})
+
+        mock_dataitem = MagicMock()
+        mock_dataitem.filename.__eq__ = MagicMock(return_value=[])
+
+        mock_di = MagicMock()
+        mock_di.store.side_effect = TypeError()  # no message
+        mock_raw = MagicMock(return_value=mock_di)
+
+        logs: list[str] = []
+        with self._patch_modules(mock_dataitem, mock_raw):
+            import importlib
+            importlib.reload(archive)
+            archive.upload_file(fits, on_log=logs.append)
+            fail_lines = [m for m in logs if "Upload failed" in m]
+            assert fail_lines
+            assert "TypeError" in fail_lines[-1]
+            assert not fail_lines[-1].rstrip().endswith(":")
             importlib.reload(archive)
 
 

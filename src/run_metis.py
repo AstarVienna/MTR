@@ -297,39 +297,47 @@ def infer_workflow(yaml_files):
     )
 
 
-def collect_tags_from_fits(fits_dir):
-    """Return the set of EDPS classification tags present in a FITS directory.
+def classify_fits_file(path):
+    """Return the EDPS classification tag for a single FITS file, or None.
 
-    For each ``.fits`` file, reads ``HIERARCH ESO DPR CATG/TYPE/TECH`` and
-    maps the triple to a raw-file tag name via ``DPR_TO_TAG``.  If no DPR
-    headers are present, falls back to ``HIERARCH ESO PRO CATG`` and adds
-    that value as-is (e.g. ``MASTER_DARK_2RG``).  This lets pre-computed
-    master calibration files register as "covered" for downstream gap
-    detection.  Files whose headers don't match any known rule are silently
-    skipped.  Requires astropy.
+    Reads ``HIERARCH ESO DPR CATG/TYPE/TECH`` and maps the triple via
+    ``DPR_TO_TAG``.  Falls back to ``HIERARCH ESO PRO CATG`` when no DPR
+    headers are present.  Returns ``None`` on any failure (missing astropy,
+    unreadable file, unmatched headers).
     """
     try:
         from astropy.io import fits as afits
     except ImportError:
-        return set()
+        return None
 
+    try:
+        with afits.open(path, memmap=True) as hdul:
+            hdr = hdul[0].header
+            catg = hdr.get("HIERARCH ESO DPR CATG", "").strip()
+            typ  = hdr.get("HIERARCH ESO DPR TYPE", "").strip()
+            tech = hdr.get("HIERARCH ESO DPR TECH", "").strip()
+            pro_catg = hdr.get("HIERARCH ESO PRO CATG", "").strip()
+    except Exception:
+        return None
+
+    if catg:
+        return DPR_TO_TAG.get((catg, typ, tech))
+    if pro_catg:
+        return pro_catg
+    return None
+
+
+def collect_tags_from_fits(fits_dir):
+    """Return the set of EDPS classification tags present in a FITS directory.
+
+    For each ``.fits`` file, delegates to :func:`classify_fits_file`.  Files
+    whose headers don't match any known rule are silently skipped.
+    """
     tags = set()
     for f in Path(fits_dir).glob("*.fits"):
-        try:
-            with afits.open(f, memmap=True) as hdul:
-                hdr = hdul[0].header
-                catg = hdr.get("HIERARCH ESO DPR CATG", "").strip()
-                typ  = hdr.get("HIERARCH ESO DPR TYPE", "").strip()
-                tech = hdr.get("HIERARCH ESO DPR TECH", "").strip()
-                pro_catg = hdr.get("HIERARCH ESO PRO CATG", "").strip()
-            if catg:
-                tag = DPR_TO_TAG.get((catg, typ, tech))
-                if tag:
-                    tags.add(tag)
-            elif pro_catg:
-                tags.add(pro_catg)
-        except Exception:
-            continue
+        tag = classify_fits_file(f)
+        if tag:
+            tags.add(tag)
     return tags
 
 
@@ -988,7 +996,10 @@ def main():
     # Step 1.5: Auto-fetch missing master calibrations (optional)
     # -----------------------------------------------------------------------
     if not args.no_pipeline and args.auto_fetch_calibrations:
-        from archive import fetch_missing_calibrations
+        from archive import (
+            fetch_missing_calibrations,
+            identify_missing_calibrations,
+        )
 
         fetch_tags = yaml_tags
         if args.no_sim:
@@ -996,17 +1007,26 @@ def main():
 
         print("=== Checking for missing calibrations ===")
         try:
-            fetched = fetch_missing_calibrations(
+            missing = identify_missing_calibrations(
                 workflow=workflow,
                 data_tags=fetch_tags,
                 has_science=has_science,
-                dest_dir=sim_out,
-                on_log=lambda msg: print(f"  {msg}"),
             )
-            if fetched:
-                print(f"  Downloaded {len(fetched)} master calibration file(s)")
+            if not missing:
+                print("  All required calibrations already present")
             else:
-                print("  No missing calibrations to fetch")
+                fetched = fetch_missing_calibrations(
+                    workflow=workflow,
+                    data_tags=fetch_tags,
+                    has_science=has_science,
+                    dest_dir=sim_out,
+                    on_log=lambda msg: print(f"  {msg}"),
+                )
+                if fetched:
+                    print(f"  Downloaded {len(fetched)} master calibration file(s)")
+                else:
+                    catgs = ", ".join(pc for _, pc in missing)
+                    print(f"  Missing masters not available in archive: {catgs}")
         except Exception as exc:
             print(f"  Warning: auto-fetch failed ({exc}); continuing without")
 

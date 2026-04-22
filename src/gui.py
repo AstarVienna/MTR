@@ -18,10 +18,11 @@ from PyQt6.QtCore import Qt, QProcess, QProcessEnvironment, QSettings, QThread, 
 from PyQt6.QtGui import QColor, QDesktopServices, QFont, QPalette, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
     QAbstractSpinBox, QApplication, QButtonGroup, QCheckBox, QComboBox,
-    QFileDialog, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-    QMainWindow, QMessageBox, QProgressBar, QPushButton, QRadioButton,
-    QSpinBox, QStackedWidget, QTabBar, QTabWidget, QTextEdit, QVBoxLayout,
-    QWidget,
+    QDialog, QDialogButtonBox, QFileDialog, QGroupBox, QHBoxLayout,
+    QHeaderView, QLabel, QLineEdit, QListWidget, QMainWindow, QMessageBox,
+    QProgressBar, QPushButton, QRadioButton, QSpinBox, QStackedWidget,
+    QTabBar, QTableWidget, QTableWidgetItem, QTabWidget, QTextEdit,
+    QVBoxLayout, QWidget,
 )
 
 # ---------------------------------------------------------------------------
@@ -587,6 +588,11 @@ class InstallWorker(QThread):
                 r"^pattern=.*",
                 "pattern=$TASK/$TIMESTAMP/$object$_$pro.catg$.$EXT",
             ),
+            # Wipe EDPS bookkeeping on every server startup. Without this, a
+            # stale db.json entry whose on-disk outputs have been removed will
+            # collide with a fresh submission's deterministic job UUID and make
+            # EDPS short-circuit the run with a FileNotFoundError.
+            "truncate": (r"^truncate=.*", "truncate=True"),
         }
         for key, (pattern, replacement) in patches.items():
             text, count = re.subn(pattern, replacement, text, flags=re.MULTILINE)
@@ -805,19 +811,54 @@ class DownloadWorker(QThread):
             self.done.emit(False)
 
 
+class UploadWorker(QThread):
+    """Upload local FITS files into the remote archive."""
+
+    log      = pyqtSignal(str, str)
+    progress = pyqtSignal(int, int)
+    done     = pyqtSignal(bool)
+
+    def __init__(self, entries: list[tuple[Path, str | None]]) -> None:
+        super().__init__()
+        self._entries = entries
+
+    def run(self) -> None:
+        from archive import upload_file
+        try:
+            total = len(self._entries)
+            uploaded = 0
+            for i, (path, class_name) in enumerate(self._entries, 1):
+                self.progress.emit(i, total)
+                ok = upload_file(
+                    path, class_name,
+                    on_log=lambda msg: self.log.emit(msg + "\n", ""),
+                )
+                if ok:
+                    uploaded += 1
+            self.log.emit(
+                f"\n✓ Uploaded {uploaded}/{total} file(s).\n", "green",
+            )
+            self.done.emit(True)
+        except Exception as exc:
+            self.log.emit(f"\n✗ Upload failed: {exc}\n", "red")
+            self.done.emit(False)
+
+
 # ---------------------------------------------------------------------------
 # Archive tab
 # ---------------------------------------------------------------------------
 
 class ArchiveTab(QWidget):
     """Archive tab: install MetisWISE + configure remote archive, then
-    query / download master calibrations.
+    query / download / upload files.
 
     Page 0 — Install & Configure: pip-install MetisWISE into the project
     venv, fill the five ``[global]`` fields written to
     ``~/.awe/Environment.cfg``, and run a test connection.
     Page 1 — Query & Download: search the remote archive by category /
     filename and retrieve files.
+    Page 2 — Upload: stage local FITS files (individually or by folder),
+    auto-classify via DPR headers, and ingest into the archive.
     """
 
     _CFG_FIELD_ORDER = (
@@ -862,6 +903,7 @@ class ArchiveTab(QWidget):
 
         self._stack.addWidget(self._build_page_install())
         self._stack.addWidget(self._build_page_query())
+        self._stack.addWidget(self._build_page_upload())
 
     def _build_page_install(self) -> QWidget:
         page = QWidget()
@@ -1027,6 +1069,13 @@ class ArchiveTab(QWidget):
         self._download_btn.clicked.connect(self._on_download)
         dl_row.addWidget(self._download_btn)
         dl_row.addStretch()
+        self._to_upload_btn = QPushButton("Continue to Upload  →")
+        self._to_upload_btn.setMinimumHeight(32)
+        self._to_upload_btn.setMaximumWidth(200)
+        self._to_upload_btn.clicked.connect(
+            lambda: self._stack.setCurrentIndex(2),
+        )
+        dl_row.addWidget(self._to_upload_btn)
         self._back_btn = QPushButton("←  Back to setup")
         self._back_btn.setMinimumHeight(32)
         self._back_btn.setMaximumWidth(160)
@@ -1035,6 +1084,83 @@ class ArchiveTab(QWidget):
         )
         dl_row.addWidget(self._back_btn)
         lay.addLayout(dl_row)
+
+        return page
+
+    def _build_page_upload(self) -> QWidget:
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setSpacing(10)
+
+        desc = QLabel(
+            "<b>Upload local FITS files to the remote archive</b><br><br>"
+            "Stage individual files or whole folders, confirm the "
+            "auto-detected DataItem class for each row (from DPR headers), "
+            "then click <i>Upload Selected</i>. Ingestion mirrors MetisWISE's "
+            "<code>tools/ingest_file.py</code>: "
+            "<code>Raw(path).store() + .commit()</code>."
+        )
+        desc.setWordWrap(True)
+        desc.setTextFormat(Qt.TextFormat.RichText)
+        lay.addWidget(desc)
+
+        add_row = QHBoxLayout()
+        self._add_files_btn = QPushButton("Add files…")
+        self._add_files_btn.setMinimumHeight(32)
+        self._add_files_btn.clicked.connect(self._on_add_upload_files)
+        add_row.addWidget(self._add_files_btn)
+        self._add_folder_btn = QPushButton("Add folder…")
+        self._add_folder_btn.setMinimumHeight(32)
+        self._add_folder_btn.clicked.connect(self._on_add_upload_folder)
+        add_row.addWidget(self._add_folder_btn)
+        self._remove_staged_btn = QPushButton("Remove selected")
+        self._remove_staged_btn.setMinimumHeight(32)
+        self._remove_staged_btn.clicked.connect(self._on_remove_staged)
+        add_row.addWidget(self._remove_staged_btn)
+        add_row.addStretch()
+        lay.addLayout(add_row)
+
+        self._stage_table = QTableWidget(0, 3)
+        self._stage_table.setHorizontalHeaderLabels(
+            ["Filename", "DataItem class", "Full path"],
+        )
+        self._stage_table.setSelectionBehavior(
+            QTableWidget.SelectionBehavior.SelectRows,
+        )
+        self._stage_table.setSelectionMode(
+            QTableWidget.SelectionMode.ExtendedSelection,
+        )
+        self._stage_table.setEditTriggers(
+            QTableWidget.EditTrigger.NoEditTriggers,
+        )
+        self._stage_table.verticalHeader().setVisible(False)
+        hdr = self._stage_table.horizontalHeader()
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self._stage_table.setMinimumHeight(220)
+        lay.addWidget(self._stage_table, stretch=1)
+
+        action_row = QHBoxLayout()
+        self._set_class_btn = QPushButton("Set class for selected…")
+        self._set_class_btn.setMinimumHeight(32)
+        self._set_class_btn.clicked.connect(self._on_set_class_selected)
+        action_row.addWidget(self._set_class_btn)
+        action_row.addStretch()
+        self._upload_btn = QPushButton("Upload Selected")
+        self._upload_btn.setProperty("role", "success")
+        self._upload_btn.setMinimumHeight(32)
+        self._upload_btn.setMaximumWidth(200)
+        self._upload_btn.clicked.connect(self._on_upload)
+        action_row.addWidget(self._upload_btn)
+        self._back_to_query_btn = QPushButton("←  Back to Query")
+        self._back_to_query_btn.setMinimumHeight(32)
+        self._back_to_query_btn.setMaximumWidth(160)
+        self._back_to_query_btn.clicked.connect(
+            lambda: self._stack.setCurrentIndex(1),
+        )
+        action_row.addWidget(self._back_to_query_btn)
+        lay.addLayout(action_row)
 
         return page
 
@@ -1177,6 +1303,166 @@ class ArchiveTab(QWidget):
         self._worker = DownloadWorker(filenames, Path(dest))
         self._worker.log.connect(lambda t, c: log_append(self._log, t, c))
         self._worker.done.connect(lambda _ok: self._download_btn.setEnabled(True))
+        self._worker.start()
+
+    # ── Upload ──────────────────────────────────────────────────────────────
+
+    _UNKNOWN_CLASS_PLACEHOLDER = "⚠ pick class"
+
+    def _staged_paths(self) -> set[str]:
+        return {
+            self._stage_table.item(r, 2).text()
+            for r in range(self._stage_table.rowCount())
+        }
+
+    def _add_staged_file(self, path: Path) -> None:
+        """Append a single row to the staging table with auto-classification."""
+        if str(path) in self._staged_paths():
+            return
+        from run_metis import classify_fits_file
+        tag = classify_fits_file(path)
+        row = self._stage_table.rowCount()
+        self._stage_table.insertRow(row)
+
+        name_item = QTableWidgetItem(path.name)
+        name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self._stage_table.setItem(row, 0, name_item)
+
+        class_text = tag if tag else self._UNKNOWN_CLASS_PLACEHOLDER
+        class_item = QTableWidgetItem(class_text)
+        class_item.setFlags(class_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        if not tag:
+            class_item.setForeground(QColor("#FF6B6B"))
+        self._stage_table.setItem(row, 1, class_item)
+
+        path_item = QTableWidgetItem(str(path))
+        path_item.setFlags(path_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self._stage_table.setItem(row, 2, path_item)
+
+    def _on_add_upload_files(self) -> None:
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Stage FITS files for upload",
+            str(REPO_ROOT),
+            "FITS files (*.fits *.fits.gz)",
+        )
+        for f in files:
+            self._add_staged_file(Path(f))
+
+    def _on_add_upload_folder(self) -> None:
+        folder = QFileDialog.getExistingDirectory(
+            self, "Stage folder of FITS files", str(REPO_ROOT),
+        )
+        if not folder:
+            return
+        root = Path(folder)
+        discovered: list[Path] = []
+        for pattern in ("*.fits", "*.fits.gz"):
+            discovered.extend(root.rglob(pattern))
+        discovered.sort()
+        for p in discovered:
+            self._add_staged_file(p)
+        log_append(
+            self._log,
+            f"Staged {len(discovered)} file(s) from {folder}\n",
+            "cyan",
+        )
+
+    def _on_remove_staged(self) -> None:
+        rows = sorted(
+            {idx.row() for idx in self._stage_table.selectedIndexes()},
+            reverse=True,
+        )
+        for r in rows:
+            self._stage_table.removeRow(r)
+
+    def _candidate_class_names(self) -> list[str]:
+        from archive import TASK_TO_MASTER_PROCATG
+        from run_metis import DPR_TO_TAG
+        candidates = set(DPR_TO_TAG.values()) | set(TASK_TO_MASTER_PROCATG.values())
+        return sorted(candidates)
+
+    def _on_set_class_selected(self) -> None:
+        rows = sorted({idx.row() for idx in self._stage_table.selectedIndexes()})
+        if not rows:
+            QMessageBox.warning(
+                self, "No selection",
+                "Select one or more rows, then choose a class to apply.",
+            )
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Set DataItem class")
+        v = QVBoxLayout(dlg)
+        v.addWidget(QLabel(
+            f"Apply to {len(rows)} selected row(s):",
+        ))
+        combo = QComboBox()
+        combo.setEditable(True)
+        combo.addItems(self._candidate_class_names())
+        v.addWidget(combo)
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        v.addWidget(btns)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        value = combo.currentText().strip()
+        if not value:
+            return
+        for r in rows:
+            item = self._stage_table.item(r, 1)
+            item.setText(value)
+            item.setForeground(QPalette().color(QPalette.ColorRole.Text))
+
+    def _on_upload(self) -> None:
+        total_rows = self._stage_table.rowCount()
+        if total_rows == 0:
+            QMessageBox.warning(
+                self, "Nothing to upload",
+                "Add files or a folder first.",
+            )
+            return
+
+        selected_rows = sorted(
+            {idx.row() for idx in self._stage_table.selectedIndexes()},
+        )
+        if not selected_rows:
+            selected_rows = list(range(total_rows))
+
+        entries: list[tuple[Path, str | None]] = []
+        unresolved: list[str] = []
+        for r in selected_rows:
+            path = Path(self._stage_table.item(r, 2).text())
+            class_text = self._stage_table.item(r, 1).text()
+            if class_text == self._UNKNOWN_CLASS_PLACEHOLDER:
+                unresolved.append(path.name)
+                continue
+            entries.append((path, class_text))
+
+        if unresolved:
+            QMessageBox.warning(
+                self, "Unresolved rows",
+                "These files have no DataItem class set. Use "
+                "“Set class for selected…” first:\n  "
+                + "\n  ".join(unresolved),
+            )
+            return
+
+        self._upload_btn.setEnabled(False)
+        log_append(
+            self._log,
+            f"Uploading {len(entries)} file(s) to archive…\n",
+            "cyan",
+        )
+        self._worker = UploadWorker(entries)
+        self._worker.log.connect(lambda t, c: log_append(self._log, t, c))
+        self._worker.done.connect(
+            lambda _ok: self._upload_btn.setEnabled(True),
+        )
         self._worker.start()
 
     # ── Settings ────────────────────────────────────────────────────────────

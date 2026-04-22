@@ -22,6 +22,7 @@ from run_metis import (
     _build_sim_script,
     _edps_base_cmd,
     _edps_cwd,
+    classify_fits_file,
     collect_tags_from_fits,
     infer_edps_target,
     infer_workflow,
@@ -503,6 +504,88 @@ class TestCollectTagsFromFits:
         # Should not raise; no .fits files → empty set
         tags = collect_tags_from_fits(tmp_path)
         assert tags == set()
+
+
+# ---------------------------------------------------------------------------
+# classify_fits_file
+# ---------------------------------------------------------------------------
+
+class TestClassifyFitsFile:
+    def test_returns_none_when_astropy_missing(self, tmp_path):
+        import builtins
+        real_import = builtins.__import__
+
+        def mock_import(name, *args, **kwargs):
+            if name == "astropy.io.fits":
+                raise ImportError("mocked missing astropy")
+            return real_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=mock_import):
+            result = classify_fits_file(tmp_path / "any.fits")
+        assert result is None
+
+    def test_returns_none_for_missing_file(self, tmp_path):
+        pytest.importorskip("astropy")
+        assert classify_fits_file(tmp_path / "nonexistent.fits") is None
+
+    def test_classifies_lm_flat_lamp(self, tmp_path):
+        pytest.importorskip("astropy")
+        from astropy.io import fits as afits
+
+        hdr = afits.Header()
+        hdr["HIERARCH ESO DPR CATG"] = "CALIB"
+        hdr["HIERARCH ESO DPR TYPE"] = "FLAT,LAMP"
+        hdr["HIERARCH ESO DPR TECH"] = "IMAGE,LM"
+        path = tmp_path / "flat.fits"
+        afits.HDUList([afits.PrimaryHDU(header=hdr)]).writeto(path)
+
+        assert classify_fits_file(path) == "LM_FLAT_LAMP_RAW"
+
+    def test_classifies_ifu_dark(self, tmp_path):
+        pytest.importorskip("astropy")
+        from astropy.io import fits as afits
+
+        hdr = afits.Header()
+        hdr["HIERARCH ESO DPR CATG"] = "CALIB"
+        hdr["HIERARCH ESO DPR TYPE"] = "DARK"
+        hdr["HIERARCH ESO DPR TECH"] = "IFU"
+        path = tmp_path / "dark.fits"
+        afits.HDUList([afits.PrimaryHDU(header=hdr)]).writeto(path)
+
+        assert classify_fits_file(path) == "DARK_IFU_RAW"
+
+    def test_unknown_triple_returns_none(self, tmp_path):
+        pytest.importorskip("astropy")
+        from astropy.io import fits as afits
+
+        hdr = afits.Header()
+        hdr["HIERARCH ESO DPR CATG"] = "UNKNOWN"
+        hdr["HIERARCH ESO DPR TYPE"] = "XYZ"
+        hdr["HIERARCH ESO DPR TECH"] = "MADEUP"
+        path = tmp_path / "u.fits"
+        afits.HDUList([afits.PrimaryHDU(header=hdr)]).writeto(path)
+
+        assert classify_fits_file(path) is None
+
+    def test_pro_catg_fallback(self, tmp_path):
+        pytest.importorskip("astropy")
+        from astropy.io import fits as afits
+
+        hdr = afits.Header()
+        hdr["HIERARCH ESO PRO CATG"] = "MASTER_DARK_2RG"
+        path = tmp_path / "master.fits"
+        afits.HDUList([afits.PrimaryHDU(header=hdr)]).writeto(path)
+
+        assert classify_fits_file(path) == "MASTER_DARK_2RG"
+
+    def test_headerless_fits_returns_none(self, tmp_path):
+        pytest.importorskip("astropy")
+        from astropy.io import fits as afits
+
+        path = tmp_path / "bare.fits"
+        afits.HDUList([afits.PrimaryHDU()]).writeto(path)
+
+        assert classify_fits_file(path) is None
 
 
 # ---------------------------------------------------------------------------

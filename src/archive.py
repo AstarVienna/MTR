@@ -414,25 +414,153 @@ def download_file(
         return None
 
 
-def list_available_masters(
-    workflow: str,
-    on_log: Callable[[str], None] | None = None,
-) -> dict[str, list[str]]:
-    """Query the archive for master calibration files relevant to *workflow*.
+def _build_pro_dataitem(path: Path):
+    """Header-driven construction of a ``Pro`` DataItem.
 
-    Returns ``{pro_catg: [filename, …]}`` for each master product type
-    available in the archive.
+    Replaces ``Pro(filename=path)`` for processed products.  Upstream
+    ``Pro.__init__`` does ``self.raws = [DataItem-or-None, …]`` after
+    resolving each provenance raw filename in the database — when any
+    of those raws hasn't been ingested, the entry is ``None`` and the
+    typed-list assignment raises a bare ``TypeError`` (see
+    ``common/database/typed_list.py:134``).  This helper does the same
+    header-driven initialisation but filters ``None`` out of the
+    ``raws`` / ``calibs`` list assignments, so masters can be uploaded
+    before their raws.
+
+    Raises ``ValueError`` if the file lacks ``ESO PRO CATG`` or the
+    PRO.CATG isn't registered in ``Pro.class_from_procatg``.
     """
-    chain = _get_task_chain(workflow)
-    result: dict[str, list[str]] = {}
-    for task_name, _tag, _meta in chain:
-        pro_catg = TASK_TO_MASTER_PROCATG.get(task_name)
-        if not pro_catg:
-            continue
-        items = query_archive(category=pro_catg, on_log=on_log)
-        if items:
-            result[pro_catg] = [it["filename"] for it in items]
-    return result
+    from astropy.io import fits
+    from metiswise.main.pro import (
+        Pro,
+        get_provenance_from_header,
+        get_optional_dataitem_from_filename,
+    )
+
+    with fits.open(str(path)) as hdus:
+        header = hdus[0].header
+
+    pro_catg = header.get("ESO PRO CATG")
+    if not pro_catg:
+        raise ValueError(f"{path.name}: no 'ESO PRO CATG' header")
+    cls = Pro.class_from_procatg.get(pro_catg)
+    if cls is None:
+        raise ValueError(
+            f"{path.name}: PRO.CATG {pro_catg!r} not registered in "
+            "Pro.class_from_procatg"
+        )
+
+    di = cls()
+    di.pathname = str(path)
+
+    provenance = get_provenance_from_header(header)
+    if provenance:
+        prov_raws, prov_calibs, _params = provenance[-1]
+        names_raws = [fn for fn, *_ in prov_raws]
+        names_calibs = [fn for fn, *_ in prov_calibs]
+
+        raws = [get_optional_dataitem_from_filename(fn) for fn in names_raws]
+        di.raws = [r for r in raws if r is not None]
+        padded = raws + [None] * 9
+        (di.raw1, di.raw2, di.raw3, di.raw4, di.raw5,
+         di.raw6, di.raw7, di.raw8, di.raw9) = padded[:9]
+
+        calibs = [get_optional_dataitem_from_filename(fn) for fn in names_calibs]
+        di.calibs = [c for c in calibs if c is not None]
+        padded = calibs + [None] * 9
+        (di.calib1, di.calib2, di.calib3, di.calib4, di.calib5,
+         di.calib6, di.calib7, di.calib8, di.calib9) = padded[:9]
+
+    for prop_name in cls.get_persistent_properties():
+        prop = getattr(cls, prop_name)
+        fits_key = f"ESO {prop.__doc__}".replace(".", " ")
+        if fits_key in header:
+            setattr(di, prop_name, header[fits_key])
+
+    return di
+
+
+def upload_file(
+    path: Path,
+    class_name: str | None = None,
+    on_log: Callable[[str], None] | None = None,
+) -> bool:
+    """Ingest a local FITS file into the remote archive.
+
+    Header-driven dispatch (mirrors MetisWISE's ``tools/ingest_file.py``):
+
+    * duplicate-check via ``DataItem.filename == path.name`` — an existing
+      match is treated as success (returns ``True`` without re-uploading);
+    * ``ESO PRO CATG`` → :func:`_build_pro_dataitem` (tolerates
+      not-yet-ingested raw-provenance files);
+    * ``ESO DPR CATG`` → ``Raw(path)``;
+    * neither header + *class_name* provided → manual override via
+      :func:`_resolve_dataitem_class`;
+    * ``.store()`` uploads the FITS payload, ``.commit()`` persists metadata.
+
+    Returns ``True`` on success (including "already present"), ``False``
+    on failure.
+    """
+    _ensure_db_connection()
+    _ensure_metiswise_imports()
+
+    try:
+        from astropy.io import fits
+        from metiswise.main.dataitem import DataItem
+        from metiswise.main.raw import Raw
+    except ImportError as exc:
+        raise RuntimeError(
+            "MetisWISE is not installed.  Use the Archive tab to install it."
+        ) from exc
+
+    if not path.exists():
+        if on_log:
+            on_log(f"File not found: {path}")
+        return False
+
+    try:
+        existing = (DataItem.filename == path.name)
+        if len(existing):
+            if on_log:
+                on_log(f"{path.name}: already in archive — skipping")
+            return True
+
+        if on_log:
+            on_log(f"Ingesting {path.name}…")
+
+        with fits.open(str(path)) as hdus:
+            header = hdus[0].header
+
+        if "ESO PRO CATG" in header:
+            di = _build_pro_dataitem(path)
+        elif "ESO DPR CATG" in header:
+            di = Raw(str(path))
+        elif class_name:
+            cls = _resolve_dataitem_class(class_name, DataItem)
+            if cls is None:
+                if on_log:
+                    on_log(f"Unknown DataItem class: {class_name}")
+                return False
+            di = cls(filename=str(path))
+        else:
+            if on_log:
+                on_log(
+                    f"Cannot classify {path.name}: neither "
+                    "ESO DPR CATG nor ESO PRO CATG in header"
+                )
+            return False
+
+        di.store()
+        di.commit()
+        if on_log:
+            on_log(f"Uploaded {path.name} → {type(di).__name__}")
+        return True
+
+    except Exception as exc:
+        if on_log:
+            msg = str(exc) or f"{type(exc).__name__} (no message)"
+            on_log(f"Upload failed for {path.name}: {msg}")
+        return False
 
 
 # ---------------------------------------------------------------------------
