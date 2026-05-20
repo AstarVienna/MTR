@@ -18,6 +18,7 @@ from run_metis import (
     DPR_TO_TAG,
     MODE_TO_WORKFLOW,
     TECH_TO_WORKFLOW,
+    UMBRELLA_WORKFLOW,
     WORKFLOW_TASK_CHAIN,
     _build_sim_script,
     _edps_base_cmd,
@@ -25,10 +26,13 @@ from run_metis import (
     classify_fits_file,
     collect_tags_from_fits,
     infer_edps_target,
+    infer_edps_targets_for_workflows,
     infer_workflow,
     known_workflows,
     parse_args,
     read_edps_port,
+    scan_fits_inputs,
+    scan_yaml_inputs,
 )
 
 
@@ -460,6 +464,215 @@ class TestInferEdpsTarget:
 
 
 # ---------------------------------------------------------------------------
+# scan_yaml_inputs
+# ---------------------------------------------------------------------------
+
+class TestScanYamlInputs:
+    def test_single_block_collects_workflow_and_tag(self, tmp_path):
+        f = _write_yaml(tmp_path, "obs.yaml", """
+            block1:
+              do.catg: IFU_SCI_RAW
+              properties:
+                tech: "LMS"
+                catg: "SCIENCE"
+        """)
+        tags, has_sci, wfs = scan_yaml_inputs([f])
+        assert tags == {"IFU_SCI_RAW"}
+        assert has_sci is True
+        assert wfs == {"metis.metis_ifu_wkf"}
+
+    def test_mixed_workflows_in_one_file(self, tmp_path):
+        f = _write_yaml(tmp_path, "obs.yaml", """
+            block1:
+              do.catg: LM_IMAGE_SCI_RAW
+              properties:
+                tech: "IMAGE,LM"
+                catg: "SCIENCE"
+            block2:
+              do.catg: IFU_SCI_RAW
+              properties:
+                tech: "LMS"
+                catg: "SCIENCE"
+        """)
+        tags, has_sci, wfs = scan_yaml_inputs([f])
+        assert tags == {"LM_IMAGE_SCI_RAW", "IFU_SCI_RAW"}
+        assert has_sci is True
+        assert wfs == {"metis.metis_lm_img_wkf", "metis.metis_ifu_wkf"}
+
+    def test_mixed_workflows_across_files(self, tmp_path):
+        f1 = _write_yaml(tmp_path, "obs1.yaml", """
+            block1:
+              do.catg: LM_IMAGE_SCI_RAW
+              properties:
+                tech: "IMAGE,LM"
+                catg: "SCIENCE"
+        """)
+        f2 = _write_yaml(tmp_path, "obs2.yaml", """
+            block1:
+              do.catg: N_IMAGE_SCI_RAW
+              properties:
+                tech: "IMAGE,N"
+                catg: "SCIENCE"
+        """)
+        tags, has_sci, wfs = scan_yaml_inputs([f1, f2])
+        assert tags == {"LM_IMAGE_SCI_RAW", "N_IMAGE_SCI_RAW"}
+        assert has_sci is True
+        assert wfs == {"metis.metis_lm_img_wkf", "metis.metis_n_img_wkf"}
+
+    def test_unknown_tech_does_not_raise(self, tmp_path):
+        # Unlike infer_workflow, scan_yaml_inputs silently skips unrecognised
+        # tech/mode values — the caller decides whether an empty sub-workflow
+        # set is fatal.
+        f = _write_yaml(tmp_path, "obs.yaml", """
+            block1:
+              do.catg: SOMETHING_RAW
+              mode: unknown_mode
+              properties:
+                tech: "UNKNOWN,TECH"
+                catg: "CALIB"
+        """)
+        tags, has_sci, wfs = scan_yaml_inputs([f])
+        assert tags == {"SOMETHING_RAW"}
+        assert has_sci is False
+        assert wfs == set()
+
+    def test_mode_fallback_when_tech_missing(self, tmp_path):
+        f = _write_yaml(tmp_path, "obs.yaml", """
+            block1:
+              do.catg: IFU_SCI_RAW
+              mode: lms
+              properties:
+                catg: "SCIENCE"
+        """)
+        _, _, wfs = scan_yaml_inputs([f])
+        assert wfs == {"metis.metis_ifu_wkf"}
+
+    def test_calib_only_has_no_science(self, tmp_path):
+        f = _write_yaml(tmp_path, "obs.yaml", """
+            block1:
+              do.catg: DARK_IFU_RAW
+              properties:
+                tech: "LMS"
+                catg: "CALIB"
+        """)
+        _, has_sci, _ = scan_yaml_inputs([f])
+        assert has_sci is False
+
+    def test_empty_yaml_returns_empties(self, tmp_path):
+        f = _write_yaml(tmp_path, "obs.yaml", """
+            block1: null
+        """)
+        tags, has_sci, wfs = scan_yaml_inputs([f])
+        assert tags == set()
+        assert has_sci is False
+        assert wfs == set()
+
+
+# ---------------------------------------------------------------------------
+# infer_edps_targets_for_workflows  (multi-workflow target inference)
+# ---------------------------------------------------------------------------
+
+class TestInferEdpsTargetsForWorkflows:
+    def test_single_sub_workflow_matches_single_workflow_helper(self):
+        # When only one sub-workflow is active, the multi-workflow helper
+        # must return the same flags as infer_edps_target for that workflow.
+        wf = "metis.metis_ifu_wkf"
+        data_tags = {"DETLIN_IFU_RAW"}
+        flags = infer_edps_targets_for_workflows(data_tags, False, {wf})
+        assert flags == infer_edps_target(wf, data_tags, has_science=False)
+
+    def test_mixed_lm_img_and_ifu_emits_both_targets(self):
+        data_tags = {"LM_DISTORTION_RAW", "IFU_RSRF_RAW"}
+        flags = infer_edps_targets_for_workflows(
+            data_tags,
+            has_science=False,
+            sub_workflows={"metis.metis_lm_img_wkf", "metis.metis_ifu_wkf"},
+        )
+        # Both deepest-calib tasks must be present in the same command line.
+        assert "-t" in flags
+        assert "metis_lm_img_distortion" in flags
+        assert "metis_ifu_rsrf" in flags
+        # Each -t introduces exactly one task — no stray -m flags here.
+        assert flags.count("-t") == 2
+        assert "-m" not in flags
+
+    def test_mixed_with_science_appends_m_science_once(self):
+        flags = infer_edps_targets_for_workflows(
+            {"LM_DISTORTION_RAW", "IFU_RSRF_RAW", "IFU_SCI_RAW",
+             "LM_IMAGE_SCI_RAW"},
+            has_science=True,
+            sub_workflows={"metis.metis_lm_img_wkf", "metis.metis_ifu_wkf"},
+        )
+        # Trailing -m science exactly once.
+        assert flags[-2:] == ["-m", "science"]
+        assert flags.count("science") == 1
+
+    def test_qc1calib_dedup_across_two_lss_sub_workflows(self):
+        # LM-LSS + N-LSS both have qc1calib-gated calibration chains.  When
+        # both contribute, the umbrella command line must include exactly
+        # one -m qc1calib.
+        flags = infer_edps_targets_for_workflows(
+            {"DETLIN_2RG_RAW", "DARK_2RG_RAW",
+             "DETLIN_GEO_RAW", "DARK_GEO_RAW"},
+            has_science=False,
+            sub_workflows={"metis.metis_lm_lss_wkf", "metis.metis_n_lss_wkf"},
+        )
+        assert flags.count("qc1calib") == 1
+
+    def test_shared_calib_task_dedup_across_lm_img_variants(self):
+        # LM_IMG, LM_RAVC, LM_APP, PUPIL_IMAGING all share the same
+        # metis_lm_img_* calibration task names.  When several of these are
+        # in active_sub_workflows the same -t flag must not be emitted more
+        # than once.
+        flags = infer_edps_targets_for_workflows(
+            {"DETLIN_2RG_RAW", "DARK_2RG_RAW"},
+            has_science=False,
+            sub_workflows={
+                "metis.metis_lm_img_wkf",
+                "metis.metis_lm_ravc_wkf",
+                "metis.metis_lm_app_wkf",
+            },
+        )
+        assert flags == ["-t", "metis_lm_img_dark"]
+
+    def test_no_active_sub_workflows_returns_empty(self):
+        flags = infer_edps_targets_for_workflows(
+            {"LM_IMAGE_SCI_RAW"},
+            has_science=False,
+            sub_workflows=set(),
+        )
+        assert flags == []
+
+    def test_only_science_active_workflows_yields_only_m_science(self):
+        flags = infer_edps_targets_for_workflows(
+            {"LM_IMAGE_SCI_RAW"},
+            has_science=True,
+            sub_workflows={"metis.metis_lm_img_wkf"},
+        )
+        assert flags == ["-m", "science"]
+
+    def test_deterministic_flag_order_follows_workflow_chain_order(self):
+        # Two calls with the same inputs must produce the same flag order
+        # regardless of set iteration order (sub_workflows is a set).
+        data_tags = {"LM_DISTORTION_RAW", "IFU_RSRF_RAW"}
+        wfs = {"metis.metis_ifu_wkf", "metis.metis_lm_img_wkf"}
+        first = infer_edps_targets_for_workflows(data_tags, False, wfs)
+        second = infer_edps_targets_for_workflows(data_tags, False, wfs)
+        assert first == second
+
+
+# ---------------------------------------------------------------------------
+# UMBRELLA_WORKFLOW
+# ---------------------------------------------------------------------------
+
+class TestUmbrellaWorkflow:
+    def test_umbrella_constant_value(self):
+        # The umbrella workflow is the EDPS workflow that imports every METIS
+        # sub-workflow; main() always invokes EDPS with this name.
+        assert UMBRELLA_WORKFLOW == "metis.metis_wkf"
+
+
+# ---------------------------------------------------------------------------
 # collect_tags_from_fits
 # ---------------------------------------------------------------------------
 
@@ -569,6 +782,89 @@ class TestCollectTagsFromFits:
 
         tags = collect_tags_from_fits(tmp_path)
         assert "DARK_IFU_RAW" in tags
+
+
+# ---------------------------------------------------------------------------
+# scan_fits_inputs
+# ---------------------------------------------------------------------------
+
+class TestScanFitsInputs:
+    def test_returns_empty_when_astropy_missing(self, tmp_path):
+        import builtins
+        real_import = builtins.__import__
+
+        def mock_import(name, *args, **kwargs):
+            if name == "astropy.io.fits":
+                raise ImportError("mocked missing astropy")
+            return real_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=mock_import):
+            tags, wfs = scan_fits_inputs(tmp_path)
+        assert tags == set()
+        assert wfs == set()
+
+    def test_single_workflow_from_fits(self, tmp_path):
+        pytest.importorskip("astropy")
+        from astropy.io import fits as afits
+
+        hdr = afits.Header()
+        hdr["HIERARCH ESO DPR CATG"] = "CALIB"
+        hdr["HIERARCH ESO DPR TYPE"] = "DARK"
+        hdr["HIERARCH ESO DPR TECH"] = "IFU"
+        afits.HDUList([afits.PrimaryHDU(header=hdr)]).writeto(tmp_path / "dark.fits")
+
+        tags, wfs = scan_fits_inputs(tmp_path)
+        assert tags == {"DARK_IFU_RAW"}
+        assert wfs == {"metis.metis_ifu_wkf"}
+
+    def test_mixed_fits_yields_two_workflows(self, tmp_path):
+        pytest.importorskip("astropy")
+        from astropy.io import fits as afits
+
+        for (catg, typ, tech), fname in [
+            (("SCIENCE", "OBJECT", "IMAGE,LM"), "lm_sci.fits"),
+            (("SCIENCE", "OBJECT", "IFU"),      "ifu_sci.fits"),
+        ]:
+            hdr = afits.Header()
+            hdr["HIERARCH ESO DPR CATG"] = catg
+            hdr["HIERARCH ESO DPR TYPE"] = typ
+            hdr["HIERARCH ESO DPR TECH"] = tech
+            afits.HDUList([afits.PrimaryHDU(header=hdr)]).writeto(tmp_path / fname)
+
+        tags, wfs = scan_fits_inputs(tmp_path)
+        assert tags == {"LM_IMAGE_SCI_RAW", "IFU_SCI_RAW"}
+        assert wfs == {"metis.metis_lm_img_wkf", "metis.metis_ifu_wkf"}
+
+    def test_pro_catg_only_files_contribute_tags_but_no_workflow(self, tmp_path):
+        # Master calibration files (PRO.CATG only, no DPR.TECH) should
+        # contribute their classification tag — but cannot pin down a
+        # sub-workflow on their own.
+        pytest.importorskip("astropy")
+        from astropy.io import fits as afits
+
+        hdr = afits.Header()
+        hdr["HIERARCH ESO PRO CATG"] = "MASTER_DARK_2RG"
+        afits.HDUList([afits.PrimaryHDU(header=hdr)]).writeto(tmp_path / "master.fits")
+
+        tags, wfs = scan_fits_inputs(tmp_path)
+        assert "MASTER_DARK_2RG" in tags
+        assert wfs == set()
+
+    def test_recurses_into_subdirectories(self, tmp_path):
+        pytest.importorskip("astropy")
+        from astropy.io import fits as afits
+
+        sub = tmp_path / "sim"
+        sub.mkdir()
+        hdr = afits.Header()
+        hdr["HIERARCH ESO DPR CATG"] = "CALIB"
+        hdr["HIERARCH ESO DPR TYPE"] = "DARK"
+        hdr["HIERARCH ESO DPR TECH"] = "IFU"
+        afits.HDUList([afits.PrimaryHDU(header=hdr)]).writeto(sub / "dark.fits")
+
+        tags, wfs = scan_fits_inputs(tmp_path)
+        assert "DARK_IFU_RAW" in tags
+        assert "metis.metis_ifu_wkf" in wfs
 
 
 # ---------------------------------------------------------------------------

@@ -55,6 +55,11 @@ INPUT_EXTS = (".yaml", ".yml", ".csv")
 # Workflow lookup tables
 # ---------------------------------------------------------------------------
 
+# Umbrella workflow that imports every METIS sub-workflow.  When mixed inputs
+# span multiple sub-workflows we invoke this one and pass per-sub-workflow
+# -t / -m targeting flags so EDPS can pick the right tasks from a single run.
+UMBRELLA_WORKFLOW = "metis.metis_wkf"
+
 # Primary key: properties.tech value in YAML block
 TECH_TO_WORKFLOW = {
     "IMAGE,LM": "metis.metis_lm_img_wkf",
@@ -252,6 +257,90 @@ def _normalize_mode(mode: str) -> str:
     return mode.strip().lower()
 
 
+def scan_yaml_inputs(yaml_files):
+    """Return ``(data_tags, has_science, sub_workflows)`` by scanning YAML.
+
+    Unlike :func:`infer_workflow`, this does *not* pick a single sub-workflow.
+    Instead it walks every block and records the set of sub-workflows
+    implied by the per-block ``properties.tech`` / ``mode`` value.  Blocks
+    whose tech/mode are unrecognised are silently skipped (their tags are
+    still collected); the caller is expected to handle an empty
+    *sub_workflows* set explicitly.
+    """
+    has_science = False
+    data_tags = set()
+    sub_workflows = set()
+
+    for path in yaml_files:
+        with open(path) as fh:
+            data = yaml.safe_load(fh)
+        if not isinstance(data, dict):
+            continue
+        for block in data.values():
+            if not isinstance(block, dict):
+                continue
+            tag = block.get("do.catg", "")
+            if tag:
+                data_tags.add(tag)
+            props = block.get("properties", {})
+            if props.get("catg", "").upper() == "SCIENCE":
+                has_science = True
+            wf = None
+            tech = props.get("tech", "")
+            if tech:
+                wf = TECH_TO_WORKFLOW.get(_normalize_tech(tech))
+            if wf is None:
+                mode = block.get("mode", "")
+                if mode:
+                    wf = MODE_TO_WORKFLOW.get(_normalize_mode(mode))
+            if wf:
+                sub_workflows.add(wf)
+
+    return data_tags, has_science, sub_workflows
+
+
+def scan_fits_inputs(fits_dir):
+    """Return ``(data_tags, sub_workflows)`` from FITS headers in *fits_dir*.
+
+    Walks ``*.fits`` recursively (same as :func:`collect_tags_from_fits`).
+    Each file's ``HIERARCH ESO DPR TECH`` is mapped via ``TECH_TO_WORKFLOW``
+    to identify which sub-workflow it belongs to.  Files whose tech is
+    unrecognised contribute their classification tag (if any) but do not
+    activate a sub-workflow.
+    """
+    data_tags = set()
+    sub_workflows = set()
+    try:
+        from astropy.io import fits as afits
+    except ImportError:
+        return data_tags, sub_workflows
+
+    for f in Path(fits_dir).rglob("*.fits"):
+        try:
+            with afits.open(f, memmap=True) as hdul:
+                hdr = hdul[0].header
+                catg = hdr.get("HIERARCH ESO DPR CATG", "").strip()
+                typ = hdr.get("HIERARCH ESO DPR TYPE", "").strip()
+                tech = hdr.get("HIERARCH ESO DPR TECH", "").strip()
+                pro_catg = hdr.get("HIERARCH ESO PRO CATG", "").strip()
+        except Exception:
+            continue
+
+        if catg:
+            tag = DPR_TO_TAG.get((catg, typ, tech))
+        else:
+            tag = pro_catg or None
+        if tag:
+            data_tags.add(tag)
+
+        if tech:
+            wf = TECH_TO_WORKFLOW.get(_normalize_tech(tech))
+            if wf:
+                sub_workflows.add(wf)
+
+    return data_tags, sub_workflows
+
+
 def infer_workflow(input_files):
     """Return (workflow, has_science, data_tags) by scanning YAML blocks.
 
@@ -437,6 +526,51 @@ def infer_edps_target(workflow, data_tags, has_science):
             flags += ["-m", "qc1calib"]
         else:
             flags += ["-t", calib_task]
+
+    if has_science:
+        flags += ["-m", "science"]
+
+    return flags
+
+
+def infer_edps_targets_for_workflows(data_tags, has_science, sub_workflows):
+    """Combine per-sub-workflow EDPS target flags for an umbrella-workflow run.
+
+    For each sub-workflow in *sub_workflows*, picks the deepest non-science
+    task whose main-input tag is present in *data_tags* (same logic as
+    :func:`infer_edps_target`).  Deduplicates so that:
+
+    - A given ``-t <task>`` appears at most once even if multiple sub-workflows
+      share the same task name (e.g. LM IMG / RAVC / APP all share the
+      ``metis_lm_img_*`` calibration tasks).
+    - A single ``-m qc1calib`` is emitted if any sub-workflow contributes one.
+    - ``-m science`` is appended once when *has_science* is true.
+
+    Sub-workflow iteration order follows ``WORKFLOW_TASK_CHAIN`` for
+    deterministic flag ordering.
+    """
+    flags = []
+    seen_tasks = set()
+    seen_qc1 = False
+
+    for wf in WORKFLOW_TASK_CHAIN:
+        if wf not in sub_workflows:
+            continue
+        # Reuse the single-workflow logic without its has_science handling
+        # so that "-m science" appears at most once at the end.
+        sub_flags = infer_edps_target(wf, data_tags, has_science=False)
+        i = 0
+        while i < len(sub_flags):
+            kind, val = sub_flags[i], sub_flags[i + 1]
+            if kind == "-t":
+                if val not in seen_tasks:
+                    flags += ["-t", val]
+                    seen_tasks.add(val)
+            elif kind == "-m" and val == "qc1calib":
+                if not seen_qc1:
+                    flags += ["-m", "qc1calib"]
+                    seen_qc1 = True
+            i += 2
 
     if has_science:
         flags += ["-m", "science"]
@@ -920,12 +1054,22 @@ def main():
                 "Pass --simulations-dir if it is installed elsewhere."
             )
 
-    # Infer workflow and collect data tags from inputs (if provided).
-    # In --no-sim mode input content is ignored — workflow and tags come from
-    # the FITS headers in --pipeline-input, so leftover inputs from a previous
-    # simulate+run cannot force the wrong workflow here.
+    # Collect data tags and the set of sub-workflows implied by the YAML
+    # blocks (if provided).  We always run EDPS against the umbrella workflow
+    # ``metis.metis_wkf`` (which imports every sub-workflow), so we never need
+    # to pick a single sub-workflow up front — but knowing which sub-workflows
+    # are present lets us compute the right -t / -m flags and drive the
+    # auto-fetch step per sub-workflow.
+    # In --no-sim mode YAML/CSV content is ignored — tags and sub-workflows
+    # come from the FITS headers in --pipeline-input, so a leftover input from
+    # a previous simulate+run cannot mislead the pipeline step here.
     print(f"  Runner    : {runner}"
           + (f" (container: {args.container})" if args.container else ""))
+    workflow = UMBRELLA_WORKFLOW
+    has_science = False
+    yaml_tags = set()
+    yaml_sub_workflows = set()
+
     if input_files and not args.no_sim:
         by_ext = Counter(p.suffix.lower() for p in input_files)
         breakdown = ", ".join(
@@ -937,47 +1081,52 @@ def main():
             kind = "YAML" if p.suffix.lower() in (".yaml", ".yml") else "CSV"
             print(f"    [{kind:<4}] {p}")
 
+        yaml_subset = [p for p in input_files
+                       if p.suffix.lower() in (".yaml", ".yml")]
         csv_only = all(p.suffix.lower() == ".csv" for p in input_files)
+
         if args.no_pipeline:
-            # Sim-only: workflow value is unused; skip inference for both
-            # YAML and CSV so the run never trips on a CSV-only set here.
-            workflow = None
-            has_science = False
-            yaml_tags = set()
-            print("  Workflow  : (not needed in --no-pipeline mode)")
+            # Sim-only: workflow / sub-workflow values are unused downstream;
+            # skip inference so a CSV-only set never trips on it here.
+            print("  Workflow      : (not needed in --no-pipeline mode)")
         elif csv_only:
+            # CSV inputs cannot be auto-classified into a sub-workflow on the
+            # MTR side; require --workflow and treat it as the single active
+            # sub-workflow for the umbrella run.
             if not args.workflow:
                 sys.exit(
                     "Error: all inputs are CSV but the pipeline will run.\n"
-                    "  Workflow cannot be auto-detected from CSV — pass "
+                    "  Sub-workflow cannot be auto-detected from CSV — pass "
                     "--workflow NAME, or add --no-pipeline.\n"
                     f"  Available workflows: {', '.join(known_workflows())}"
                 )
-            workflow = args.workflow
-            has_science = False
-            yaml_tags = set()
-            print(f"  Workflow  : {workflow}  (explicit; CSV-only run)")
-            print(f"  Data tags : (will be inferred from FITS headers)")
+            yaml_sub_workflows = {args.workflow}
+            print(f"  Workflow      : {workflow}")
+            print(f"  Sub-workflows : {sorted(yaml_sub_workflows)}  "
+                  "(explicit; CSV-only run)")
+            print("  Data tags     : (will be inferred from FITS headers)")
         else:
-            try:
-                workflow, has_science, yaml_tags = infer_workflow(input_files)
-            except ValueError as exc:
-                sys.exit(f"Error: {exc}")
-            if args.workflow and args.workflow != workflow:
-                print(f"  Workflow  : {args.workflow}  "
-                      f"(override; inferred was {workflow})")
-                workflow = args.workflow
+            yaml_tags, has_science, yaml_sub_workflows = scan_yaml_inputs(yaml_subset)
+            if not yaml_sub_workflows:
+                sys.exit(
+                    "Error: could not identify any METIS sub-workflow from the "
+                    "YAML input(s). Check that properties.tech or mode is set "
+                    "to one of the known values."
+                )
+            if args.workflow and args.workflow not in yaml_sub_workflows:
+                print(f"  Sub-workflows : {{{args.workflow}}}  "
+                      f"(override; inferred was {sorted(yaml_sub_workflows)})")
+                yaml_sub_workflows = {args.workflow}
             else:
-                print(f"  Workflow  : {workflow}")
-            print(f"  Data tags : {sorted(yaml_tags) or '(none found)'}")
+                print(f"  Workflow      : {workflow}")
+                print(f"  Sub-workflows : {sorted(yaml_sub_workflows)}")
+            print(f"  Data tags     : {sorted(yaml_tags) or '(none found)'}")
     else:
         if input_files:
-            print(f"  Note      : ignoring {len(input_files)} input file(s) "
+            print(f"  Note          : ignoring {len(input_files)} input file(s) "
                   "in --no-sim mode")
-        workflow = None
-        has_science = False
-        yaml_tags = set()
-        print("  Workflow  : (will be inferred from FITS headers)")
+        print(f"  Workflow      : {workflow}")
+        print("  Sub-workflows : (will be inferred from FITS headers)")
 
     # Create output directories
     ts = datetime.now().strftime("%Y%m%dT%H%M%S")
@@ -1085,70 +1234,88 @@ def main():
         )
 
         fetch_tags = yaml_tags
+        fetch_sub_workflows = set(yaml_sub_workflows)
         if args.no_sim:
-            fetch_tags = yaml_tags | collect_tags_from_fits(sim_out)
+            fits_tags_now, fits_wfs_now = scan_fits_inputs(sim_out)
+            fetch_tags = yaml_tags | fits_tags_now
+            fetch_sub_workflows = fetch_sub_workflows | fits_wfs_now
 
         print("=== Checking for missing calibrations ===")
-        try:
-            missing = identify_missing_calibrations(
-                workflow=workflow,
-                data_tags=fetch_tags,
-                has_science=has_science,
-            )
-            if not missing:
-                print("  All required calibrations already present")
-            else:
+        all_missing = []
+        all_fetched = []
+        for wf in sorted(fetch_sub_workflows):
+            try:
+                missing = identify_missing_calibrations(
+                    workflow=wf,
+                    data_tags=fetch_tags,
+                    has_science=has_science,
+                )
+                if not missing:
+                    continue
+                all_missing.extend(missing)
                 fetched = fetch_missing_calibrations(
-                    workflow=workflow,
+                    workflow=wf,
                     data_tags=fetch_tags,
                     has_science=has_science,
                     dest_dir=sim_out,
                     on_log=lambda msg: print(f"  {msg}"),
                 )
-                if fetched:
-                    print(f"  Downloaded {len(fetched)} master calibration file(s)")
-                else:
-                    catgs = ", ".join(pc for _, pc in missing)
-                    print(f"  Missing masters not available in archive: {catgs}")
-        except Exception as exc:
-            print(f"  Warning: auto-fetch failed ({exc}); continuing without")
+                all_fetched.extend(fetched)
+            except Exception as exc:
+                print(f"  Warning: auto-fetch for {wf} failed ({exc}); "
+                      "continuing without")
+        if not all_missing:
+            print("  All required calibrations already present")
+        elif all_fetched:
+            print(f"  Downloaded {len(all_fetched)} master calibration file(s)")
+        else:
+            catgs = ", ".join(pc for _, pc in all_missing)
+            print(f"  Missing masters not available in archive: {catgs}")
 
     # -----------------------------------------------------------------------
     # Step 2: EDPS pipeline
     # -----------------------------------------------------------------------
     if not args.no_pipeline:
         # When re-using existing FITS (--no-sim), classify them from headers
-        # to determine which pipeline tasks apply.
+        # to determine which sub-workflows' tasks apply.
         if args.no_sim:
-            # Scan all pipeline input directories for FITS tags/workflow.
+            # Scan all pipeline input directories for FITS tags and the set
+            # of sub-workflows their DPR.TECH headers imply.  EDPS itself
+            # picks the right files per workflow from the shared input dir,
+            # so we just need to cover every workflow whose raws are present.
             input_dirs = ([str(Path(d).resolve()) for d in args.pipeline_input]
                           if args.pipeline_input else [str(sim_out)])
             fits_tags = set()
+            active_sub_workflows = set()
             for d in input_dirs:
-                fits_tags |= collect_tags_from_fits(d)
+                tags, wfs = scan_fits_inputs(d)
+                fits_tags |= tags
+                active_sub_workflows |= wfs
             if fits_tags:
                 print(f"  FITS tags found : {sorted(fits_tags)}")
+            if active_sub_workflows:
+                print(f"  Sub-workflows   : {sorted(active_sub_workflows)}")
+            else:
+                sys.exit(
+                    "Error: could not identify any METIS sub-workflow from "
+                    "FITS headers in: " + ", ".join(input_dirs)
+                )
             data_tags = fits_tags
-            last_err = None
-            for d in input_dirs:
-                try:
-                    workflow = infer_workflow_from_fits(d)
-                    print(f"  Workflow  : {workflow}")
-                    break
-                except ValueError as exc:
-                    last_err = exc
-            if workflow is None and last_err is not None:
-                sys.exit(f"Error: {last_err}")
-            # Re-derive has_science from the FITS tags + workflow chain so the
-            # -m science flag is added when science raws are present.
+            # Re-derive has_science from the FITS tags + active workflow
+            # chains so the -m science flag is added when science raws are
+            # present.
             has_science = any(
                 meta == "science" and tag in data_tags
-                for _, tag, meta in WORKFLOW_TASK_CHAIN.get(workflow, [])
+                for wf in active_sub_workflows
+                for _, tag, meta in WORKFLOW_TASK_CHAIN.get(wf, [])
             )
         else:
             data_tags = yaml_tags
+            active_sub_workflows = yaml_sub_workflows
 
-        target_flags = infer_edps_target(workflow, data_tags, has_science)
+        target_flags = infer_edps_targets_for_workflows(
+            data_tags, has_science, active_sub_workflows,
+        )
         if target_flags:
             print(f"  EDPS target     : {' '.join(target_flags)}")
         else:
