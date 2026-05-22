@@ -19,7 +19,7 @@ cd MTR
 
 `launch.sh` boots the GUI via `uv`. If `uv` is not already installed, it will prompt you once to install it, then proceed. Always use `launch.sh` to start the GUI — it uses `uv sync --inexact` to preserve pipeline dependencies that the Install tab adds later.
 
-From there, everything — installing the pipeline, selecting a runner, picking YAML inputs, and watching live pipeline output — is available as point-and-click controls.
+From there, everything — installing the pipeline, selecting a runner, picking YAML or CSV inputs, and watching live pipeline output — is available as point-and-click controls.
 
 ## System Dependencies
 
@@ -113,10 +113,11 @@ The Run tab wraps `src/run_metis.py` in a file-picker UI. All CLI options are ex
 
 Workflow:
 
-1. **Add YAML input files** via the file browser (the list supports multi-select removal)
+1. **Add input files** via the file browser — YAML observation blocks (`*.yaml`, `*.yml`) and AIT-format CSV test sequences (`*.csv`) may be added freely and mixed in a single run. A live tally (e.g. `2 YAML  ·  1 CSV`) appears below the list.
 2. **Tune options** — output directory, CPU cores, auto-calibration, runner mode, pipeline mode (simulate + run, simulate only, pipeline only), simulations directory, instrument packages directory
-3. **Click Run** — the Run button becomes Stop, and pipeline output streams into the log view with ANSI colouring stripped and stderr highlighted
-4. **Inspect output** — the pane below the option form shows exactly where simulation frames and pipeline products will be written, updating live as you edit the output path
+3. **Pick a workflow** (only for CSV-only runs that include the pipeline) — workflow auto-detection reads YAML content, so when the list contains only CSV files and you intend to run the pipeline, the *Workflow* dropdown appears and must be set; otherwise it stays hidden
+4. **Click Run** — the Run button becomes Stop, and pipeline output streams into the log view with ANSI colouring stripped and stderr highlighted
+5. **Inspect output** — the pane below the option form shows exactly where simulation frames and pipeline products will be written, updating live as you edit the output path
 
 Settings are persisted via `QSettings` and restored on next launch, so you can re-run the last configuration with two clicks.
 
@@ -157,7 +158,16 @@ ScopeSim instrument packages (Armazones, ELT, METIS) will be downloaded into `./
 
 > **Tip:** always launch the GUI (or invoke `src/run_metis.py`) from the same directory — otherwise ScopeSim will download a fresh copy of the instrument packages into every new directory, cluttering your filesystem.
 
-## YAML Format
+## Input Formats
+
+Two input formats are supported and may be mixed in a single run:
+
+- **YAML observation blocks** (`*.yaml`, `*.yml`) — the primary, human-authored format. Workflow auto-detection works on YAML content.
+- **AIT-format CSV test sequences** (`*.csv`) — the AIT performance-test sheet exported as CSV. Parsed by `metis_simulations.csvParser` at simulation time. Because MTR does **not** inspect CSV content itself, CSV-only runs that execute the pipeline require an explicit workflow choice (the GUI's *Workflow* dropdown, or `--workflow NAME` on the CLI).
+
+See [`examples/small_test.csv`](examples/small_test.csv) for a minimal CSV; the rest of this section covers YAML.
+
+### YAML Format
 
 Each top-level key in the YAML is one *observation block*. The workflow (`lm_img`, `n_img`, `ifu`, `lm_lss`, `n_lss`, …) and the deepest pipeline target task are inferred automatically from the YAML content — primarily from `properties.tech`, falling back to `mode`.
 
@@ -209,8 +219,10 @@ The GUI displays the resolved paths live under the *Output directory* field so y
 `src/run_metis.py` is the headless interface that the GUI drives under the hood. It is useful for scripting, CI jobs, and SSH sessions without a display. It accepts the same options as the GUI.
 
 ```bash
-python src/run_metis.py [OPTIONS] yaml1.yaml [yaml2.yaml ...]
+python src/run_metis.py [OPTIONS] input1.yaml [input2.csv ...]
 ```
+
+YAML and CSV inputs may be mixed in any combination.
 
 ### Options
 
@@ -219,7 +231,8 @@ python src/run_metis.py [OPTIONS] yaml1.yaml [yaml2.yaml ...]
 | `-o / --output` | `./output/<timestamp>` | Root directory for all outputs (env: `METIS_OUTPUT_DIR`) |
 | `--runner {metapkg,native,docker,podman}` | `metapkg` | Execution mode (see below; env: `METIS_RUNNER`) |
 | `--container NAME` | — | Container name/ID for `docker` / `podman` runners (env: `METIS_CONTAINER`) |
-| `--calib [N]` | `1` | Auto-generate N calibration frames (dark/flat) per unique config, inferred from YAML. Pass `--calib 0` to disable. |
+| `--calib [N]` | `1` | Auto-generate N calibration frames (dark/flat) per unique config, inferred from input content. Pass `--calib 0` to disable. |
+| `--workflow NAME` | auto-detect | Force EDPS workflow name (e.g. `metis.metis_lm_img_wkf`). Required when all inputs are `.csv` and the pipeline will run, because workflow auto-detection is YAML-only. Overrides auto-detection when YAML is also present. |
 | `--cores N` | `4` | CPU cores used for parallel simulations |
 | `--no-sim` | off | Skip simulation; run pipeline on existing FITS data (source defaults to `<output>/sim/` — override with `--pipeline-input`) |
 | `--pipeline-input DIR` | `<output>/sim/` | Directory containing FITS files to feed the pipeline (only with `--no-sim`; env: `METIS_PIPELINE_INPUT`) |
@@ -269,6 +282,15 @@ python src/run_metis.py --no-sim -o /tmp/myrun examples/LMS_RAD_06.yaml
 
 # Pipeline-only with FITS files from a custom location
 python src/run_metis.py --no-sim --pipeline-input /data/sim_fits -o /tmp/myrun
+
+# CSV-only input, simulate only (workflow auto-detection not needed)
+python src/run_metis.py --no-pipeline examples/small_test.csv
+
+# CSV-only input, full simulate + pipeline run (workflow must be explicit)
+python src/run_metis.py --workflow metis.metis_lm_img_wkf examples/small_test.csv
+
+# Mixed YAML + CSV in a single run
+python src/run_metis.py examples/small_test.yaml examples/small_test.csv
 ```
 
 ## Repository Layout
@@ -283,7 +305,8 @@ MTR/
 │   ├── Dockerfile          # Ubuntu 24.04 GUI container (Qt6 / Wayland)
 │   └── compose.yml         # Podman / Docker Compose for the GUI service
 ├── examples/
-│   ├── small_test.yaml     # Minimal test configuration (two blocks)
+│   ├── small_test.yaml     # Minimal YAML test configuration (two blocks)
+│   ├── small_test.csv      # Minimal AIT-format CSV: IMG_LM darks + DETLIN/WCUOFF pairs (exercises the dark + lingain workflow tasks)
 │   └── LMS_RAD_06.yaml     # Full IFU observation sequence (reference example)
 ├── tests/                  # Unit tests (pytest)
 ├── launch.sh               # GUI launcher (installs uv if missing, then runs the GUI)

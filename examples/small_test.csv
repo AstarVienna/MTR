@@ -1,0 +1,13 @@
+test_ID,step_number,templateName,DPR.TECH,DPR.TYPE,DPR.CATG,DET1.DIT,DET1.NDIT,SEQ.NEXPO1,INS.OPTI10.NAME,INS.OPTI11.NAME,INS.OPTI17.NAME
+component,component,component,component,component,component,component,component,component,component,component,component
+description,description,description,description,description,description,description,description,description,description,description,description
+type,type,type,type,type,type,type,type,type,type,type,type
+LM_IMG_DARK,1,METIS_img_lm_cal_Dark,IMAGE_LM,DARK,CALIB,0.25,1,3,OPEN,DARK,IN
+LM_IMG_LINGAIN,1,METIS_img_lm_cal_DetLin,IMAGE_LM,DETLIN,CALIB,1.0,1,1,OPEN,OPEN,IN
+LM_IMG_LINGAIN,2,METIS_img_lm_cal_DetLin,IMAGE_LM,DETLIN,CALIB,2.0,1,1,OPEN,OPEN,IN
+LM_IMG_LINGAIN,3,METIS_img_lm_cal_DetLin,IMAGE_LM,DETLIN,CALIB,3.0,1,1,OPEN,OPEN,IN
+LM_IMG_LINGAIN,4,METIS_img_lm_cal_DetLin,IMAGE_LM,DETLIN,CALIB,4.0,1,1,OPEN,OPEN,IN
+LM_IMG_LINGAIN,5,METIS_img_lm_cal_DetLin,IMAGE_LM,DARK_WCUOFF,CALIB,1.0,1,1,OPEN,DARK,IN
+LM_IMG_LINGAIN,6,METIS_img_lm_cal_DetLin,IMAGE_LM,DARK_WCUOFF,CALIB,2.0,1,1,OPEN,DARK,IN
+LM_IMG_LINGAIN,7,METIS_img_lm_cal_DetLin,IMAGE_LM,DARK_WCUOFF,CALIB,3.0,1,1,OPEN,DARK,IN
+LM_IMG_LINGAIN,8,METIS_img_lm_cal_DetLin,IMAGE_LM,DARK_WCUOFF,CALIB,4.0,1,1,OPEN,DARK,IN

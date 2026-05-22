@@ -2,11 +2,12 @@
 """
 run_metis.py — METIS observation simulation + pipeline wrapper
 
-Reads YAML observation-block files, uses ScopeSim to generate synthetic
-FITS frames, then runs the matching EDPS workflow on those frames.
+Reads YAML observation-block files or AIT-format CSV test sequences, uses
+ScopeSim to generate synthetic FITS frames, then runs the matching EDPS
+workflow on those frames. YAML and CSV inputs may be mixed in a single run.
 
 Usage:
-    python run_metis.py [OPTIONS] yaml1.yaml [yaml2.yaml ...]
+    python run_metis.py [OPTIONS] input1.yaml [input2.csv ...]
 
 Three execution modes are supported via --runner (or METIS_RUNNER env var):
 
@@ -24,11 +25,14 @@ Three execution modes are supported via --runner (or METIS_RUNNER env var):
       The output directory must be bind-mounted into the container.
 
 The workflow (lm_img / n_img / ifu / lm_lss / n_lss / …) is inferred
-automatically from the DPR.TECH / mode values in the YAML blocks.
+automatically from the DPR.TECH / mode values in YAML blocks. CSV inputs
+cannot be auto-classified — when *every* input is CSV and the pipeline will
+run, pass --workflow NAME explicitly (or run with --no-pipeline).
 The pipeline target task is inferred from the data types present in the YAML
-(or from FITS headers when --no-sim is used): it targets the deepest task in
-the workflow chain whose main-input classification tag is present in the data.
-If any block has catg="SCIENCE", the pipeline is run with -m science.
+(or from FITS headers when --no-sim or all inputs are CSV): it targets the
+deepest task in the workflow chain whose main-input classification tag is
+present in the data. If any block has catg="SCIENCE", the pipeline is run
+with -m science.
 """
 
 import argparse
@@ -39,8 +43,12 @@ import subprocess
 import sys
 import tempfile
 import yaml
+from collections import Counter
 from pathlib import Path
 from datetime import datetime
+
+# Recognised input file extensions
+INPUT_EXTS = (".yaml", ".yml", ".csv")
 
 
 # ---------------------------------------------------------------------------
@@ -244,15 +252,29 @@ def _normalize_mode(mode: str) -> str:
     return mode.strip().lower()
 
 
-def infer_workflow(yaml_files):
-    """Return (workflow, has_science, data_tags) by scanning all YAML blocks.
+def infer_workflow(input_files):
+    """Return (workflow, has_science, data_tags) by scanning YAML blocks.
 
-    Checks ``properties.tech`` first, then ``mode`` as a fallback.
-    ``has_science`` is True when any block has ``properties.catg == "SCIENCE"``.
-    ``data_tags`` is the set of ``do.catg`` values found across all blocks;
-    these equal the EDPS classification tag names for the generated FITS files.
-    Raises ValueError when no recognised tech/mode value is found.
+    CSV inputs are skipped here: their AIT format does not carry enough
+    information for MTR to map to an EDPS workflow without parsing the full
+    csvParser logic. When the input list contains *no* YAML files this
+    function raises ValueError; callers should then require an explicit
+    --workflow choice (or fall back to FITS header inference).
+
+    For YAML files, checks ``properties.tech`` first, then ``mode`` as a
+    fallback. ``has_science`` is True when any block has
+    ``properties.catg == "SCIENCE"``. ``data_tags`` is the set of
+    ``do.catg`` values found across all YAML blocks; these equal the EDPS
+    classification tag names for the generated FITS files.
     """
+    yaml_files = [p for p in input_files
+                  if Path(p).suffix.lower() in (".yaml", ".yml")]
+    if not yaml_files:
+        raise ValueError(
+            "No YAML files provided; workflow cannot be inferred from CSV.\n"
+            "  Pass --workflow NAME explicitly, or skip the pipeline with --no-pipeline."
+        )
+
     techs = []
     modes = []
     has_science = False
@@ -295,6 +317,14 @@ def infer_workflow(yaml_files):
         f"  Known tech values : {list(TECH_TO_WORKFLOW)}\n"
         f"  Known mode values : {list(MODE_TO_WORKFLOW)}"
     )
+
+
+def known_workflows():
+    """Return the sorted set of workflow names recognised by infer_workflow.
+
+    Exposed so the GUI workflow dropdown stays in sync with the CLI choices.
+    """
+    return sorted(set(TECH_TO_WORKFLOW.values()) | set(MODE_TO_WORKFLOW.values()))
 
 
 def classify_fits_file(path):
@@ -346,7 +376,8 @@ def collect_tags_from_fits(fits_dir):
 def infer_workflow_from_fits(fits_dir):
     """Infer the EDPS workflow from DPR TECH headers in a FITS directory.
 
-    Used when --no-sim is given without any YAML files.
+    Used when --no-sim is given without any YAML files, or when all inputs
+    are CSV (CSV cannot be auto-classified in MTR).
     """
     try:
         from astropy.io import fits as afits
@@ -417,7 +448,7 @@ def infer_edps_target(workflow, data_tags, has_science):
 # Simulation driver script builder
 # ---------------------------------------------------------------------------
 
-def _build_sim_script(out_dir, do_calib, do_static, n_cores, yaml_list,
+def _build_sim_script(out_dir, do_calib, do_static, n_cores, input_list,
                       inst_pkgs_path=None, sims_root=None,
                       static_calibs_dir=None, do_sim=True):
     """Return the simulation driver script as a string.
@@ -537,7 +568,7 @@ def _build_sim_script(out_dir, do_calib, do_static, n_cores, yaml_list,
             "        testRun   = False,",
             "    )",
             "    try:",
-            f"        rsb.runSimulationBlock({yaml_list!r}, params, [])",
+            f"        rsb.runSimulationBlock({input_list!r}, params, [])",
             "    except ValueError as _exc:",
             "        if 'Package could not be found' in str(_exc):",
             "            import sys as _sys",
@@ -698,8 +729,17 @@ def parse_args(argv=None):
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument(
-        "yaml_files", nargs="*", metavar="YAML",
-        help="One or more observation-block YAML files (not required with --no-sim)",
+        "input_files", nargs="*", metavar="INPUT",
+        help="One or more observation-block files (.yaml, .yml, or .csv); "
+             "YAML and CSV may be mixed. Not required with --no-sim.",
+    )
+    p.add_argument(
+        "--workflow", metavar="NAME", default=None,
+        choices=known_workflows(),
+        help="Force EDPS workflow name (e.g. metis.metis_lm_img_wkf). "
+             "Required when all inputs are CSV and the pipeline will run, "
+             "because workflow auto-detection is YAML-only. Overrides "
+             "auto-detection when YAML is also present.",
     )
     p.add_argument(
         "-o", "--output", metavar="DIR",
@@ -710,7 +750,7 @@ def parse_args(argv=None):
     p.add_argument(
         "--calib", type=int, nargs="?", const=1, default=1, metavar="N",
         help="Auto-generate N calibration frames (dark/flat) per unique config, "
-             "inferred from YAML content. Bare --calib = 1; --calib 0 disables. "
+             "inferred from input content. Bare --calib = 1; --calib 0 disables. "
              "[default: 1]",
     )
     p.add_argument(
@@ -813,8 +853,8 @@ def main():
     if args.no_sim and args.no_pipeline:
         sys.exit("Error: --no-sim and --no-pipeline both set; nothing to do.")
 
-    if not args.no_sim and not args.yaml_files:
-        p.error("YAML files are required unless --no-sim is given")
+    if not args.no_sim and not args.input_files:
+        p.error("Input files (YAML or CSV) are required unless --no-sim is given")
 
     if runner in ("docker", "podman") and not args.container:
         sys.exit(
@@ -822,13 +862,18 @@ def main():
             f"You can also set the METIS_CONTAINER environment variable."
         )
 
-    # Resolve and validate YAML paths
-    yaml_files = []
-    for raw in args.yaml_files:
+    # Resolve and validate input paths (YAML and/or CSV)
+    input_files = []
+    for raw in args.input_files:
         p = Path(raw).resolve()
         if not p.exists():
-            sys.exit(f"Error: YAML file not found: {p}")
-        yaml_files.append(p)
+            sys.exit(f"Error: input file not found: {p}")
+        if p.suffix.lower() not in INPUT_EXTS:
+            sys.exit(
+                f"Error: unsupported input extension: {p.suffix} ({p})\n"
+                f"  Supported extensions: {', '.join(INPUT_EXTS)}"
+            )
+        input_files.append(p)
 
     # Locate the pipeline environment directory (metapkg runner only).
     # Prefers the repo root (consolidated install via the MTR Install tab),
@@ -875,23 +920,59 @@ def main():
                 "Pass --simulations-dir if it is installed elsewhere."
             )
 
-    # Infer workflow and collect data tags from YAML (if provided).
-    # In --no-sim mode YAML content is ignored — workflow and tags come from
-    # the FITS headers in --pipeline-input, so a leftover YAML from a previous
+    # Infer workflow and collect data tags from inputs (if provided).
+    # In --no-sim mode input content is ignored — workflow and tags come from
+    # the FITS headers in --pipeline-input, so leftover inputs from a previous
     # simulate+run cannot force the wrong workflow here.
     print(f"  Runner    : {runner}"
           + (f" (container: {args.container})" if args.container else ""))
-    if yaml_files and not args.no_sim:
-        print("Analysing YAML file(s) …")
-        try:
-            workflow, has_science, yaml_tags = infer_workflow(yaml_files)
-        except ValueError as exc:
-            sys.exit(f"Error: {exc}")
-        print(f"  Workflow  : {workflow}")
-        print(f"  Data tags : {sorted(yaml_tags) or '(none found)'}")
+    if input_files and not args.no_sim:
+        by_ext = Counter(p.suffix.lower() for p in input_files)
+        breakdown = ", ".join(
+            f"{n} {ext.lstrip('.').upper()}"
+            for ext, n in sorted(by_ext.items())
+        )
+        print(f"Analysing input file(s)  ({breakdown}) …")
+        for p in input_files:
+            kind = "YAML" if p.suffix.lower() in (".yaml", ".yml") else "CSV"
+            print(f"    [{kind:<4}] {p}")
+
+        csv_only = all(p.suffix.lower() == ".csv" for p in input_files)
+        if args.no_pipeline:
+            # Sim-only: workflow value is unused; skip inference for both
+            # YAML and CSV so the run never trips on a CSV-only set here.
+            workflow = None
+            has_science = False
+            yaml_tags = set()
+            print("  Workflow  : (not needed in --no-pipeline mode)")
+        elif csv_only:
+            if not args.workflow:
+                sys.exit(
+                    "Error: all inputs are CSV but the pipeline will run.\n"
+                    "  Workflow cannot be auto-detected from CSV — pass "
+                    "--workflow NAME, or add --no-pipeline.\n"
+                    f"  Available workflows: {', '.join(known_workflows())}"
+                )
+            workflow = args.workflow
+            has_science = False
+            yaml_tags = set()
+            print(f"  Workflow  : {workflow}  (explicit; CSV-only run)")
+            print(f"  Data tags : (will be inferred from FITS headers)")
+        else:
+            try:
+                workflow, has_science, yaml_tags = infer_workflow(input_files)
+            except ValueError as exc:
+                sys.exit(f"Error: {exc}")
+            if args.workflow and args.workflow != workflow:
+                print(f"  Workflow  : {args.workflow}  "
+                      f"(override; inferred was {workflow})")
+                workflow = args.workflow
+            else:
+                print(f"  Workflow  : {workflow}")
+            print(f"  Data tags : {sorted(yaml_tags) or '(none found)'}")
     else:
-        if yaml_files:
-            print(f"  Note      : ignoring {len(yaml_files)} YAML file(s) "
+        if input_files:
+            print(f"  Note      : ignoring {len(input_files)} input file(s) "
                   "in --no-sim mode")
         workflow = None
         has_science = False
@@ -956,7 +1037,7 @@ def main():
             do_calib           = args.calib,
             do_static          = args.static,
             n_cores            = args.cores,
-            yaml_list          = [str(p) for p in yaml_files],
+            input_list         = [str(p) for p in input_files],
             inst_pkgs_path     = inst_pkgs_path,
             sims_root          = sims_root,
             static_calibs_dir  = str(static_calibs_dir),
@@ -982,7 +1063,7 @@ def main():
             do_calib           = 0,
             do_static          = args.static,
             n_cores            = args.cores,
-            yaml_list          = [],
+            input_list         = [],
             inst_pkgs_path     = None,
             sims_root          = sims_root,
             static_calibs_dir  = str(static_calibs_dir),

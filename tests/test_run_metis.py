@@ -26,6 +26,7 @@ from run_metis import (
     collect_tags_from_fits,
     infer_edps_target,
     infer_workflow,
+    known_workflows,
     parse_args,
     read_edps_port,
 )
@@ -87,6 +88,15 @@ class TestReadEdpsPort:
 def _write_yaml(tmp_path, name, content):
     p = tmp_path / name
     p.write_text(textwrap.dedent(content))
+    return p
+
+
+def _write_csv(tmp_path, name, content=None):
+    """Write a minimal CSV file. MTR never parses CSV content itself
+    (it delegates to metis_simulations.csvParser at sim time), so a
+    one-line placeholder is enough for the MTR-side tests."""
+    p = tmp_path / name
+    p.write_text(content or "Block,File,DIT,NDIT,Tech\nplaceholder,row,0.1,1,IMAGE_LM\n")
     return p
 
 
@@ -287,6 +297,44 @@ class TestInferWorkflow:
         """)
         with pytest.raises(ValueError):
             infer_workflow([f])
+
+    # --- CSV handling: introspection is skipped, error must point at --workflow ---
+
+    def test_raises_when_only_csv_inputs(self, tmp_path):
+        """CSV-only input set → ValueError pointing the user at --workflow."""
+        csv_file = _write_csv(tmp_path, "obs.csv")
+        with pytest.raises(ValueError, match="--workflow"):
+            infer_workflow([csv_file])
+
+    def test_csv_files_skipped_in_mixed_input(self, tmp_path):
+        """When YAML+CSV are mixed, only YAML drives inference; CSV is ignored."""
+        yaml_file = _write_yaml(tmp_path, "obs.yaml", """
+            block1:
+              do.catg: LM_IMAGE_SCI_RAW
+              properties:
+                tech: "IMAGE,LM"
+                catg: "SCIENCE"
+        """)
+        csv_file = _write_csv(tmp_path, "obs.csv")
+        wf, has_sci, tags = infer_workflow([yaml_file, csv_file])
+        assert wf == "metis.metis_lm_img_wkf"
+        assert has_sci
+        assert tags == {"LM_IMAGE_SCI_RAW"}
+
+
+class TestKnownWorkflows:
+    def test_returns_sorted_unique_workflow_names(self):
+        names = known_workflows()
+        assert names == sorted(set(names))
+        # Anchor a few representative entries so the GUI dropdown stays
+        # populated; the full list comes from TECH_TO_WORKFLOW + MODE_TO_WORKFLOW.
+        assert "metis.metis_lm_img_wkf" in names
+        assert "metis.metis_ifu_wkf" in names
+
+    def test_all_returned_workflows_are_in_lookup_tables(self):
+        names = set(known_workflows())
+        expected = set(TECH_TO_WORKFLOW.values()) | set(MODE_TO_WORKFLOW.values())
+        assert names == expected
 
 
 # ---------------------------------------------------------------------------
@@ -615,7 +663,7 @@ class TestBuildSimScript:
         do_calib=False,
         do_static=True,
         n_cores=4,
-        yaml_list=["/data/obs.yaml"],
+        input_list=["/data/obs.yaml"],
         sims_root="/fake/METIS_Simulations",
     )
 
@@ -635,9 +683,26 @@ class TestBuildSimScript:
         script = _build_sim_script(**self._base_kwargs)
         assert "/tmp/sim" in script
 
-    def test_script_contains_yaml_list(self):
+    def test_script_contains_input_list(self):
         script = _build_sim_script(**self._base_kwargs)
         assert "/data/obs.yaml" in script
+
+    def test_script_contains_csv_path_unchanged(self):
+        """CSV paths must pass through to the generated script verbatim; the
+        downstream metis_simulations loader dispatches by extension."""
+        script = _build_sim_script(
+            **{**self._base_kwargs, "input_list": ["/data/obs.csv"]}
+        )
+        assert "/data/obs.csv" in script
+        assert "runSimulationBlock(['/data/obs.csv']" in script
+
+    def test_script_contains_mixed_input_paths(self):
+        script = _build_sim_script(
+            **{**self._base_kwargs,
+               "input_list": ["/data/obs.yaml", "/data/obs.csv"]}
+        )
+        assert "/data/obs.yaml" in script
+        assert "/data/obs.csv" in script
 
     def test_script_is_valid_python(self):
         import ast
@@ -857,7 +922,7 @@ class TestSpawnSafety:
         do_calib=False,
         do_static=False,
         n_cores=4,
-        yaml_list=["/data/obs.yaml"],
+        input_list=["/data/obs.yaml"],
         sims_root="/fake/METIS_Simulations",
     )
 
@@ -1047,3 +1112,35 @@ class TestPipelineInputArg:
         """--pipeline-input is accepted even without --no-sim (main() ignores it)."""
         args = parse_args(["--pipeline-input", "/tmp/a", "file.yaml"])
         assert args.pipeline_input == ["/tmp/a"]
+
+
+# ---------------------------------------------------------------------------
+# Input file positional + --workflow flag
+# ---------------------------------------------------------------------------
+
+class TestInputFilesArg:
+    def test_positional_attribute_is_input_files(self):
+        args = parse_args(["foo.yaml", "bar.csv"])
+        assert args.input_files == ["foo.yaml", "bar.csv"]
+
+    def test_no_positionals_is_empty_list(self):
+        args = parse_args(["--no-sim"])
+        assert args.input_files == []
+
+    def test_csv_path_accepted_as_positional(self):
+        args = parse_args(["seq.csv"])
+        assert args.input_files == ["seq.csv"]
+
+
+class TestWorkflowFlag:
+    def test_default_is_none(self):
+        args = parse_args(["foo.yaml"])
+        assert args.workflow is None
+
+    def test_explicit_workflow_accepted(self):
+        args = parse_args(["--workflow", "metis.metis_lm_img_wkf", "foo.csv"])
+        assert args.workflow == "metis.metis_lm_img_wkf"
+
+    def test_unknown_workflow_rejected(self):
+        with pytest.raises(SystemExit):
+            parse_args(["--workflow", "not.a.real.workflow", "foo.csv"])

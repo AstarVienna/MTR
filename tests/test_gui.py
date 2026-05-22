@@ -176,104 +176,122 @@ class TestInstPkgsPlaceholder:
 # ---------------------------------------------------------------------------
 
 class TestBuildCmdArgs:
-    def _tab_with_yaml(self, qapp, *paths):
+    def _tab_with_inputs(self, qapp, *paths):
+        """Build a RunTab and populate input_list with the given paths.
+        Caller can mix .yaml / .yml / .csv extensions freely."""
         tab = _make_run_tab(qapp)
         for p in paths:
-            tab.yaml_list.addItem(p)
+            tab.input_list.addItem(p)
         return tab
 
     def test_yaml_files_appear_in_args(self, qapp):
-        tab = self._tab_with_yaml(qapp, "obs1.yaml", "obs2.yaml")
+        tab = self._tab_with_inputs(qapp, "obs1.yaml", "obs2.yaml")
         args = tab._build_cmd_args()
         assert "obs1.yaml" in args
         assert "obs2.yaml" in args
 
-    def test_yaml_files_are_last(self, qapp):
-        tab = self._tab_with_yaml(qapp, "obs.yaml")
+    def test_csv_files_appear_in_args(self, qapp):
+        tab = self._tab_with_inputs(qapp, "seq1.csv", "seq2.csv")
         args = tab._build_cmd_args()
-        assert args[-1] == "obs.yaml"
+        assert "seq1.csv" in args
+        assert "seq2.csv" in args
+
+    def test_mixed_yaml_and_csv_preserved_in_order(self, qapp):
+        tab = self._tab_with_inputs(qapp, "a.yaml", "b.csv", "c.yaml")
+        args = tab._build_cmd_args()
+        # The three input paths should appear in the order they were added,
+        # tail of the args list (positional args go last).
+        assert args[-3:] == ["a.yaml", "b.csv", "c.yaml"]
+
+    def test_inputs_are_last(self, qapp):
+        tab = self._tab_with_inputs(qapp, "obs.csv")
+        # CSV-only + 'both' mode → also pick a workflow so the run wouldn't
+        # block; here we just check arg ordering. Pick index 1 (first real wf).
+        tab.workflow_combo.setCurrentIndex(1)
+        args = tab._build_cmd_args()
+        assert args[-1] == "obs.csv"
 
     def test_runner_always_included(self, qapp):
-        tab = self._tab_with_yaml(qapp, "obs.yaml")
+        tab = self._tab_with_inputs(qapp, "obs.yaml")
         tab.runner_combo.setCurrentText("native")
         args = tab._build_cmd_args()
         assert "--runner" in args
         assert args[args.index("--runner") + 1] == "native"
 
     def test_cores_always_included(self, qapp):
-        tab = self._tab_with_yaml(qapp, "obs.yaml")
+        tab = self._tab_with_inputs(qapp, "obs.yaml")
         tab.cores_spin.setValue(2)
         args = tab._build_cmd_args()
         assert "--cores" in args
         assert args[args.index("--cores") + 1] == "2"
 
     def test_calib_flag_when_checked(self, qapp):
-        tab = self._tab_with_yaml(qapp, "obs.yaml")
+        tab = self._tab_with_inputs(qapp, "obs.yaml")
         tab.calib_cb.setChecked(True)
         args = tab._build_cmd_args()
         assert "--calib" in args
         assert args[args.index("--calib") + 1] == "1"
 
     def test_calib_flag_zero_when_unchecked(self, qapp):
-        tab = self._tab_with_yaml(qapp, "obs.yaml")
+        tab = self._tab_with_inputs(qapp, "obs.yaml")
         tab.calib_cb.setChecked(False)
         args = tab._build_cmd_args()
         assert "--calib" in args
         assert args[args.index("--calib") + 1] == "0"
 
     def test_static_flag_when_checked(self, qapp):
-        tab = self._tab_with_yaml(qapp, "obs.yaml")
+        tab = self._tab_with_inputs(qapp, "obs.yaml")
         tab.static_cb.setChecked(True)
         args = tab._build_cmd_args()
         assert "--static" in args
         assert args[args.index("--static") + 1] == "1"
 
     def test_static_flag_zero_when_unchecked(self, qapp):
-        tab = self._tab_with_yaml(qapp, "obs.yaml")
+        tab = self._tab_with_inputs(qapp, "obs.yaml")
         tab.static_cb.setChecked(False)
         args = tab._build_cmd_args()
         assert "--static" in args
         assert args[args.index("--static") + 1] == "0"
 
     def test_static_checked_by_default(self, qapp):
-        tab = self._tab_with_yaml(qapp, "obs.yaml")
+        tab = self._tab_with_inputs(qapp, "obs.yaml")
         assert tab.static_cb.isChecked()
 
     def test_no_pipeline_flag_for_sim_only_mode(self, qapp):
-        tab = self._tab_with_yaml(qapp, "obs.yaml")
+        tab = self._tab_with_inputs(qapp, "obs.yaml")
         tab.rb_sim_only.setChecked(True)
         args = tab._build_cmd_args()
         assert "--no-pipeline" in args
         assert "--no-sim" not in args
 
     def test_no_sim_flag_for_pipeline_only_mode(self, qapp):
-        tab = self._tab_with_yaml(qapp, "obs.yaml")
+        tab = self._tab_with_inputs(qapp, "obs.yaml")
         tab.rb_pipe_only.setChecked(True)
         args = tab._build_cmd_args()
         assert "--no-sim" in args
         assert "--no-pipeline" not in args
 
     def test_neither_flag_for_both_mode(self, qapp):
-        tab = self._tab_with_yaml(qapp, "obs.yaml")
+        tab = self._tab_with_inputs(qapp, "obs.yaml")
         tab.rb_both.setChecked(True)
         args = tab._build_cmd_args()
         assert "--no-sim" not in args
         assert "--no-pipeline" not in args
 
     def test_output_dir_included_when_set(self, qapp):
-        tab = self._tab_with_yaml(qapp, "obs.yaml")
+        tab = self._tab_with_inputs(qapp, "obs.yaml")
         tab.output_edit.setText("/tmp/myrun")
         args = tab._build_cmd_args()
         assert "-o" in args
         assert args[args.index("-o") + 1] == "/tmp/myrun"
 
     def test_output_dir_omitted_when_empty(self, qapp):
-        tab = self._tab_with_yaml(qapp, "obs.yaml")
+        tab = self._tab_with_inputs(qapp, "obs.yaml")
         tab.output_edit.setText("")
         assert "-o" not in tab._build_cmd_args()
 
     def test_container_included_for_docker_runner(self, qapp):
-        tab = self._tab_with_yaml(qapp, "obs.yaml")
+        tab = self._tab_with_inputs(qapp, "obs.yaml")
         tab.runner_combo.setCurrentText("docker")
         tab.container_edit.setText("my-container")
         args = tab._build_cmd_args()
@@ -281,7 +299,7 @@ class TestBuildCmdArgs:
         assert args[args.index("--container") + 1] == "my-container"
 
     def test_container_omitted_for_native_runner(self, qapp):
-        tab = self._tab_with_yaml(qapp, "obs.yaml")
+        tab = self._tab_with_inputs(qapp, "obs.yaml")
         tab.runner_combo.setCurrentText("native")
         tab.container_edit.setText("ignored")
         assert "--container" not in tab._build_cmd_args()
@@ -291,7 +309,7 @@ class TestBuildCmdArgs:
         # when .env exists _build_cmd_args intentionally prefers REPO_ROOT.
         import gui
         monkeypatch.setattr(gui, "REPO_ROOT", tmp_path)
-        tab = self._tab_with_yaml(qapp, "obs.yaml")
+        tab = self._tab_with_inputs(qapp, "obs.yaml")
         tab.runner_combo.setCurrentText("metapkg")
         tab.meta_pkg_edit.setText("/opt/meta")
         args = tab._build_cmd_args()
@@ -299,29 +317,90 @@ class TestBuildCmdArgs:
         assert args[args.index("--meta-pkg") + 1] == "/opt/meta"
 
     def test_meta_pkg_omitted_for_native_runner(self, qapp):
-        tab = self._tab_with_yaml(qapp, "obs.yaml")
+        tab = self._tab_with_inputs(qapp, "obs.yaml")
         tab.runner_combo.setCurrentText("native")
         tab.meta_pkg_edit.setText("/opt/meta")
         assert "--meta-pkg" not in tab._build_cmd_args()
 
     def test_simulations_dir_included_when_set(self, qapp):
-        tab = self._tab_with_yaml(qapp, "obs.yaml")
+        tab = self._tab_with_inputs(qapp, "obs.yaml")
         tab.sim_dir_edit.setText("/data/sims")
         args = tab._build_cmd_args()
         assert "--simulations-dir" in args
         assert args[args.index("--simulations-dir") + 1] == "/data/sims"
 
     def test_inst_pkgs_included_when_set(self, qapp):
-        tab = self._tab_with_yaml(qapp, "obs.yaml")
+        tab = self._tab_with_inputs(qapp, "obs.yaml")
         tab.inst_edit.setText("/data/inst_pkgs")
         args = tab._build_cmd_args()
         assert "--inst-pkgs" in args
         assert args[args.index("--inst-pkgs") + 1] == "/data/inst_pkgs"
 
-    def test_multiple_yaml_files_all_present(self, qapp):
-        tab = self._tab_with_yaml(qapp, "a.yaml", "b.yaml", "c.yaml")
+    def test_multiple_input_files_all_present(self, qapp):
+        tab = self._tab_with_inputs(qapp, "a.yaml", "b.yaml", "c.yaml")
         args = tab._build_cmd_args()
         assert args[-3:] == ["a.yaml", "b.yaml", "c.yaml"]
+
+    # --- Workflow combobox visibility + --workflow arg emission ---
+
+    def test_workflow_combo_hidden_when_yaml_present(self, qapp):
+        tab = self._tab_with_inputs(qapp, "obs.yaml")
+        tab._update_workflow_visibility()
+        assert tab.workflow_row.isHidden()
+
+    def test_workflow_combo_visible_for_csv_only_in_both_mode(self, qapp):
+        tab = self._tab_with_inputs(qapp, "obs.csv")
+        tab.rb_both.setChecked(True)
+        tab._update_workflow_visibility()
+        assert not tab.workflow_row.isHidden()
+
+    def test_workflow_combo_hidden_in_sim_only_mode(self, qapp):
+        tab = self._tab_with_inputs(qapp, "obs.csv")
+        tab.rb_sim_only.setChecked(True)
+        assert tab.workflow_row.isHidden()
+
+    def test_workflow_combo_hidden_for_mixed_yaml_csv(self, qapp):
+        """When YAML is present, infer_workflow handles it — combo hides."""
+        tab = self._tab_with_inputs(qapp, "obs.yaml", "extra.csv")
+        tab._update_workflow_visibility()
+        assert tab.workflow_row.isHidden()
+
+    def test_workflow_arg_emitted_when_combo_set(self, qapp):
+        tab = self._tab_with_inputs(qapp, "obs.csv")
+        tab.workflow_combo.setCurrentIndex(1)  # first real workflow
+        args = tab._build_cmd_args()
+        assert "--workflow" in args
+        chosen = tab.workflow_combo.currentText()
+        assert args[args.index("--workflow") + 1] == chosen
+
+    def test_workflow_arg_omitted_when_combo_at_placeholder(self, qapp):
+        tab = self._tab_with_inputs(qapp, "obs.csv")
+        tab.workflow_combo.setCurrentIndex(0)  # "(auto from YAML)"
+        args = tab._build_cmd_args()
+        assert "--workflow" not in args
+
+    def test_workflow_arg_omitted_when_row_hidden(self, qapp):
+        """Even if the user previously picked a workflow, hiding the row
+        (e.g. by adding a YAML) should suppress the --workflow arg."""
+        tab = self._tab_with_inputs(qapp, "obs.csv")
+        tab.workflow_combo.setCurrentIndex(1)
+        # Now add a YAML — combobox should hide.
+        tab.input_list.addItem("obs.yaml")
+        tab._update_workflow_visibility()
+        assert tab.workflow_row.isVisible() is False
+        args = tab._build_cmd_args()
+        assert "--workflow" not in args
+
+    # --- Input status line ---
+
+    def test_input_status_counts_yaml_and_csv(self, qapp):
+        tab = self._tab_with_inputs(qapp, "a.yaml", "b.csv", "c.yml")
+        tab._refresh_input_status()
+        assert tab.input_status.text() == "2 YAML  ·  1 CSV"
+
+    def test_input_status_zero_when_empty(self, qapp):
+        tab = _make_run_tab(qapp)
+        assert tab.input_status.text() == "0 YAML  ·  0 CSV"
 
 
 # ---------------------------------------------------------------------------
@@ -580,14 +659,14 @@ class TestCloneOrUpdateSubmodule:
 class TestAutoFetchCheckbox:
     def test_auto_fetch_flag_when_checked(self, qapp):
         tab = _make_run_tab(qapp)
-        tab.yaml_list.addItem("obs.yaml")
+        tab.input_list.addItem("obs.yaml")
         tab.auto_fetch_cb.setChecked(True)
         args = tab._build_cmd_args()
         assert "--auto-fetch-calibrations" in args
 
     def test_auto_fetch_flag_absent_when_unchecked(self, qapp):
         tab = _make_run_tab(qapp)
-        tab.yaml_list.addItem("obs.yaml")
+        tab.input_list.addItem("obs.yaml")
         tab.auto_fetch_cb.setChecked(False)
         args = tab._build_cmd_args()
         assert "--auto-fetch-calibrations" not in args

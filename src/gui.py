@@ -1528,27 +1528,31 @@ class RunTab(QWidget):
         top_lay.setSpacing(12)
         top_lay.setContentsMargins(0, 0, 0, 0)
 
-        # ── YAML file list ──
-        self.yaml_grp = QGroupBox("YAML Input Files")
-        yaml_lay = QVBoxLayout(self.yaml_grp)
+        # ── Input file list (YAML and/or CSV) ──
+        self.input_grp = QGroupBox("Input Files  (YAML / CSV)")
+        input_lay = QVBoxLayout(self.input_grp)
         file_row = QHBoxLayout()
-        self.yaml_list = QListWidget()
-        self.yaml_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self.yaml_list.setMaximumHeight(120)
-        file_row.addWidget(self.yaml_list)
+        self.input_list = QListWidget()
+        self.input_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.input_list.setMaximumHeight(120)
+        file_row.addWidget(self.input_list)
         btn_col = QVBoxLayout()
         add_btn = QPushButton("Add…")
         add_btn.setProperty("role", "info")
-        add_btn.clicked.connect(self._add_yaml)
+        add_btn.clicked.connect(self._add_input)
         remove_btn = QPushButton("Remove")
         remove_btn.setProperty("role", "danger")
-        remove_btn.clicked.connect(self._remove_yaml)
+        remove_btn.clicked.connect(self._remove_input)
         btn_col.addWidget(add_btn)
         btn_col.addWidget(remove_btn)
         btn_col.addStretch()
         file_row.addLayout(btn_col)
-        yaml_lay.addLayout(file_row)
-        top_lay.addWidget(self.yaml_grp)
+        input_lay.addLayout(file_row)
+        # Live tally of YAML vs CSV files in the list
+        self.input_status = QLabel("0 YAML  ·  0 CSV")
+        self.input_status.setProperty("hint", "true")
+        input_lay.addWidget(self.input_status)
+        top_lay.addWidget(self.input_grp)
 
         # ── Options ──
         opts_grp = QGroupBox("Options")
@@ -1612,6 +1616,33 @@ class RunTab(QWidget):
         self.cores_spin.setValue(4)
         self.cores_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.PlusMinus)
         opts_lay.addWidget(_labeled("CPU cores  (--cores):", self.cores_spin))
+
+        # Workflow override (only required for CSV-only runs with pipeline)
+        import run_metis as _run_metis
+        self._workflow_label = QLabel("Workflow  (--workflow):")
+        self._workflow_label.setFixedWidth(LABEL_W)
+        self.workflow_combo = QComboBox()
+        self.workflow_combo.addItem("(auto from YAML)")
+        self.workflow_combo.addItems(_run_metis.known_workflows())
+        self.workflow_row = QWidget()
+        _wf_h = QHBoxLayout(self.workflow_row)
+        _wf_h.setContentsMargins(0, 0, 0, 0)
+        _wf_h.addWidget(self._workflow_label)
+        _wf_h.addWidget(self.workflow_combo)
+        opts_lay.addWidget(self.workflow_row)
+        # Visibility tracks both list content (model row changes) and mode
+        # toggles. Wiring model signals here means programmatic addItem()
+        # calls (e.g. settings reload, tests) also trigger the update.
+        self.workflow_combo.currentIndexChanged.connect(
+            lambda _i: self._refresh_workflow_required_style())
+        self.input_list.model().rowsInserted.connect(
+            lambda *_a: self._update_workflow_visibility())
+        self.input_list.model().rowsRemoved.connect(
+            lambda *_a: self._update_workflow_visibility())
+        self.input_list.model().rowsInserted.connect(
+            lambda *_a: self._refresh_input_status())
+        self.input_list.model().rowsRemoved.connect(
+            lambda *_a: self._refresh_input_status())
 
         # Runner
         self.runner_combo = QComboBox()
@@ -1762,9 +1793,10 @@ class RunTab(QWidget):
 
     def _update_mode_fields(self) -> None:
         pipe_only = self.rb_pipe_only.isChecked()
-        self.yaml_grp.setVisible(not pipe_only)
+        self.input_grp.setVisible(not pipe_only)
         self.pipeline_input_row.setVisible(pipe_only)
         self._update_output_info()
+        self._update_workflow_visibility()
 
     # ── Runner-dependent field visibility ────────────────────────────────────
 
@@ -1778,20 +1810,73 @@ class RunTab(QWidget):
             ph = str(REPO_ROOT / "inst_pkgs")
         self.inst_edit.setPlaceholderText(ph)
 
-    # ── YAML list ────────────────────────────────────────────────────────────
+    # ── Input list (YAML / CSV) ──────────────────────────────────────────────
 
-    def _add_yaml(self) -> None:
+    def _add_input(self) -> None:
         files, _ = QFileDialog.getOpenFileNames(
-            self, "Select YAML files", str(REPO_ROOT), "YAML files (*.yaml *.yml)"
+            self, "Select input files", str(REPO_ROOT),
+            "Observation inputs (*.yaml *.yml *.csv);;"
+            "YAML (*.yaml *.yml);;CSV (*.csv);;All files (*)"
         )
-        existing = {self.yaml_list.item(i).text() for i in range(self.yaml_list.count())}
+        existing = {self.input_list.item(i).text()
+                    for i in range(self.input_list.count())}
         for f in files:
             if f not in existing:
-                self.yaml_list.addItem(f)
+                self.input_list.addItem(f)
+        self._refresh_input_status()
+        self._update_workflow_visibility()
 
-    def _remove_yaml(self) -> None:
-        for item in self.yaml_list.selectedItems():
-            self.yaml_list.takeItem(self.yaml_list.row(item))
+    def _remove_input(self) -> None:
+        for item in self.input_list.selectedItems():
+            self.input_list.takeItem(self.input_list.row(item))
+        self._refresh_input_status()
+        self._update_workflow_visibility()
+
+    def _input_format_counts(self) -> tuple[int, int]:
+        """Return (yaml_count, csv_count) across self.input_list."""
+        n_yaml = n_csv = 0
+        for i in range(self.input_list.count()):
+            ext = Path(self.input_list.item(i).text()).suffix.lower()
+            if ext in (".yaml", ".yml"):
+                n_yaml += 1
+            elif ext == ".csv":
+                n_csv += 1
+        return n_yaml, n_csv
+
+    def _refresh_input_status(self) -> None:
+        n_yaml, n_csv = self._input_format_counts()
+        self.input_status.setText(f"{n_yaml} YAML  ·  {n_csv} CSV")
+
+    def _csv_only_run(self) -> bool:
+        """True when input list is non-empty, all CSV, and pipeline will run."""
+        if self.rb_pipe_only.isChecked() or self.rb_sim_only.isChecked():
+            return False
+        n_yaml, n_csv = self._input_format_counts()
+        return n_csv > 0 and n_yaml == 0
+
+    def _update_workflow_visibility(self) -> None:
+        """Show the workflow combobox only when it can usefully take effect.
+
+        - Hidden in pipeline-only mode (no inputs read here).
+        - Hidden in sim-only mode (workflow value unused).
+        - Hidden when any YAML file is present (infer_workflow handles it).
+        - Visible (and marked required) when all inputs are CSV in 'both' mode.
+        """
+        visible = self._csv_only_run()
+        self.workflow_row.setVisible(visible)
+        self._refresh_workflow_required_style()
+
+    def _refresh_workflow_required_style(self) -> None:
+        """Tint the combo + label when CSV-only and user hasn't picked yet."""
+        required = self._csv_only_run() and self.workflow_combo.currentIndex() == 0
+        if required:
+            self._workflow_label.setText("Workflow  (--workflow)  (required):")
+            self.workflow_combo.setStyleSheet(
+                "QComboBox { border: 1px solid #d9534f; }"
+            )
+        else:
+            self._workflow_label.setText("Workflow  (--workflow):")
+            self.workflow_combo.setStyleSheet("")
 
     def _add_pipeline_input(self) -> None:
         d = QFileDialog.getExistingDirectory(
@@ -1847,14 +1932,32 @@ class RunTab(QWidget):
         if self.auto_fetch_cb.isChecked():
             args.append("--auto-fetch-calibrations")
 
-        for i in range(self.yaml_list.count()):
-            args.append(self.yaml_list.item(i).text())
+        # --workflow flag: emit whenever the row is shown (i.e. not explicitly
+        # hidden) and the user picked a real workflow. Index 0 is the
+        # "(auto from YAML)" placeholder. Using isHidden() rather than
+        # isVisible() so the check works in headless test environments too.
+        if not self.workflow_row.isHidden() and self.workflow_combo.currentIndex() > 0:
+            args += ["--workflow", self.workflow_combo.currentText()]
+
+        for i in range(self.input_list.count()):
+            args.append(self.input_list.item(i).text())
 
         return args
 
     def _run(self) -> None:
-        if not self.rb_pipe_only.isChecked() and self.yaml_list.count() == 0:
-            QMessageBox.warning(self, "No input files", "Add at least one YAML file.")
+        if not self.rb_pipe_only.isChecked() and self.input_list.count() == 0:
+            QMessageBox.warning(
+                self, "No input files",
+                "Add at least one input file (YAML or CSV)."
+            )
+            return
+        # CSV-only + pipeline-will-run: user must pick a workflow explicitly.
+        if self._csv_only_run() and self.workflow_combo.currentIndex() == 0:
+            QMessageBox.warning(
+                self, "Workflow required",
+                "All inputs are CSV — select a workflow from the dropdown, "
+                "or switch to 'Simulate only' to skip the pipeline."
+            )
             return
 
         self._save_settings()
@@ -1973,8 +2076,19 @@ class RunTab(QWidget):
         self.auto_fetch_cb.setChecked(s.value("auto_fetch", False, type=bool))
         for f in (s.value("pipeline_input_dirs") or []):
             self.pipeline_input_list.addItem(f)
-        for f in (s.value("yaml_files") or []):
-            self.yaml_list.addItem(f)
+        # Backward-compat: prefer the new "input_files" key, fall back to the
+        # legacy "yaml_files" key for users with existing settings.
+        saved_inputs = s.value("input_files")
+        if saved_inputs is None:
+            saved_inputs = s.value("yaml_files") or []
+        for f in saved_inputs:
+            self.input_list.addItem(f)
+        self._refresh_input_status()
+        saved_workflow = s.value("workflow", "(auto from YAML)")
+        idx = self.workflow_combo.findText(saved_workflow)
+        if idx >= 0:
+            self.workflow_combo.setCurrentIndex(idx)
+        self._update_workflow_visibility()
 
     def _save_settings(self) -> None:
         s = self._settings
@@ -1998,9 +2112,12 @@ class RunTab(QWidget):
             self.pipeline_input_list.item(i).text()
             for i in range(self.pipeline_input_list.count())
         ])
-        s.setValue("yaml_files", [
-            self.yaml_list.item(i).text() for i in range(self.yaml_list.count())
+        s.setValue("input_files", [
+            self.input_list.item(i).text() for i in range(self.input_list.count())
         ])
+        # Remove legacy key after successful migration to avoid confusion.
+        s.remove("yaml_files")
+        s.setValue("workflow", self.workflow_combo.currentText())
 
 
 # ---------------------------------------------------------------------------
