@@ -752,21 +752,23 @@ def _build_sim_script(out_dir, do_calib, do_static, n_cores, input_list,
 def _check_metapkg_env(runner, meta_pkg):
     """Validate that the metapkg runner can be used.
 
-    Checks that (a) uv is installed (the metapkg runner shells out to
-    ``uv run --project <meta_pkg>``) and (b) the meta-package's .env file
-    exists. Fails fast with a pointer at the Install tab / METIS_META_PKG.
+    Checks that (a) the meta-package's .env file exists, then (b) uv is
+    installed (the metapkg runner shells out to ``uv run --project
+    <meta_pkg>``).  .env is checked first because a missing .env points the
+    user at a concrete action (Install tab / METIS_META_PKG), while a
+    missing uv only matters once the rest of the metapkg setup is in place.
     """
     if runner != "metapkg":
         return
-    if shutil.which("uv") is None:
-        raise RuntimeError(
-            "uv is required for --runner metapkg but was not found on PATH. "
-            "Install it with `pipx install uv`, or use a different --runner."
-        )
     env_file = meta_pkg / ".env"
     if not env_file.exists():
         raise FileNotFoundError(
             f"{env_file} not found — run the Install tab or check METIS_META_PKG"
+        )
+    if shutil.which("uv") is None:
+        raise RuntimeError(
+            "uv is required for --runner metapkg but was not found on PATH. "
+            "Install it with `pipx install uv`, or use a different --runner."
         )
 
 

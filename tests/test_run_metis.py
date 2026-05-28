@@ -1262,7 +1262,10 @@ class TestEdpsBaseCmd:
         meta_pkg = tmp_path / "meta"
         meta_pkg.mkdir()
         (meta_pkg / ".env").write_text("")
-        cmd = _edps_base_cmd("metapkg", None, 4444, meta_pkg=meta_pkg)
+        # Mock shutil.which so the test runs identically regardless of whether
+        # uv is actually installed on the host (CI runners don't have uv).
+        with patch("metis_test_runner.run_metis.shutil.which", return_value="/usr/bin/uv"):
+            cmd = _edps_base_cmd("metapkg", None, 4444, meta_pkg=meta_pkg)
         assert cmd[:3] == ["uv", "run", "--no-sync"]
         assert "edps" in cmd
         assert "-P" in cmd
