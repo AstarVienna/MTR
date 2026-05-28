@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 ### Removed
 - `metapkg` runner mode, the `--meta-pkg` CLI flag, and the `METIS_META_PKG`
