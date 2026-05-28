@@ -108,7 +108,6 @@ Re-running is safe — existing repositories are updated in place rather than re
 
 **Skip this tab** if you already have the pipeline installed via one of these paths — jump straight to the Run tab instead:
 
-- **metis-meta-package** — choose runner `metapkg` and set *Meta-package dir* to your `metis-meta-package` folder
 - **Bare-metal / ESO docs install** — choose runner `native`
 - **Pipeline container** (Docker / Podman) — choose runner `docker` or `podman` and supply the container name
 
@@ -135,7 +134,7 @@ To auto-pull missing master calibrations during a pipeline run, add
 
 ### Run tab
 
-The Run tab wraps `mtr-cli` in a file-picker UI. All CLI options are exposed as form controls; runner-specific fields (container name, meta-package path) show and hide based on the selected runner.
+The Run tab wraps `mtr-cli` in a file-picker UI. All CLI options are exposed as form controls; runner-specific fields (container name) show and hide based on the selected runner.
 
 Workflow:
 
@@ -151,17 +150,15 @@ Settings are persisted via `QSettings` and restored on next launch, so you can r
 
 Regardless of whether you drive the runner from the GUI or the CLI, the underlying pipeline tools have to live *somewhere*. Three layouts are supported — pick the one that matches your install:
 
-**Option A — consolidated install** (runner `metapkg`, default)
+**Option A — pipx install** (runner `default`, the default)
 
 The Install tab takes care of this automatically. It pip-installs all pipeline
 dependencies (`pycpl`, `edps`, `pyesorex`, `adari_core`, `scopesim`,
 `scopesim_templates`) into the same isolated venv that hosts MTR, clones
 `METIS_Pipeline` and `METIS_Simulations` into the user data directory
 (`~/.local/share/metis-test-runner/` by default), and writes a `.env` file
-there. The runner reads that `.env` automatically.
-
-Use the GUI's *Meta-package dir* field (or `--meta-pkg` / `--simulations-dir`)
-to point at an external installation if needed.
+there. The `default` runner reads that `.env` automatically and invokes every
+subprocess with the MTR venv's Python interpreter.
 
 **Option B — Docker or Podman container** (runner `docker` / `podman`)
 
@@ -256,7 +253,7 @@ YAML and CSV inputs may be mixed in any combination.
 | Flag | Default | Description |
 |---|---|---|
 | `-o / --output` | `./output/<timestamp>` | Root directory for all outputs (env: `METIS_OUTPUT_DIR`) |
-| `--runner {metapkg,native,docker,podman}` | `metapkg` | Execution mode (see below; env: `METIS_RUNNER`) |
+| `--runner {default,native,docker,podman}` | `default` | Execution mode (see below; env: `METIS_RUNNER`) |
 | `--container NAME` | — | Container name/ID for `docker` / `podman` runners (env: `METIS_CONTAINER`) |
 | `--calib [N]` | `1` | Auto-generate N calibration frames (dark/flat) per unique config, inferred from input content. Pass `--calib 0` to disable. |
 | `--workflow NAME` | auto-detect | Force EDPS workflow name (e.g. `metis.metis_lm_img_wkf`). Required when all inputs are `.csv` and the pipeline will run, because workflow auto-detection is YAML-only. Overrides auto-detection when YAML is also present. |
@@ -264,9 +261,8 @@ YAML and CSV inputs may be mixed in any combination.
 | `--no-sim` | off | Skip simulation; run pipeline on existing FITS data (source defaults to `<output>/sim/` — override with `--pipeline-input`) |
 | `--pipeline-input DIR` | `<output>/sim/` | Directory containing FITS files to feed the pipeline (only with `--no-sim`; env: `METIS_PIPELINE_INPUT`) |
 | `--no-pipeline` | off | Run simulation only; skip EDPS pipeline |
-| `--meta-pkg PATH` | `.` (repo root) | Path to the pipeline environment directory (`metapkg` runner only). Falls back to `./pipeline/` then `./metis-meta-package/`. (env: `METIS_META_PKG`) |
 | `--simulations-dir PATH` | `./METIS_Simulations` (host) or `/home/metis/METIS_Simulations` (container) | Path to ScopeSim scripts (env: `METIS_SIMULATIONS_DIR`) |
-| `--inst-pkgs PATH` | see below | Path to ScopeSim instrument packages (Armazones, ELT, METIS). Defaults to `./inst_pkgs` for `metapkg`/`native`, and container-resolved `./inst_pkgs` for `docker`/`podman` (env: `METIS_INST_PKGS`) |
+| `--inst-pkgs PATH` | see below | Path to ScopeSim instrument packages (Armazones, ELT, METIS). Defaults to the user data dir for the `default` runner, `./inst_pkgs` for `native`, and container-resolved `./inst_pkgs` for `docker`/`podman` (env: `METIS_INST_PKGS`) |
 | `--auto-fetch-calibrations` | off | Before running the pipeline, query the remote METIS archive (via MetisWISE) for any master calibrations the input set is missing and download them into the pipeline input directory. Requires MetisWISE to be installed and `~/.awe/Environment.cfg` to hold valid credentials — see the Archive tab. |
 | `--prefer-masters` | off | Set EDPS `association_preference` to `master_per_quality_level` for this run, preferring master calibrations over reduced raw data. |
 
@@ -274,7 +270,7 @@ YAML and CSV inputs may be mixed in any combination.
 
 | Mode | When to use |
 |---|---|
-| `metapkg` (default) | You used the GUI's Install tab (or an external `metis-meta-package` install). Pipeline tools are pip-installed alongside MTR in the same isolated venv. For external `metis-meta-package` checkouts, `uv` must be on PATH (`pipx install uv`). |
+| `default` | You used the GUI's Install tab. Pipeline tools are pip-installed alongside MTR in the same isolated pipx/venv. Subprocesses run with that venv's Python interpreter and load the Install-tab `.env` from `~/.local/share/metis-test-runner/.env`. No external dependencies. |
 | `native` | Tools (`edps`, `python`, ScopeSim) are installed directly on PATH — e.g. you are running **inside** a Docker/Podman container, or have a bare-metal install. |
 | `docker` / `podman` | Tools live inside a container and you are running the script **outside** it. The runner wraps every command with `docker exec` / `podman exec`. |
 
@@ -283,7 +279,7 @@ YAML and CSV inputs may be mixed in any combination.
 ### Examples
 
 ```bash
-# Full run with metis-meta-package (default)
+# Full run with the pipx-installed pipeline (default runner)
 mtr-cli examples/LMS_RAD_06.yaml
 
 # Inside a container or bare-metal install (tools on PATH)
@@ -344,4 +340,3 @@ This runner is designed to work alongside the following repos, which are install
 
 - **[METIS_Pipeline](https://github.com/AstarVienna/METIS_Pipeline)** — the core Python/C pipeline, EDPS workflows, and PyEsoRex recipes
 - **[METIS_Simulations](https://github.com/AstarVienna/METIS_Simulations)** — ScopeSim scripts that generate synthetic FITS observations for each observing mode
-- **[metis-meta-package](https://github.com/eiseleb47/metis-meta-package)** — legacy standalone meta-installer (still supported as a fallback; the Install tab now installs pipeline dependencies directly into the main virtual environment)

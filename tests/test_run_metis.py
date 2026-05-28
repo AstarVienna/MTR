@@ -21,8 +21,9 @@ from metis_test_runner.run_metis import (
     UMBRELLA_WORKFLOW,
     WORKFLOW_TASK_CHAIN,
     _build_sim_script,
+    _check_default_env,
+    _default_subprocess_env,
     _edps_base_cmd,
-    _edps_cwd,
     classify_fits_file,
     collect_tags_from_fits,
     infer_edps_target,
@@ -963,13 +964,13 @@ class TestBuildSimScript:
         sims_root="/fake/METIS_Simulations",
     )
 
-    def test_metapkg_runner_includes_inst_pkgs_override(self):
+    def test_default_runner_includes_inst_pkgs_override(self):
         script = _build_sim_script(
             **self._base_kwargs,
-            inst_pkgs_path="/home/user/metis-meta-package/inst_pkgs",
+            inst_pkgs_path="/home/user/.local/share/metis-test-runner/inst_pkgs",
         )
         assert "local_packages_path" in script
-        assert "/home/user/metis-meta-package/inst_pkgs" in script
+        assert "/home/user/.local/share/metis-test-runner/inst_pkgs" in script
 
     def test_native_runner_omits_inst_pkgs_override(self):
         script = _build_sim_script(**self._base_kwargs, inst_pkgs_path=None)
@@ -1254,29 +1255,17 @@ class TestSpawnSafety:
 
 
 # ---------------------------------------------------------------------------
-# _edps_base_cmd and _edps_cwd
+# _edps_base_cmd, _check_default_env, _default_subprocess_env
 # ---------------------------------------------------------------------------
 
 class TestEdpsBaseCmd:
-    def test_metapkg_runner_uses_uv(self, tmp_path):
-        meta_pkg = tmp_path / "meta"
-        meta_pkg.mkdir()
-        (meta_pkg / ".env").write_text("")
-        # Mock shutil.which so the test runs identically regardless of whether
-        # uv is actually installed on the host (CI runners don't have uv).
-        with patch("metis_test_runner.run_metis.shutil.which", return_value="/usr/bin/uv"):
-            cmd = _edps_base_cmd("metapkg", None, 4444, meta_pkg=meta_pkg)
-        assert cmd[:3] == ["uv", "run", "--no-sync"]
-        assert "edps" in cmd
-        assert "-P" in cmd
-        assert "4444" in cmd
+    def test_default_runner_calls_edps_directly(self):
+        cmd = _edps_base_cmd("default", None, 4444)
+        assert cmd == ["edps", "-P", "4444"]
 
     def test_native_runner_calls_edps_directly(self):
         cmd = _edps_base_cmd("native", None, 5000)
-        assert cmd[0] == "edps"
-        assert "-P" in cmd
-        assert "5000" in cmd
-        assert "uv" not in cmd
+        assert cmd == ["edps", "-P", "5000"]
 
     def test_docker_runner_wraps_with_exec(self):
         cmd = _edps_base_cmd("docker", "my-container", 4444)
@@ -1288,28 +1277,48 @@ class TestEdpsBaseCmd:
         assert cmd[:3] == ["podman", "exec", "my-container"]
         assert "edps" in cmd
 
-    def test_metapkg_runner_raises_when_env_file_missing(self, tmp_path):
-        # uv's own error for a missing --env-file is correct but unhelpful;
-        # we want a loud pre-flight pointing the user at the Install tab.
-        meta_pkg = tmp_path / "meta"
-        meta_pkg.mkdir()
-        # No .env written
-        with pytest.raises(FileNotFoundError, match="Install tab"):
-            _edps_base_cmd("metapkg", None, 4444, meta_pkg=meta_pkg)
+
+class TestCheckDefaultEnv:
+    def test_raises_when_env_file_missing(self, tmp_path):
+        missing = tmp_path / "nope" / ".env"
+        with patch("metis_test_runner.run_metis.paths.env_file", return_value=missing):
+            with pytest.raises(FileNotFoundError, match="Install tab"):
+                _check_default_env("default")
+
+    def test_returns_silently_when_env_file_present(self, tmp_path):
+        env_path = tmp_path / ".env"
+        env_path.write_text("")
+        with patch("metis_test_runner.run_metis.paths.env_file", return_value=env_path):
+            _check_default_env("default")  # no exception
+
+    def test_noop_for_non_default_runners(self, tmp_path):
+        missing = tmp_path / "nope" / ".env"
+        with patch("metis_test_runner.run_metis.paths.env_file", return_value=missing):
+            for r in ("native", "docker", "podman"):
+                _check_default_env(r)  # no exception even though .env is missing
 
 
-class TestEdpsCwd:
-    def test_metapkg_runner_returns_meta_pkg_path(self, tmp_path):
-        assert _edps_cwd("metapkg", meta_pkg=tmp_path) == str(tmp_path)
+class TestDefaultSubprocessEnv:
+    def test_loads_dotenv_and_prepends_venv_bin(self, tmp_path):
+        import os
+        import sys
+        env_path = tmp_path / ".env"
+        env_path.write_text("FOO=bar\nMTR_TEST_KEY=value123\n")
+        with patch("metis_test_runner.run_metis.paths.env_file", return_value=env_path):
+            env = _default_subprocess_env()
+        assert env["FOO"] == "bar"
+        assert env["MTR_TEST_KEY"] == "value123"
+        venv_bin = str(Path(sys.executable).parent)
+        assert env["PATH"].split(os.pathsep)[0] == venv_bin
 
-    def test_native_runner_returns_none(self):
-        assert _edps_cwd("native") is None
-
-    def test_docker_runner_returns_none(self):
-        assert _edps_cwd("docker") is None
-
-    def test_podman_runner_returns_none(self):
-        assert _edps_cwd("podman") is None
+    def test_works_without_dotenv_file(self, tmp_path):
+        import os
+        import sys
+        missing = tmp_path / "nope" / ".env"
+        with patch("metis_test_runner.run_metis.paths.env_file", return_value=missing):
+            env = _default_subprocess_env()
+        venv_bin = str(Path(sys.executable).parent)
+        assert env["PATH"].split(os.pathsep)[0] == venv_bin
 
 
 # ---------------------------------------------------------------------------

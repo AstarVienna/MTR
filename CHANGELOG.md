@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Removed
+- `metapkg` runner mode, the `--meta-pkg` CLI flag, and the `METIS_META_PKG`
+  env var. The new `default` runner runs subprocesses inside MTR's own pipx/venv
+  (where the Install tab installs pipeline dependencies), making `uv` and the
+  standalone `metis-meta-package` checkout obsolete.
+- `paths.meta_pkg_dir()` helper and the "Meta-package dir" field from the Run
+  tab. Existing GUI settings that saved `runner=metapkg` will silently fall
+  back to `default` on first launch.
+
+### Changed
+- Default runner is now `default` (was `metapkg`). It runs simulations and
+  EDPS with `sys.executable` (the MTR venv's interpreter) and merges the
+  Install-tab `.env` from `~/.local/share/metis-test-runner/.env` into the
+  subprocess environment, prepending the venv's `bin/` to `PATH` so `edps`
+  and `pyesorex` resolve to the venv copies.
+
 ## 0.2.0
 
 First PyPI release as `metis-test-runner`.
@@ -20,8 +38,7 @@ First PyPI release as `metis-test-runner`.
   instrument packages, DRLD) now lives in a user data directory resolved via
   `platformdirs` — `~/.local/share/metis-test-runner/` on Linux. Override the
   location with the `METIS_DATA_DIR` environment variable. The per-asset env
-  vars (`METIS_META_PKG`, `METIS_SIMULATIONS_DIR`, `METIS_INST_PKGS`) still
-  work for back-compat.
+  vars (`METIS_SIMULATIONS_DIR`, `METIS_INST_PKGS`) still work for back-compat.
 - The CLI is now invoked as `mtr-cli` (or `python -m metis_test_runner.run_metis`)
   instead of `python src/run_metis.py`.
 
@@ -40,10 +57,6 @@ First PyPI release as `metis-test-runner`.
   `pip install -e .[dev]` to set up a working copy.
 
 ### Notes / known limitations
-- The `--runner metapkg` mode of `mtr-cli` still shells out to `uv run --project
-  <metis-meta-package>`. This is the only remaining `uv` dependency and is
-  guarded with a clear error message if `uv` is not installed. It will be
-  removed once `metis-meta-package` is published to PyPI.
 - `gui.REPO_ROOT` is kept as a back-compat alias pointing at `paths.data_dir()`
   so existing test monkeypatches continue to work. To be removed in a future
   release.

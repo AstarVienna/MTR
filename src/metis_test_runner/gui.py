@@ -2,7 +2,8 @@
 """gui.py — METIS Test Runner GUI
 
 Three-tab graphical front-end:
-  Install  — runs the metis-meta-package bootstrap steps non-interactively
+  Install  — pip-installs every METIS pipeline dependency into MTR's own venv
+             and clones the simulation/pipeline repos into the user data dir
   Run      — wraps run_metis.py with a file-picker and options UI
   Archive  — install MetisWISE and upload/download FITS files
 """
@@ -39,7 +40,6 @@ from .indexes import ESO_INDEX, PYCPL_INDEX
 # expressions inside methods pick up the patched value.
 
 REPO_ROOT   = paths.data_dir()
-META_PKG    = paths.meta_pkg_dir()
 TARGET_A    = paths.pipeline_dir()
 TARGET_B    = paths.simulations_dir()
 INST_PKGS   = paths.inst_pkgs_dir()
@@ -57,13 +57,9 @@ def _child_env() -> dict[str, str]:
     """Build the environment for subprocesses spawned by the GUI.
 
     Loads variables from the MTR `.env` file (paths.env_file()) on top of
-    the current process environment. Drops any inherited venv-activation
-    variables so that subprocesses targeting a *different* uv project
-    (--runner metapkg) don't trigger uv's mismatched-venv warnings.
+    the current process environment.
     """
     env = os.environ.copy()
-    env.pop("VIRTUAL_ENV", None)
-    env.pop("UV_PROJECT_ENVIRONMENT", None)
     env["PYTHONUNBUFFERED"] = "1"
     env_path = paths.env_file()
     if env_path.exists():
@@ -443,7 +439,7 @@ def _dir_picker(edit: QLineEdit, parent: QWidget) -> QPushButton:
 # ---------------------------------------------------------------------------
 
 class InstallWorker(QThread):
-    """Executes all bootstrap steps sequentially in a background thread."""
+    """Executes all install steps sequentially in a background thread."""
 
     log    = pyqtSignal(str, str)   # (text, colour)
     done   = pyqtSignal(bool)       # success
@@ -662,8 +658,6 @@ class InstallTab(QWidget):
             "Skip this tab if you have already installed the pipeline via one of "
             "these methods and go straight to <b>Run</b>:<br>"
             "<ul>"
-            "<li><b>metis-meta-package</b> — select runner <i>metapkg</i> and set "
-            "<i>Meta-package dir</i> to your <code>metis-meta-package</code> folder</li>"
             "<li><b>Bare-metal / ESO docs</b> — select runner <i>native</i></li>"
             "<li><b>Pipeline container</b> — select runner <i>docker</i> or "
             "<i>podman</i> and enter the container name</li>"
@@ -673,7 +667,8 @@ class InstallTab(QWidget):
             "<ol>"
             f"<li>Clone or update <b>METIS_Pipeline</b> and <b>METIS_Simulations</b> "
             f"into <code>{REPO_ROOT}</code></li>"
-            "<li>Install all Python dependencies via <code>uv sync --group pipeline</code></li>"
+            "<li>Install all Python dependencies (pycpl, edps, pyesorex, adari_core, "
+            "scopesim, scopesim_templates) into MTR's own pipx/venv</li>"
             f"<li>Write <code>{REPO_ROOT / '.env'}</code></li>"
             "<li>Initialise and configure EDPS on port 4444</li>"
             "</ol>"
@@ -1671,7 +1666,7 @@ class RunTab(QWidget):
 
         # Runner
         self.runner_combo = QComboBox()
-        self.runner_combo.addItems(["metapkg", "native", "docker", "podman"])
+        self.runner_combo.addItems(["default", "native", "docker", "podman"])
         opts_lay.addWidget(_labeled("Runner  (--runner):", self.runner_combo))
 
         # Pipeline mode
@@ -1727,14 +1722,7 @@ class RunTab(QWidget):
         self.container_edit.setPlaceholderText("e.g. metis-pipeline")
         self.container_row = _labeled("Container  (--container):", self.container_edit)
         opts_lay.addWidget(self.container_row)
-
-        # Meta-package dir  [metapkg only]
-        self.meta_pkg_edit = QLineEdit()
-        meta_browse = _dir_picker(self.meta_pkg_edit, self)
-        self.meta_pkg_edit.setPlaceholderText(str(META_PKG))
-        self.meta_pkg_row = _labeled("Meta-package dir  (--meta-pkg):", self.meta_pkg_edit, meta_browse)
-        opts_lay.addWidget(self.meta_pkg_row)
-        # Connect runner signal now that container_row and meta_pkg_row exist
+        # Connect runner signal now that container_row exists
         self.runner_combo.currentTextChanged.connect(self._update_runner_fields)
 
         # Simulations dir  [always visible]
@@ -1828,7 +1816,6 @@ class RunTab(QWidget):
     def _update_runner_fields(self) -> None:
         runner = self.runner_combo.currentText()
         self.container_row.setVisible(runner in ("docker", "podman"))
-        self.meta_pkg_row.setVisible(runner == "metapkg")
         if runner in ("docker", "podman"):
             ph = "(resolved inside container)"
         else:
@@ -1942,14 +1929,6 @@ class RunTab(QWidget):
         args += ["--runner", runner]
         if runner in ("docker", "podman") and self.container_edit.text().strip():
             args += ["--container", self.container_edit.text().strip()]
-        if runner == "metapkg":
-            if (REPO_ROOT / ".env").exists():
-                meta_pkg_dir = str(REPO_ROOT)
-            elif self.meta_pkg_edit.text().strip():
-                meta_pkg_dir = self.meta_pkg_edit.text().strip()
-            else:
-                meta_pkg_dir = str(META_PKG)
-            args += ["--meta-pkg", meta_pkg_dir]
         if self.sim_dir_edit.text().strip():
             args += ["--simulations-dir", self.sim_dir_edit.text().strip()]
         if self.inst_edit.text().strip():
@@ -1996,9 +1975,7 @@ class RunTab(QWidget):
         self._process.readyReadStandardError.connect(self._on_stderr)
         self._process.finished.connect(self._on_finished)
 
-        # Strip uv's venv-activation variables so any internal `uv run
-        # --project <meta-pkg>` call inside run_metis.py (metapkg runner mode)
-        # doesn't warn about a mismatched active venv. See _child_env().
+        # Pass the parent + .env merged environment to run_metis.py.
         qenv = QProcessEnvironment()
         for k, v in _child_env().items():
             qenv.insert(k, v)
@@ -2090,9 +2067,8 @@ class RunTab(QWidget):
         {"sim_only": self.rb_sim_only, "pipe_only": self.rb_pipe_only}.get(
             mode, self.rb_both
         ).setChecked(True)
-        self.runner_combo.setCurrentText(s.value("runner", "metapkg"))
+        self.runner_combo.setCurrentText(s.value("runner", "default"))
         self.container_edit.setText(s.value("container", ""))
-        self.meta_pkg_edit.setText(s.value("meta_pkg", ""))
         self.sim_dir_edit.setText(s.value("sim_dir", ""))
         self.inst_edit.setText(s.value("inst_pkgs", ""))
         self.auto_fetch_cb.setChecked(s.value("auto_fetch", False, type=bool))
@@ -2126,7 +2102,6 @@ class RunTab(QWidget):
         s.setValue("pipeline_mode", mode)
         s.setValue("runner", self.runner_combo.currentText())
         s.setValue("container", self.container_edit.text())
-        s.setValue("meta_pkg", self.meta_pkg_edit.text())
         s.setValue("sim_dir", self.sim_dir_edit.text())
         s.setValue("inst_pkgs", self.inst_edit.text())
         s.setValue("auto_fetch", self.auto_fetch_cb.isChecked())

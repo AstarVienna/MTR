@@ -6,7 +6,7 @@ seam and so a future user-configurable Settings tab has one place to hook.
 
 Resolution order (highest first):
   1. METIS_DATA_DIR — relocate the whole tree
-  2. Per-asset env vars (METIS_META_PKG, METIS_SIMULATIONS_DIR, METIS_INST_PKGS)
+  2. Per-asset env vars (METIS_SIMULATIONS_DIR, METIS_INST_PKGS)
   3. platformdirs default (~/.local/share/metis-test-runner on Linux)
 """
 
@@ -34,11 +34,6 @@ def pipeline_dir() -> Path:
 def simulations_dir() -> Path:
     override = os.environ.get("METIS_SIMULATIONS_DIR")
     return Path(override) if override else data_dir() / "METIS_Simulations"
-
-
-def meta_pkg_dir() -> Path:
-    override = os.environ.get("METIS_META_PKG")
-    return Path(override) if override else data_dir() / "metis-meta-package"
 
 
 def inst_pkgs_dir() -> Path:

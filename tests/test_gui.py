@@ -102,36 +102,31 @@ class TestWindowConstruction:
 # ---------------------------------------------------------------------------
 
 class TestRunnerFieldVisibility:
-    def test_metapkg_shows_meta_pkg_row_hides_container(self, qapp):
+    def test_default_hides_container(self, qapp):
         tab = _make_run_tab(qapp)
-        tab.runner_combo.setCurrentText("metapkg")
-        assert not tab.meta_pkg_row.isHidden()
+        tab.runner_combo.setCurrentText("default")
         assert tab.container_row.isHidden()
 
-    def test_native_hides_both_conditional_rows(self, qapp):
+    def test_native_hides_container(self, qapp):
         tab = _make_run_tab(qapp)
         tab.runner_combo.setCurrentText("native")
-        assert tab.meta_pkg_row.isHidden()
         assert tab.container_row.isHidden()
 
-    def test_docker_shows_container_hides_meta_pkg(self, qapp):
+    def test_docker_shows_container(self, qapp):
         tab = _make_run_tab(qapp)
         tab.runner_combo.setCurrentText("docker")
         assert not tab.container_row.isHidden()
-        assert tab.meta_pkg_row.isHidden()
 
-    def test_podman_shows_container_hides_meta_pkg(self, qapp):
+    def test_podman_shows_container(self, qapp):
         tab = _make_run_tab(qapp)
         tab.runner_combo.setCurrentText("podman")
         assert not tab.container_row.isHidden()
-        assert tab.meta_pkg_row.isHidden()
 
     def test_switching_runner_updates_visibility(self, qapp):
         tab = _make_run_tab(qapp)
-        tab.runner_combo.setCurrentText("metapkg")
-        assert not tab.meta_pkg_row.isHidden()
+        tab.runner_combo.setCurrentText("default")
+        assert tab.container_row.isHidden()
         tab.runner_combo.setCurrentText("docker")
-        assert tab.meta_pkg_row.isHidden()
         assert not tab.container_row.isHidden()
 
 
@@ -140,10 +135,10 @@ class TestRunnerFieldVisibility:
 # ---------------------------------------------------------------------------
 
 class TestInstPkgsPlaceholder:
-    def test_metapkg_runner_placeholder_shows_resolved_path(self, qapp):
+    def test_default_runner_placeholder_shows_resolved_path(self, qapp):
         from metis_test_runner import gui
         tab = _make_run_tab(qapp)
-        tab.runner_combo.setCurrentText("metapkg")
+        tab.runner_combo.setCurrentText("default")
         assert tab.inst_edit.placeholderText() == str(gui.REPO_ROOT / "inst_pkgs")
 
     def test_native_runner_placeholder_shows_resolved_path(self, qapp):
@@ -165,7 +160,7 @@ class TestInstPkgsPlaceholder:
     def test_switching_runner_updates_placeholder(self, qapp):
         from metis_test_runner import gui
         tab = _make_run_tab(qapp)
-        tab.runner_combo.setCurrentText("metapkg")
+        tab.runner_combo.setCurrentText("default")
         assert tab.inst_edit.placeholderText() == str(gui.REPO_ROOT / "inst_pkgs")
         tab.runner_combo.setCurrentText("docker")
         assert "container" in tab.inst_edit.placeholderText()
@@ -304,23 +299,12 @@ class TestBuildCmdArgs:
         tab.container_edit.setText("ignored")
         assert "--container" not in tab._build_cmd_args()
 
-    def test_meta_pkg_included_for_metapkg_runner(self, qapp, tmp_path, monkeypatch):
-        # Use a REPO_ROOT without .env so the meta_pkg_edit branch is reached;
-        # when .env exists _build_cmd_args intentionally prefers REPO_ROOT.
-        from metis_test_runner import gui
-        monkeypatch.setattr(gui, "REPO_ROOT", tmp_path)
+    def test_meta_pkg_flag_never_emitted(self, qapp):
+        # The --meta-pkg flag was removed when the metapkg runner was retired.
         tab = self._tab_with_inputs(qapp, "obs.yaml")
-        tab.runner_combo.setCurrentText("metapkg")
-        tab.meta_pkg_edit.setText("/opt/meta")
-        args = tab._build_cmd_args()
-        assert "--meta-pkg" in args
-        assert args[args.index("--meta-pkg") + 1] == "/opt/meta"
-
-    def test_meta_pkg_omitted_for_native_runner(self, qapp):
-        tab = self._tab_with_inputs(qapp, "obs.yaml")
-        tab.runner_combo.setCurrentText("native")
-        tab.meta_pkg_edit.setText("/opt/meta")
-        assert "--meta-pkg" not in tab._build_cmd_args()
+        for runner in ("default", "native", "docker", "podman"):
+            tab.runner_combo.setCurrentText(runner)
+            assert "--meta-pkg" not in tab._build_cmd_args()
 
     def test_simulations_dir_included_when_set(self, qapp):
         tab = self._tab_with_inputs(qapp, "obs.yaml")

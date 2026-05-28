@@ -9,11 +9,12 @@ workflow on those frames. YAML and CSV inputs may be mixed in a single run.
 Usage:
     python run_metis.py [OPTIONS] input1.yaml [input2.csv ...]
 
-Three execution modes are supported via --runner (or METIS_RUNNER env var):
+Four execution modes are supported via --runner (or METIS_RUNNER env var):
 
-  metapkg (default)
-      Uses uv + metis-meta-package. Requires bootstrap.sh to have been run;
-      looks for ~/metis-meta-package and ~/METIS_Simulations.
+  default
+      Runs subprocesses inside MTR's own pipx/venv interpreter (sys.executable)
+      and loads the .env written by the GUI Install tab into the subprocess
+      environment. This is the standard mode after a fresh pipx install.
 
   native
       Calls edps / python directly from PATH. Use this when running inside
@@ -38,7 +39,6 @@ with -m science.
 import argparse
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -589,7 +589,7 @@ def _build_sim_script(out_dir, do_calib, do_static, n_cores, input_list,
                       static_calibs_dir=None, do_sim=True):
     """Return the simulation driver script as a string.
 
-    When *inst_pkgs_path* is given (metapkg and native runners) the script
+    When *inst_pkgs_path* is given (default and native runners) the script
     overrides ScopeSim's local_packages_path and auto-downloads the instrument
     packages into that directory if the METIS package is not yet present.
 
@@ -749,33 +749,42 @@ def _build_sim_script(out_dir, do_calib, do_static, n_cores, input_list,
 # Runner-aware subprocess helpers
 # ---------------------------------------------------------------------------
 
-def _check_metapkg_env(runner, meta_pkg):
-    """Validate that the metapkg runner can be used.
+def _check_default_env(runner):
+    """Validate that the default runner can be used.
 
-    Checks that (a) the meta-package's .env file exists, then (b) uv is
-    installed (the metapkg runner shells out to ``uv run --project
-    <meta_pkg>``).  .env is checked first because a missing .env points the
-    user at a concrete action (Install tab / METIS_META_PKG), while a
-    missing uv only matters once the rest of the metapkg setup is in place.
+    Confirms the .env file written by the GUI Install tab exists at
+    ``paths.env_file()``; otherwise points the user at the Install tab.
     """
-    if runner != "metapkg":
+    if runner != "default":
         return
-    env_file = meta_pkg / ".env"
+    env_file = paths.env_file()
     if not env_file.exists():
         raise FileNotFoundError(
-            f"{env_file} not found — run the Install tab or check METIS_META_PKG"
-        )
-    if shutil.which("uv") is None:
-        raise RuntimeError(
-            "uv is required for --runner metapkg but was not found on PATH. "
-            "Install it with `pipx install uv`, or use a different --runner."
+            f"{env_file} not found — run the Install tab in the MTR GUI"
         )
 
 
-def _run_simulation(runner, container, sim_code, sims_cwd, meta_pkg=None):
+def _default_subprocess_env() -> dict[str, str]:
+    """Build the subprocess env for the default runner.
+
+    Merges the parent process env with the parsed .env file written by the
+    Install tab, and prepends the MTR pipx/venv ``bin/`` to ``PATH`` so
+    ``edps`` and ``pyesorex`` resolve to the venv copies even when the
+    parent's PATH does not include them.
+    """
+    from dotenv import dotenv_values
+    env = os.environ.copy()
+    env.update({k: v for k, v in dotenv_values(paths.env_file()).items()
+                if v is not None})
+    venv_bin = str(Path(sys.executable).parent)
+    env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
+    return env
+
+
+def _run_simulation(runner, container, sim_code, sims_cwd):
     """Execute the simulation script in the appropriate environment.
 
-    - metapkg : wrap with ``uv run --project <meta_pkg>``
+    - default : run with ``sys.executable`` and the merged Install-tab env
     - native  : call ``python`` directly (tools must be on PATH)
     - docker/podman : pipe script via stdin into ``<runtime> exec -i -w <cwd>
                       <container> python -``
@@ -789,45 +798,34 @@ def _run_simulation(runner, container, sim_code, sims_cwd, meta_pkg=None):
             input=sim_code.encode(),
         ).returncode
 
-    _check_metapkg_env(runner, meta_pkg)
+    _check_default_env(runner)
 
-    # For metapkg and native, write to a temp file and run it.
     tmp = tempfile.NamedTemporaryFile(mode="w", suffix="_run_sim.py",
                                      delete=False)
     tmp.write(sim_code)
     tmp.close()
     try:
-        if runner == "metapkg":
-            cmd = [
-                "uv", "run", "--no-sync",
-                "--project", str(meta_pkg),
-                "--env-file", str(meta_pkg / ".env"),
-                "python", tmp.name,
-            ]
-            cwd = str(sims_cwd)
+        if runner == "default":
+            return subprocess.run(
+                [sys.executable, tmp.name],
+                cwd=str(sims_cwd),
+                env=_default_subprocess_env(),
+            ).returncode
         else:  # native
-            cmd = ["python", tmp.name]
-            cwd = str(sims_cwd)
-        return subprocess.run(cmd, cwd=cwd).returncode
+            return subprocess.run(
+                ["python", tmp.name],
+                cwd=str(sims_cwd),
+            ).returncode
     finally:
         os.unlink(tmp.name)
 
 
-def _edps_base_cmd(runner, container, edps_port, meta_pkg=None):
+def _edps_base_cmd(runner, container, edps_port):
     """Return the command prefix list up to and including the edps port flag."""
     base = ["edps", "-P", str(edps_port)]
-    if runner == "metapkg":
-        _check_metapkg_env(runner, meta_pkg)
-        return ["uv", "run", "--no-sync", "--project", str(meta_pkg),
-                "--env-file", str(meta_pkg / ".env")] + base
     if runner in ("docker", "podman"):
         return [runner, "exec", container] + base
-    return base  # native
-
-
-def _edps_cwd(runner, meta_pkg=None):
-    """Return the working directory for EDPS subprocess calls, or None."""
-    return str(meta_pkg) if runner == "metapkg" else None
+    return base  # default / native
 
 
 # ---------------------------------------------------------------------------
@@ -929,11 +927,12 @@ def parse_args(argv=None):
     )
     p.add_argument(
         "--runner",
-        choices=["metapkg", "native", "docker", "podman"],
-        default=os.environ.get("METIS_RUNNER", "metapkg"),
-        help="Execution mode: metapkg (default) uses uv + metis-meta-package; "
-             "native calls tools directly from PATH (bare-metal or inside a "
-             "container); docker/podman exec commands into a running container "
+        choices=["default", "native", "docker", "podman"],
+        default=os.environ.get("METIS_RUNNER", "default"),
+        help="Execution mode: default runs subprocesses inside MTR's own "
+             "pipx/venv and loads the Install-tab .env; native calls tools "
+             "directly from PATH (bare-metal or inside a container); "
+             "docker/podman exec commands into a running container "
              "(env: METIS_RUNNER)",
     )
     p.add_argument(
@@ -943,17 +942,11 @@ def parse_args(argv=None):
              "(env: METIS_CONTAINER)",
     )
     p.add_argument(
-        "--meta-pkg", metavar="DIR",
-        help="Path to the metis-meta-package directory "
-             "[default: ./metis-meta-package] (metapkg runner only) "
-             "(env: METIS_META_PKG)",
-    )
-    p.add_argument(
         "--simulations-dir", metavar="DIR",
         default=os.environ.get("METIS_SIMULATIONS_DIR"),
         help="Path to the METIS_Simulations repository. For docker/podman "
              "runners this must be the path *inside* the container "
-             "[default: ./METIS_Simulations for native/metapkg, "
+             "[default: ./METIS_Simulations for default/native, "
              "/home/metis/METIS_Simulations for docker/podman] "
              "(env: METIS_SIMULATIONS_DIR)",
     )
@@ -962,7 +955,8 @@ def parse_args(argv=None):
         default=os.environ.get("METIS_INST_PKGS"),
         help="Path to the ScopeSim instrument packages directory "
              "(Armazones, ELT, METIS, …). "
-             "For the metapkg runner this defaults to <meta-pkg>/inst_pkgs. "
+             "For the default runner this defaults to the user data dir "
+             "(~/.local/share/metis-test-runner/inst_pkgs). "
              "For the native runner this defaults to ./inst_pkgs relative to "
              "the current working directory — ScopeSim will download packages "
              "there on first use. "
@@ -1018,35 +1012,13 @@ def main():
             )
         input_files.append(p)
 
-    # Locate the pipeline environment directory (metapkg runner only).
-    # Prefers the repo root (consolidated install via the MTR Install tab),
-    # then ./pipeline, then ./metis-meta-package (legacy standalone bootstrap).
-    meta_pkg = None
-    if runner == "metapkg":
-        if args.meta_pkg:
-            meta_pkg = Path(args.meta_pkg).resolve()
-        else:
-            _env_pkg = os.environ.get("METIS_META_PKG")
-            candidates = (
-                ([Path(_env_pkg)] if _env_pkg else []) +
-                [paths.data_dir(),
-                 paths.meta_pkg_dir(),
-                 Path.cwd(),
-                 Path.cwd() / "pipeline",
-                 Path.cwd() / "metis-meta-package"]
-            )
-            for candidate in candidates:
-                if (candidate / ".env").exists():
-                    meta_pkg = candidate
-                    break
-            else:
-                meta_pkg = Path(_env_pkg) if _env_pkg else paths.data_dir()
-        if not (meta_pkg / ".env").exists():
-            sys.exit(
-                f"Error: pipeline environment not found at {meta_pkg}\n"
-                "Run the Install tab in the MTR GUI, or pass --meta-pkg to point\n"
-                "to an existing metis-meta-package directory."
-            )
+    # For the default runner, confirm the Install tab has produced a .env
+    # under paths.data_dir(). Other runners don't need this check.
+    if runner == "default" and not paths.env_file().exists():
+        sys.exit(
+            f"Error: {paths.env_file()} not found.\n"
+            "Run the Install tab in the MTR GUI before invoking the default runner."
+        )
 
     # Locate METIS_Simulations
     # For docker/podman the path is resolved inside the container, so we skip
@@ -1181,10 +1153,10 @@ def main():
     if not args.no_sim:
         if args.inst_pkgs:
             # Explicit override: use as-is for docker/podman (container path),
-            # resolve to absolute for metapkg/native.
+            # resolve to absolute for default/native.
             inst_pkgs_path = args.inst_pkgs if runner in ("docker", "podman") \
                              else str(Path(args.inst_pkgs).resolve())
-        elif runner == "metapkg":
+        elif runner == "default":
             inst_pkgs_path = str(paths.inst_pkgs_dir())
         elif runner == "native":
             inst_pkgs_path = str(Path.cwd() / "inst_pkgs")
@@ -1204,8 +1176,7 @@ def main():
         )
 
         print("=== Running simulations ===")
-        rc = _run_simulation(runner, args.container, sim_code, sims_cwd,
-                             meta_pkg=meta_pkg)
+        rc = _run_simulation(runner, args.container, sim_code, sims_cwd)
         if rc != 0:
             sys.exit(f"Error: simulation step failed (exit code {rc}).")
 
@@ -1230,8 +1201,7 @@ def main():
             do_sim             = False,
         )
         print("=== Generating static calibration prototypes ===")
-        rc = _run_simulation(runner, args.container, sim_code, sims_cwd,
-                             meta_pkg=meta_pkg)
+        rc = _run_simulation(runner, args.container, sim_code, sims_cwd)
         if rc != 0:
             sys.exit(f"Error: static calibration generation failed (exit code {rc}).")
 
@@ -1333,14 +1303,12 @@ def main():
             print("  EDPS target     : (none inferred; EDPS will use workflow default)")
 
         edps_port = read_edps_port()
-        edps_cmd  = _edps_base_cmd(runner, args.container, edps_port, meta_pkg)
-        edps_cwd  = _edps_cwd(runner, meta_pkg)
-        # EDPS and PyEsorex write log files to their cwd.  For local runners,
-        # override cwd to pipe_out (host-accessible via the MTR bind mount) so
-        # the logs land there.  uv finds the virtualenv via --project, so cwd
-        # no longer needs to be the meta_pkg directory.
-        if runner not in ("docker", "podman"):
-            edps_cwd = str(pipe_out)
+        edps_cmd  = _edps_base_cmd(runner, args.container, edps_port)
+        # EDPS and PyEsorex write log files to their cwd.  For local runners
+        # cwd to pipe_out (host-accessible via the MTR bind mount) so the logs
+        # land there; for docker/podman the container resolves cwd internally.
+        edps_cwd = None if runner in ("docker", "podman") else str(pipe_out)
+        edps_env = _default_subprocess_env() if runner == "default" else None
 
         # If --prefer-masters, temporarily patch EDPS config
         original_pref = None
@@ -1352,7 +1320,7 @@ def main():
         # submitting the reduction job.
         print("=== Starting EDPS server ===")
         print("=== Listing Workflows    ===")
-        rc = subprocess.run(edps_cmd + ["-lw"], cwd=edps_cwd).returncode
+        rc = subprocess.run(edps_cmd + ["-lw"], cwd=edps_cwd, env=edps_env).returncode
         if rc != 0:
             _restore_association_preference(original_pref)
             sys.exit(f"Error: EDPS server failed to start (exit code {rc}).")
@@ -1377,10 +1345,11 @@ def main():
                     "-o", str(pipe_out),
                 ] + target_flags,
                 cwd=edps_cwd,
+                env=edps_env,
             ).returncode
         finally:
             print("=== Stopping EDPS server ===")
-            subprocess.run(edps_cmd + ["-s"], cwd=edps_cwd,
+            subprocess.run(edps_cmd + ["-s"], cwd=edps_cwd, env=edps_env,
                            capture_output=True, timeout=15)
             _restore_association_preference(original_pref)
         if pipeline_rc != 0:
