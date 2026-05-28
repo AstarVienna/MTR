@@ -14,6 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from dotenv import dotenv_values
 from PyQt6.QtCore import Qt, QProcess, QProcessEnvironment, QSettings, QThread, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices, QFont, QPalette, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
@@ -25,15 +26,23 @@ from PyQt6.QtWidgets import (
     QTextEdit, QVBoxLayout, QWidget,
 )
 
+from . import paths
+from .indexes import ESO_INDEX, PYCPL_INDEX
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
+#
+# Module-level aliases for the user data directory and the artifacts under it.
+# Computed at import time from `paths.<X>()` so that tests can monkeypatch
+# `gui.REPO_ROOT` (etc.) directly and have the call-time `REPO_ROOT / "..."`
+# expressions inside methods pick up the patched value.
 
-REPO_ROOT   = Path(__file__).resolve().parent.parent
-META_PKG    = Path(os.environ.get("METIS_META_PKG", str(REPO_ROOT / "metis-meta-package")))
-TARGET_A    = REPO_ROOT / "METIS_Pipeline"
-TARGET_B    = Path(os.environ.get("METIS_SIMULATIONS_DIR", str(REPO_ROOT / "METIS_Simulations")))
-INST_PKGS   = Path(os.environ.get("METIS_INST_PKGS", str(REPO_ROOT / "inst_pkgs")))
+REPO_ROOT   = paths.data_dir()
+META_PKG    = paths.meta_pkg_dir()
+TARGET_A    = paths.pipeline_dir()
+TARGET_B    = paths.simulations_dir()
+INST_PKGS   = paths.inst_pkgs_dir()
 REPO_A_URL  = "https://github.com/AstarVienna/METIS_Pipeline.git"
 REPO_B_URL  = "https://github.com/AstarVienna/METIS_Simulations.git"
 
@@ -45,24 +54,28 @@ LABEL_W = 280   # fixed label column width in the Run options form
 # ---------------------------------------------------------------------------
 
 def _child_env() -> dict[str, str]:
-    """Return a copy of os.environ with uv's venv-activation variables removed.
+    """Build the environment for subprocesses spawned by the GUI.
 
-    The GUI is launched via ``uv run gui.py`` (from launch.sh), which sets
-    ``VIRTUAL_ENV`` to MTR's own .venv. If we inherit that into subprocesses
-    that invoke ``uv run --project <meta-pkg>``, uv prints a warning on every
-    call about the mismatched active venv. Stripping these variables silences
-    that warning without affecting uv's project resolution.
+    Loads variables from the MTR `.env` file (paths.env_file()) on top of
+    the current process environment. Drops any inherited venv-activation
+    variables so that subprocesses targeting a *different* uv project
+    (--runner metapkg) don't trigger uv's mismatched-venv warnings.
     """
     env = os.environ.copy()
     env.pop("VIRTUAL_ENV", None)
     env.pop("UV_PROJECT_ENVIRONMENT", None)
     env["PYTHONUNBUFFERED"] = "1"
+    env_path = paths.env_file()
+    if env_path.exists():
+        for k, v in dotenv_values(env_path).items():
+            if v is not None:
+                env[k] = v
     return env
 
 
 def _installation_complete() -> bool:
     """Return True if the essential install artifacts exist."""
-    return (TARGET_A / ".git").exists() and (REPO_ROOT / ".env").exists()
+    return (TARGET_A / ".git").exists() and paths.env_file().exists()
 
 
 # ---------------------------------------------------------------------------
@@ -445,24 +458,32 @@ class InstallWorker(QThread):
             self._step(f"Cloning / updating METIS_Simulations  →  {TARGET_B}")
             self._clone_or_update(REPO_B_URL, TARGET_B)
 
-            self._step("Installing Python dependencies (uv sync --group pipeline --inexact)…")
+            self._step("Installing pipeline Python dependencies via pip…")
             recipe_dir = str(TARGET_A / "metisp" / "pyrecipes") + "/"
             os.environ["PYCPL_RECIPE_DIR"] = recipe_dir
             os.environ["PYESOREX_PLUGIN_DIR"] = recipe_dir
-            # --inexact preserves packages installed via `uv pip install` that
-            # aren't tracked in pyproject.toml (e.g. MetisWISE from the
-            # Archive tab).  Without it, uv sync wipes them on every run.
-            self._run(["uv", "sync", "--group", "pipeline", "--inexact"],
-                      cwd=REPO_ROOT)
-
-            self._step("Installing METIS_Simulations (editable) into .venv…")
-            # METIS_Simulations is not tracked in pyproject.toml because the
-            # checkout only exists after the clone above — a fresh `./launch.sh`
-            # would otherwise fail to resolve it.  Install it out-of-band;
-            # --inexact on subsequent `uv sync` runs preserves it.
+            # ESO-mirror dependencies are installed into the same interpreter
+            # that hosts MTR (sys.executable points at pipx's isolated venv or
+            # whatever venv the user installed MTR into).
             self._run(
-                ["uv", "pip", "install", "--editable", str(TARGET_B),
-                 "--python", str(REPO_ROOT / ".venv" / "bin" / "python")],
+                [sys.executable, "-m", "pip", "install",
+                 "--extra-index-url", PYCPL_INDEX,
+                 "--extra-index-url", ESO_INDEX,
+                 "pycpl==1.0.3.post10",
+                 "edps",
+                 "pyesorex",
+                 "adari_core",
+                 "scopesim==0.11.3",
+                 "scopesim_templates==0.8.1"],
+                cwd=REPO_ROOT,
+            )
+
+            self._step("Installing METIS_Simulations (editable)…")
+            # METIS_Simulations is cloned at install time (above) and pip-
+            # installed editable so changes to the working tree are picked up
+            # without a re-install.
+            self._run(
+                [sys.executable, "-m", "pip", "install", "--editable", str(TARGET_B)],
                 cwd=REPO_ROOT,
             )
 
@@ -558,9 +579,8 @@ class InstallWorker(QThread):
         to accept the default.  After edps daemonises the process exits, then we
         issue -s to stop the background server.
         """
-        env_file = REPO_ROOT / ".env"
-        base = ["uv", "run", "--no-sync", "--env-file", str(env_file),
-                "edps", "-P", "4444"]
+        edps_bin = Path(sys.executable).parent / "edps"
+        base = [str(edps_bin), "-P", "4444"]
         try:
             self._run(base, cwd=REPO_ROOT, stdin_text="\n", timeout=60)
         finally:
@@ -614,6 +634,11 @@ class InstallWorker(QThread):
             "PYESOREX_LOG_LEVEL=debug\n"
         )
         self.log.emit(f"Written {env_path}\n", "")
+
+
+def _resolve_run_metis_command() -> list[str]:
+    """Build the `python -m metis_test_runner.run_metis` invocation list."""
+    return [sys.executable, "-u", "-m", "metis_test_runner.run_metis"]
 
 
 # ---------------------------------------------------------------------------
@@ -697,7 +722,7 @@ class MetisWISEInstallWorker(QThread):
         self._credentials = credentials
 
     def run(self) -> None:
-        from archive import install_metiswise_command
+        from .archive import install_metiswise_command
         try:
             cmd = install_metiswise_command(self._credentials)
             self.log.emit(f"$ {' '.join(cmd)}\n", "cyan")
@@ -733,7 +758,7 @@ class TestConnectionWorker(QThread):
         self._fields = fields
 
     def run(self) -> None:
-        from archive import write_env_cfg, reset_db_connection, query_archive
+        from .archive import write_env_cfg, reset_db_connection, query_archive
         try:
             cfg = write_env_cfg(**self._fields)
             self.log.emit(f"Wrote credentials to {cfg}\n", "green")
@@ -763,7 +788,7 @@ class QueryWorker(QThread):
         self._category = category
 
     def run(self) -> None:
-        from archive import query_archive
+        from .archive import query_archive
         try:
             items = query_archive(
                 category=self._category,
@@ -790,7 +815,7 @@ class DownloadWorker(QThread):
         self._dest_dir = dest_dir
 
     def run(self) -> None:
-        from archive import download_file
+        from .archive import download_file
         try:
             total = len(self._filenames)
             downloaded = 0
@@ -823,7 +848,7 @@ class UploadWorker(QThread):
         self._entries = entries
 
     def run(self) -> None:
-        from archive import upload_file
+        from .archive import upload_file
         try:
             total = len(self._entries)
             uploaded = 0
@@ -1038,12 +1063,12 @@ class ArchiveTab(QWidget):
         self._catg_combo.setMinimumWidth(200)
         self._catg_combo.addItem("(all)")
         from itertools import chain as _chain
-        from archive import TASK_PRODUCTS
+        from .archive import TASK_PRODUCTS
         all_produces = set(_chain.from_iterable(p.produces for p in TASK_PRODUCTS.values()))
         for catg in sorted(all_produces):
             self._catg_combo.addItem(catg)
         self._catg_combo.insertSeparator(self._catg_combo.count())
-        from run_metis import DPR_TO_TAG
+        from .run_metis import DPR_TO_TAG
         for tag in sorted(set(DPR_TO_TAG.values())):
             self._catg_combo.addItem(tag)
         filter_row.addWidget(self._catg_combo)
@@ -1175,7 +1200,7 @@ class ArchiveTab(QWidget):
 
     def _refresh_install_status(self) -> None:
         """Update the MetisWISE status label + Continue button gate."""
-        from archive import metiswise_available
+        from .archive import metiswise_available
         if metiswise_available():
             self._mw_status.setText("Installed")
             self._mw_status.setStyleSheet("color: green; font-weight: bold;")
@@ -1187,7 +1212,7 @@ class ArchiveTab(QWidget):
         self._update_continue_button()
 
     def _update_continue_button(self) -> None:
-        from archive import metiswise_available
+        from .archive import metiswise_available
         self._continue_btn.setEnabled(
             metiswise_available() and self._connection_ok,
         )
@@ -1224,7 +1249,7 @@ class ArchiveTab(QWidget):
     # ── Save & Test Connection ─────────────────────────────────────────────
 
     def _on_save_and_test(self) -> None:
-        from archive import metiswise_available
+        from .archive import metiswise_available
         if not metiswise_available():
             QMessageBox.warning(
                 self, "MetisWISE not installed",
@@ -1326,7 +1351,7 @@ class ArchiveTab(QWidget):
         """Append a single row to the staging table with auto-classification."""
         if str(path) in self._staged_paths():
             return
-        from run_metis import classify_fits_file
+        from .run_metis import classify_fits_file
         tag = classify_fits_file(path)
         row = self._stage_table.rowCount()
         self._stage_table.insertRow(row)
@@ -1384,8 +1409,8 @@ class ArchiveTab(QWidget):
 
     def _candidate_class_names(self) -> list[str]:
         from itertools import chain as _chain
-        from archive import TASK_PRODUCTS
-        from run_metis import DPR_TO_TAG
+        from .archive import TASK_PRODUCTS
+        from .run_metis import DPR_TO_TAG
         produces = _chain.from_iterable(p.produces for p in TASK_PRODUCTS.values())
         candidates = set(DPR_TO_TAG.values()) | set(produces)
         return sorted(candidates)
@@ -1490,7 +1515,7 @@ class ArchiveTab(QWidget):
             self._settings.remove(stale)
 
         # Pre-populate from ~/.awe/Environment.cfg if present.
-        from archive import read_env_cfg
+        from .archive import read_env_cfg
         existing = read_env_cfg()
         for key, edit in self._cfg_edits.items():
             edit.setText(existing.get(key, ""))
@@ -1618,7 +1643,7 @@ class RunTab(QWidget):
         opts_lay.addWidget(_labeled("CPU cores  (--cores):", self.cores_spin))
 
         # Workflow override (only required for CSV-only runs with pipeline)
-        import run_metis as _run_metis
+        from . import run_metis as _run_metis
         self._workflow_label = QLabel("Workflow  (--workflow):")
         self._workflow_label.setFixedWidth(LABEL_W)
         self.workflow_combo = QComboBox()
@@ -1964,7 +1989,6 @@ class RunTab(QWidget):
         self.log_view.clear()
 
         args = self._build_cmd_args()
-        script = str(REPO_ROOT / "src" / "run_metis.py")
 
         self._process = QProcess(self)
         self._process.setWorkingDirectory(str(REPO_ROOT))
@@ -1972,20 +1996,18 @@ class RunTab(QWidget):
         self._process.readyReadStandardError.connect(self._on_stderr)
         self._process.finished.connect(self._on_finished)
 
-        # Strip uv's venv-activation variables so it doesn't warn about a
-        # mismatched active venv on every internal `uv run --project <meta-pkg>`
-        # call inside run_metis.py. See _child_env() for details.
+        # Strip uv's venv-activation variables so any internal `uv run
+        # --project <meta-pkg>` call inside run_metis.py (metapkg runner mode)
+        # doesn't warn about a mismatched active venv. See _child_env().
         qenv = QProcessEnvironment()
         for k, v in _child_env().items():
             qenv.insert(k, v)
         self._process.setProcessEnvironment(qenv)
 
-        venv_python = REPO_ROOT / ".venv" / "bin" / "python3"
-        if not venv_python.exists():
-            venv_python = META_PKG / ".venv" / "bin" / "python3"
-        python_exe = str(venv_python) if venv_python.exists() else sys.executable
-        log_append(self.log_view, f"$ {python_exe} {script} {' '.join(args)}\n\n", "cyan")
-        self._process.start(python_exe, ["-u", script] + args)
+        cmd = _resolve_run_metis_command()
+        python_exe, module_args = cmd[0], cmd[1:]
+        log_append(self.log_view, f"$ {' '.join(cmd + args)}\n\n", "cyan")
+        self._process.start(python_exe, module_args + args)
         self.run_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
 

@@ -47,6 +47,8 @@ from collections import Counter
 from pathlib import Path
 from datetime import datetime
 
+from . import paths
+
 # Recognised input file extensions
 INPUT_EXTS = (".yaml", ".yml", ".csv")
 
@@ -748,14 +750,19 @@ def _build_sim_script(out_dir, do_calib, do_static, n_cores, input_list,
 # ---------------------------------------------------------------------------
 
 def _check_metapkg_env(runner, meta_pkg):
-    """Raise FileNotFoundError if metapkg runner is configured but .env is missing.
+    """Validate that the metapkg runner can be used.
 
-    uv's own error message when ``--env-file`` points at a missing file is
-    technically correct but unhelpful. Fail fast with a pointer at the Install
-    tab / METIS_META_PKG.
+    Checks that (a) uv is installed (the metapkg runner shells out to
+    ``uv run --project <meta_pkg>``) and (b) the meta-package's .env file
+    exists. Fails fast with a pointer at the Install tab / METIS_META_PKG.
     """
     if runner != "metapkg":
         return
+    if shutil.which("uv") is None:
+        raise RuntimeError(
+            "uv is required for --runner metapkg but was not found on PATH. "
+            "Install it with `pipx install uv`, or use a different --runner."
+        )
     env_file = meta_pkg / ".env"
     if not env_file.exists():
         raise FileNotFoundError(
@@ -1020,7 +1027,9 @@ def main():
             _env_pkg = os.environ.get("METIS_META_PKG")
             candidates = (
                 ([Path(_env_pkg)] if _env_pkg else []) +
-                [Path.cwd(),
+                [paths.data_dir(),
+                 paths.meta_pkg_dir(),
+                 Path.cwd(),
                  Path.cwd() / "pipeline",
                  Path.cwd() / "metis-meta-package"]
             )
@@ -1029,7 +1038,7 @@ def main():
                     meta_pkg = candidate
                     break
             else:
-                meta_pkg = Path(_env_pkg) if _env_pkg else Path.cwd()
+                meta_pkg = Path(_env_pkg) if _env_pkg else paths.data_dir()
         if not (meta_pkg / ".env").exists():
             sys.exit(
                 f"Error: pipeline environment not found at {meta_pkg}\n"
@@ -1046,7 +1055,7 @@ def main():
         sims_cwd = sims_root
     else:
         sims_root = Path(args.simulations_dir).resolve() if args.simulations_dir \
-                    else Path.cwd() / "METIS_Simulations"
+                    else paths.simulations_dir()
         sims_cwd = sims_root
         if not (sims_root / "metis_simulations").is_dir():
             sys.exit(
@@ -1174,7 +1183,7 @@ def main():
             inst_pkgs_path = args.inst_pkgs if runner in ("docker", "podman") \
                              else str(Path(args.inst_pkgs).resolve())
         elif runner == "metapkg":
-            inst_pkgs_path = str(Path(__file__).resolve().parent.parent / "inst_pkgs")
+            inst_pkgs_path = str(paths.inst_pkgs_dir())
         elif runner == "native":
             inst_pkgs_path = str(Path.cwd() / "inst_pkgs")
         else:
@@ -1228,7 +1237,7 @@ def main():
     # Step 1.5: Auto-fetch missing master calibrations (optional)
     # -----------------------------------------------------------------------
     if not args.no_pipeline and args.auto_fetch_calibrations:
-        from archive import (
+        from .archive import (
             fetch_missing_calibrations,
             identify_missing_calibrations,
         )

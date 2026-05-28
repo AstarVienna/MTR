@@ -14,7 +14,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from run_metis import (
+from metis_test_runner.run_metis import (
     DPR_TO_TAG,
     MODE_TO_WORKFLOW,
     TECH_TO_WORKFLOW,
@@ -43,21 +43,21 @@ from run_metis import (
 class TestReadEdpsPort:
     def test_returns_default_when_file_missing(self, tmp_path):
         """No application.properties → falls back to default."""
-        with patch("run_metis.Path.home", return_value=tmp_path):
+        with patch("metis_test_runner.run_metis.Path.home", return_value=tmp_path):
             assert read_edps_port(default=5000) == 5000
 
     def test_reads_port_from_properties_file(self, tmp_path):
         props_dir = tmp_path / ".edps"
         props_dir.mkdir()
         (props_dir / "application.properties").write_text("port=4444\n")
-        with patch("run_metis.Path.home", return_value=tmp_path):
+        with patch("metis_test_runner.run_metis.Path.home", return_value=tmp_path):
             assert read_edps_port() == 4444
 
     def test_ignores_malformed_port_value(self, tmp_path):
         props_dir = tmp_path / ".edps"
         props_dir.mkdir()
         (props_dir / "application.properties").write_text("port=not_a_number\n")
-        with patch("run_metis.Path.home", return_value=tmp_path):
+        with patch("metis_test_runner.run_metis.Path.home", return_value=tmp_path):
             assert read_edps_port(default=5000) == 5000
 
     def test_warns_on_malformed_port_value(self, tmp_path, capsys):
@@ -66,7 +66,7 @@ class TestReadEdpsPort:
         props_dir = tmp_path / ".edps"
         props_dir.mkdir()
         (props_dir / "application.properties").write_text("port=4444, 5555\n")
-        with patch("run_metis.Path.home", return_value=tmp_path):
+        with patch("metis_test_runner.run_metis.Path.home", return_value=tmp_path):
             assert read_edps_port(default=5000) == 5000
         err = capsys.readouterr().err
         assert "malformed" in err
@@ -77,11 +77,11 @@ class TestReadEdpsPort:
         props_dir.mkdir()
         content = "server.host=localhost\nport=9999\nsome.other=value\n"
         (props_dir / "application.properties").write_text(content)
-        with patch("run_metis.Path.home", return_value=tmp_path):
+        with patch("metis_test_runner.run_metis.Path.home", return_value=tmp_path):
             assert read_edps_port() == 9999
 
     def test_custom_default_returned_when_no_file(self, tmp_path):
-        with patch("run_metis.Path.home", return_value=tmp_path):
+        with patch("metis_test_runner.run_metis.Path.home", return_value=tmp_path):
             assert read_edps_port(default=1234) == 1234
 
 

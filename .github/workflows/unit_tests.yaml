@@ -27,19 +27,15 @@ jobs:
             libgl1 libegl1 libglib2.0-0 libxkbcommon0 \
             libfontconfig1 libfreetype6 libdbus-1-3
 
-      - name: Install Python dependencies
-        run: pip install pyqt6 pyyaml pytest astropy
+      - name: Install MTR with dev extras
+        run: pip install -e .[dev] astropy
 
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
         run: pytest tests/ -v
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Smoke-test launch.sh
+      - name: Smoke-test mtr console script
         env:
           QT_QPA_PLATFORM: offscreen
-          SMOKE_TEST: "1"
-        run: ./launch.sh
+        run: mtr --smoke-test

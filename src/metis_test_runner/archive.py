@@ -16,16 +16,22 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from . import paths
+from .indexes import ESO_INDEX, PYCPL_INDEX
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+# Module-level alias kept for back-compat with tests / external callers.
+# Now resolves to the platformdirs user data directory.
+REPO_ROOT = paths.data_dir()
 
 # ---------------------------------------------------------------------------
 # Section A — MetisWISE availability & installation
@@ -42,18 +48,17 @@ def metiswise_available() -> bool:
 
 
 def install_metiswise_command(credentials: str) -> list[str]:
-    """Return the ``uv pip install`` command to install MetisWISE.
+    """Return the ``pip install`` command to install MetisWISE.
 
-    Installs into the project ``.venv`` (the same virtual environment
-    created by the Install tab via ``uv sync``).  *credentials* should be
-    ``"username:password"`` for the OmegaCEN pip channel.
+    Installs into the same interpreter that hosts MTR (sys.executable
+    points at pipx's isolated venv or whatever venv the user installed
+    MTR into).  *credentials* should be ``"username:password"`` for the
+    OmegaCEN pip channel.
     """
     return [
-        "uv", "pip", "install",
-        "--python", str(REPO_ROOT / ".venv" / "bin" / "python"),
-        "--index-strategy", "unsafe-best-match",
-        "--extra-index-url", "https://ftp.eso.org/pub/dfs/pipelines/libraries",
-        "--extra-index-url", "https://ivh.github.io/pycpl/simple/",
+        sys.executable, "-m", "pip", "install",
+        "--extra-index-url", ESO_INDEX,
+        "--extra-index-url", PYCPL_INDEX,
         "--extra-index-url",
         f"https://{credentials}@pip.entropynaut.com/packages/",
         "metiswise",
@@ -69,7 +74,7 @@ def _ensure_awetarget() -> None:
     os.environ.setdefault("AWETARGET", "metiswise")
 
 
-DRLD_DIR = REPO_ROOT / "METIS_DRLD"
+DRLD_DIR = paths.drld_dir()
 DRLD_REPO_URL = "https://github.com/AstarVienna/METIS_DRLD.git"
 
 _metiswise_imports_done = False
@@ -629,7 +634,7 @@ TASK_PRODUCTS: dict[str, TaskProducts] = {
 
 def _get_task_chain(workflow: str) -> list[tuple[str, str, str | None]]:
     """Import and return the task chain for *workflow* from ``run_metis``."""
-    from run_metis import WORKFLOW_TASK_CHAIN
+    from .run_metis import WORKFLOW_TASK_CHAIN
     return WORKFLOW_TASK_CHAIN.get(workflow, [])
 
 

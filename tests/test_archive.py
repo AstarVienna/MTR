@@ -10,6 +10,7 @@ Covers:
   - Missing calibration identification
 """
 
+import sys
 from unittest.mock import patch, MagicMock
 
 # Import astropy.io.fits once at module load: re-importing it after
@@ -17,7 +18,7 @@ from unittest.mock import patch, MagicMock
 # global warnings.showwarning state.
 from astropy.io import fits as _afits
 
-import archive
+from metis_test_runner import archive
 
 # Mocks for the commonwise database modules imported by _ensure_db_connection().
 _DB_MOCKS = {
@@ -60,8 +61,10 @@ class TestMetisWISEAvailable:
 class TestInstallMetisWiseCommand:
     def test_command_structure(self):
         cmd = archive.install_metiswise_command("user:secret")
-        assert cmd[0:3] == ["uv", "pip", "install"]
-        assert "--python" in cmd
+        # `<python> -m pip install ...` — installs into the same interpreter
+        # that hosts MTR (sys.executable).
+        assert cmd[0] == sys.executable
+        assert cmd[1:4] == ["-m", "pip", "install"]
         assert "metiswise" in cmd
 
     def test_credentials_in_url(self):
@@ -78,19 +81,6 @@ class TestInstallMetisWiseCommand:
         assert any("ftp.eso.org" in u for u in urls)
         assert any("ivh.github.io" in u for u in urls)
         assert any("entropynaut" in u for u in urls)
-
-    def test_uses_unsafe_best_match(self):
-        cmd = archive.install_metiswise_command("u:p")
-        assert "--index-strategy" in cmd
-        idx = cmd.index("--index-strategy")
-        assert cmd[idx + 1] == "unsafe-best-match"
-
-    def test_targets_project_venv(self):
-        cmd = archive.install_metiswise_command("u:p")
-        python_idx = cmd.index("--python")
-        python_path = cmd[python_idx + 1]
-        assert ".venv" in python_path
-        assert python_path.endswith("python")
 
     def test_does_not_include_pymetis(self):
         cmd = archive.install_metiswise_command("u:p")
@@ -186,7 +176,7 @@ _FIVE = {
 
 class TestWriteEnvCfg:
     def test_creates_new_file(self, tmp_path):
-        with patch("archive.Path.home", return_value=tmp_path):
+        with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
             cfg = archive.write_env_cfg(**_FIVE)
         assert cfg.exists()
         text = cfg.read_text()
@@ -195,14 +185,14 @@ class TestWriteEnvCfg:
             assert f"{key} : {value}" in text
 
     def test_creates_awe_dir(self, tmp_path):
-        with patch("archive.Path.home", return_value=tmp_path):
+        with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
             archive.write_env_cfg(**_FIVE)
         assert (tmp_path / ".awe").is_dir()
 
     def test_only_five_keys_when_creating(self, tmp_path):
         """Nothing else is written — data_server, port, protocol, etc.
         inherit from the MetisWISE default."""
-        with patch("archive.Path.home", return_value=tmp_path):
+        with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
             cfg = archive.write_env_cfg(**_FIVE)
         text = cfg.read_text()
         assert "data_server" not in text
@@ -225,7 +215,7 @@ class TestWriteEnvCfg:
             "data_server : remote.example.com\n"
             "data_port : 8013\n"
         )
-        with patch("archive.Path.home", return_value=tmp_path):
+        with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
             archive.write_env_cfg(**_FIVE)
         text = cfg.read_text()
         # Updated values present
@@ -249,7 +239,7 @@ class TestWriteEnvCfg:
             "database_user : A\n"
             "data_server : remote.example.com\n"
         )
-        with patch("archive.Path.home", return_value=tmp_path):
+        with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
             archive.write_env_cfg(**_FIVE)
         text = cfg.read_text()
         for key, value in _FIVE.items():
@@ -261,7 +251,7 @@ class TestWriteEnvCfg:
         awe.mkdir()
         cfg = awe / "Environment.cfg"
         cfg.write_text("[other]\nkey : value\n")
-        with patch("archive.Path.home", return_value=tmp_path):
+        with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
             archive.write_env_cfg(**_FIVE)
         text = cfg.read_text()
         assert "[other]" in text
@@ -277,7 +267,7 @@ class TestWriteEnvCfg:
             "[global]\n"
             "database_user = OLDUSER\n"
         )
-        with patch("archive.Path.home", return_value=tmp_path):
+        with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
             archive.write_env_cfg(**_FIVE)
         text = cfg.read_text()
         assert "database_user = AWTEST" in text
@@ -285,7 +275,7 @@ class TestWriteEnvCfg:
 
 class TestReadEnvCfg:
     def test_missing_file(self, tmp_path):
-        with patch("archive.Path.home", return_value=tmp_path):
+        with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
             values = archive.read_env_cfg()
         assert values == {k: "" for k in archive.ENV_CFG_FIELDS}
 
@@ -301,7 +291,7 @@ class TestReadEnvCfg:
             "database_name : metis.example.com:5436/pgmetis\n"
             "data_server : remote.example.com\n"
         )
-        with patch("archive.Path.home", return_value=tmp_path):
+        with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
             values = archive.read_env_cfg()
         assert values["database_user"] == "AWTEST"
         assert values["database_password"] == "lmno"
@@ -318,12 +308,12 @@ class TestReadEnvCfg:
             "[global]\n"
             "database_user : CORRECT\n"
         )
-        with patch("archive.Path.home", return_value=tmp_path):
+        with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
             values = archive.read_env_cfg()
         assert values["database_user"] == "CORRECT"
 
     def test_round_trip(self, tmp_path):
-        with patch("archive.Path.home", return_value=tmp_path):
+        with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
             archive.write_env_cfg(**_FIVE)
             values = archive.read_env_cfg()
         assert values == _FIVE

@@ -24,7 +24,7 @@ from pathlib import Path
 
 
 def _make_run_tab(qapp):
-    from gui import RunTab
+    from metis_test_runner.gui import RunTab
     return RunTab()
 
 
@@ -35,14 +35,14 @@ def _make_run_tab(qapp):
 class TestAppendLog:
     def test_plain_text_appended(self, qapp):
         from PyQt6.QtWidgets import QTextEdit
-        from gui import log_append
+        from metis_test_runner.gui import log_append
         w = QTextEdit()
         log_append(w, "hello world")
         assert "hello world" in w.toPlainText()
 
     def test_multiple_appends_accumulate(self, qapp):
         from PyQt6.QtWidgets import QTextEdit
-        from gui import log_append
+        from metis_test_runner.gui import log_append
         w = QTextEdit()
         log_append(w, "line one\n")
         log_append(w, "line two\n")
@@ -52,14 +52,14 @@ class TestAppendLog:
 
     def test_coloured_text_appended(self, qapp):
         from PyQt6.QtWidgets import QTextEdit
-        from gui import log_append
+        from metis_test_runner.gui import log_append
         w = QTextEdit()
         log_append(w, "error message", "red")
         assert "error message" in w.toPlainText()
 
     def test_empty_colour_treated_as_no_colour(self, qapp):
         from PyQt6.QtWidgets import QTextEdit
-        from gui import log_append
+        from metis_test_runner.gui import log_append
         w = QTextEdit()
         log_append(w, "neutral", "")   # empty string — no crash, text still added
         assert "neutral" in w.toPlainText()
@@ -71,14 +71,14 @@ class TestAppendLog:
 
 class TestWindowConstruction:
     def test_main_window_creates(self, qapp):
-        from gui import MainWindow
+        from metis_test_runner.gui import MainWindow
         win = MainWindow()
         assert win is not None
         win.close()
 
     def test_window_has_three_tabs(self, qapp):
         from PyQt6.QtWidgets import QTabWidget
-        from gui import MainWindow
+        from metis_test_runner.gui import MainWindow
         win = MainWindow()
         tabs = win.findChild(QTabWidget)
         assert tabs is not None
@@ -87,7 +87,7 @@ class TestWindowConstruction:
 
     def test_tab_labels(self, qapp):
         from PyQt6.QtWidgets import QTabWidget
-        from gui import MainWindow
+        from metis_test_runner.gui import MainWindow
         win = MainWindow()
         tabs = win.findChild(QTabWidget)
         labels = [tabs.tabText(i) for i in range(tabs.count())]
@@ -141,13 +141,13 @@ class TestRunnerFieldVisibility:
 
 class TestInstPkgsPlaceholder:
     def test_metapkg_runner_placeholder_shows_resolved_path(self, qapp):
-        import gui
+        from metis_test_runner import gui
         tab = _make_run_tab(qapp)
         tab.runner_combo.setCurrentText("metapkg")
         assert tab.inst_edit.placeholderText() == str(gui.REPO_ROOT / "inst_pkgs")
 
     def test_native_runner_placeholder_shows_resolved_path(self, qapp):
-        import gui
+        from metis_test_runner import gui
         tab = _make_run_tab(qapp)
         tab.runner_combo.setCurrentText("native")
         assert tab.inst_edit.placeholderText() == str(gui.REPO_ROOT / "inst_pkgs")
@@ -163,7 +163,7 @@ class TestInstPkgsPlaceholder:
         assert "container" in tab.inst_edit.placeholderText()
 
     def test_switching_runner_updates_placeholder(self, qapp):
-        import gui
+        from metis_test_runner import gui
         tab = _make_run_tab(qapp)
         tab.runner_combo.setCurrentText("metapkg")
         assert tab.inst_edit.placeholderText() == str(gui.REPO_ROOT / "inst_pkgs")
@@ -307,7 +307,7 @@ class TestBuildCmdArgs:
     def test_meta_pkg_included_for_metapkg_runner(self, qapp, tmp_path, monkeypatch):
         # Use a REPO_ROOT without .env so the meta_pkg_edit branch is reached;
         # when .env exists _build_cmd_args intentionally prefers REPO_ROOT.
-        import gui
+        from metis_test_runner import gui
         monkeypatch.setattr(gui, "REPO_ROOT", tmp_path)
         tab = self._tab_with_inputs(qapp, "obs.yaml")
         tab.runner_combo.setCurrentText("metapkg")
@@ -418,7 +418,7 @@ class TestPatchEdpsConfig:
     )
 
     def _make_worker(self, qapp):
-        from gui import InstallWorker
+        from metis_test_runner.gui import InstallWorker
         return InstallWorker()
 
     def _seed(self, tmp_path, content):
@@ -434,7 +434,7 @@ class TestPatchEdpsConfig:
         assert "port=4444" in props.read_text()
 
     def test_patches_workflow_dir(self, qapp, tmp_path, monkeypatch):
-        from gui import TARGET_A
+        from metis_test_runner.gui import TARGET_A
         monkeypatch.setenv("HOME", str(tmp_path))
         props = self._seed(tmp_path, self.FULL_PROPS)
         self._make_worker(qapp)._patch_edps_config()
@@ -542,7 +542,7 @@ class TestPatchEdpsConfig:
 
 class TestBackupEdpsConfig:
     def _make_worker(self, qapp):
-        from gui import InstallWorker
+        from metis_test_runner.gui import InstallWorker
         return InstallWorker()
 
     def _seed(self, tmp_path, content):
@@ -583,35 +583,35 @@ class TestBackupEdpsConfig:
 
 class TestWriteEnv:
     def _make_worker(self, qapp):
-        from gui import InstallWorker
+        from metis_test_runner.gui import InstallWorker
         return InstallWorker()
 
     def test_env_file_created(self, qapp, tmp_path, monkeypatch):
-        import gui
+        from metis_test_runner import gui
         monkeypatch.setattr(gui, "REPO_ROOT", tmp_path)
         self._make_worker(qapp)._write_env()
         assert (tmp_path / ".env").exists()
 
     def test_env_contains_pythonpath(self, qapp, tmp_path, monkeypatch):
-        import gui
+        from metis_test_runner import gui
         monkeypatch.setattr(gui, "REPO_ROOT", tmp_path)
         self._make_worker(qapp)._write_env()
         assert "PYTHONPATH" in (tmp_path / ".env").read_text()
 
     def test_env_contains_pycpl_recipe_dir(self, qapp, tmp_path, monkeypatch):
-        import gui
+        from metis_test_runner import gui
         monkeypatch.setattr(gui, "REPO_ROOT", tmp_path)
         self._make_worker(qapp)._write_env()
         assert "PYCPL_RECIPE_DIR" in (tmp_path / ".env").read_text()
 
     def test_env_contains_pyesorex_plugin_dir(self, qapp, tmp_path, monkeypatch):
-        import gui
+        from metis_test_runner import gui
         monkeypatch.setattr(gui, "REPO_ROOT", tmp_path)
         self._make_worker(qapp)._write_env()
         assert "PYESOREX_PLUGIN_DIR" in (tmp_path / ".env").read_text()
 
     def test_env_paths_reference_target_a(self, qapp, tmp_path, monkeypatch):
-        import gui
+        from metis_test_runner import gui
         monkeypatch.setattr(gui, "REPO_ROOT", tmp_path)
         self._make_worker(qapp)._write_env()
         content = (tmp_path / ".env").read_text()
@@ -624,7 +624,7 @@ class TestWriteEnv:
 
 class TestCloneOrUpdateSubmodule:
     def _make_worker(self, qapp):
-        from gui import InstallWorker
+        from metis_test_runner.gui import InstallWorker
         return InstallWorker()
 
     def test_submodule_checkout_takes_update_branch(self, qapp, tmp_path, monkeypatch):
@@ -643,7 +643,7 @@ class TestCloneOrUpdateSubmodule:
         monkeypatch.setattr(worker, "_run", lambda cmd, **kw: invoked.append(cmd))
         from unittest.mock import patch as mock_patch, MagicMock
         fake_pull = MagicMock(return_value=MagicMock(stdout="", stderr=""))
-        with mock_patch("gui.subprocess.run", fake_pull):
+        with mock_patch("metis_test_runner.gui.subprocess.run", fake_pull):
             worker._clone_or_update("http://example.invalid/x.git", target)
 
         # Took the fetch path (via _run), not the clone path.
@@ -682,13 +682,13 @@ class TestAutoFetchCheckbox:
 
 class TestArchiveTab:
     def test_archive_tab_creates(self, qapp):
-        from gui import ArchiveTab
+        from metis_test_runner.gui import ArchiveTab
         tab = ArchiveTab()
         assert tab is not None
 
     def test_archive_tab_has_stacked_widget(self, qapp):
         from PyQt6.QtWidgets import QStackedWidget
-        from gui import ArchiveTab
+        from metis_test_runner.gui import ArchiveTab
         tab = ArchiveTab()
         stack = tab.findChild(QStackedWidget)
         assert stack is not None
@@ -706,11 +706,11 @@ class TestArchiveTabUploadPage:
 
     def _make_tab(self, qapp, monkeypatch, classify=None):
         """Create an ArchiveTab with classify_fits_file patched."""
-        import run_metis
+        from metis_test_runner import run_metis
         if classify is None:
             classify = lambda _p: "LM_FLAT_LAMP_RAW"
         monkeypatch.setattr(run_metis, "classify_fits_file", classify)
-        from gui import ArchiveTab
+        from metis_test_runner.gui import ArchiveTab
         return ArchiveTab()
 
     def test_page_upload_table_has_three_columns(self, qapp, monkeypatch):
@@ -789,7 +789,7 @@ class TestArchiveTabUploadPage:
         tab._add_staged_file(fits)
         # Select the one unresolved row, then click Upload.
         tab._stage_table.selectRow(0)
-        with mock_patch("gui.QMessageBox.warning") as warn:
+        with mock_patch("metis_test_runner.gui.QMessageBox.warning") as warn:
             tab._on_upload()
         warn.assert_called_once()
         # Upload button stays enabled when the guard fires (no worker dispatched).
@@ -816,7 +816,7 @@ class TestArchiveTabUploadPage:
             def start(self):
                 captured["started"] = True
 
-        with mock_patch("gui.UploadWorker", StubWorker):
+        with mock_patch("metis_test_runner.gui.UploadWorker", StubWorker):
             tab._on_upload()
         assert captured.get("started") is True
         assert captured["entries"] == [(fits, "LM_FLAT_LAMP_RAW")]
@@ -846,14 +846,14 @@ class TestUploadWorker:
 
     def test_all_succeed(self, qapp, tmp_path):
         from unittest.mock import patch as mock_patch
-        from gui import UploadWorker
+        from metis_test_runner.gui import UploadWorker
         entries = [
             (tmp_path / "a.fits", "LM_FLAT_LAMP_RAW"),
             (tmp_path / "b.fits", "DARK_IFU_RAW"),
         ]
         worker = UploadWorker(entries)
         emitted = self._connect(worker)
-        with mock_patch("archive.upload_file", return_value=True):
+        with mock_patch("metis_test_runner.archive.upload_file", return_value=True):
             worker.run()
         assert emitted["done"] == [True]
         # Summary log mentions 2/2.
@@ -862,7 +862,7 @@ class TestUploadWorker:
 
     def test_partial_failure_still_reports_success_signal(self, qapp, tmp_path):
         from unittest.mock import patch as mock_patch
-        from gui import UploadWorker
+        from metis_test_runner.gui import UploadWorker
         entries = [
             (tmp_path / "a.fits", "X"),
             (tmp_path / "b.fits", "Y"),
@@ -870,7 +870,7 @@ class TestUploadWorker:
         ]
         worker = UploadWorker(entries)
         emitted = self._connect(worker)
-        with mock_patch("archive.upload_file", side_effect=[True, False, True]):
+        with mock_patch("metis_test_runner.archive.upload_file", side_effect=[True, False, True]):
             worker.run()
         assert emitted["done"] == [True]
         summary = "".join(t for t, _ in emitted["log"])
@@ -878,10 +878,10 @@ class TestUploadWorker:
 
     def test_exception_emits_false_done(self, qapp, tmp_path):
         from unittest.mock import patch as mock_patch
-        from gui import UploadWorker
+        from metis_test_runner.gui import UploadWorker
         worker = UploadWorker([(tmp_path / "a.fits", "X")])
         emitted = self._connect(worker)
-        with mock_patch("archive.upload_file",
+        with mock_patch("metis_test_runner.archive.upload_file",
                         side_effect=RuntimeError("boom")):
             worker.run()
         assert emitted["done"] == [False]
@@ -890,10 +890,10 @@ class TestUploadWorker:
 
     def test_progress_emits_per_file(self, qapp, tmp_path):
         from unittest.mock import patch as mock_patch
-        from gui import UploadWorker
+        from metis_test_runner.gui import UploadWorker
         entries = [(tmp_path / f"{n}.fits", "X") for n in ("a", "b", "c")]
         worker = UploadWorker(entries)
         emitted = self._connect(worker)
-        with mock_patch("archive.upload_file", return_value=True):
+        with mock_patch("metis_test_runner.archive.upload_file", return_value=True):
             worker.run()
         assert emitted["progress"] == [(1, 3), (2, 3), (3, 3)]
