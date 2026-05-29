@@ -1293,6 +1293,23 @@ def main():
         else:
             data_tags = yaml_tags
             active_sub_workflows = yaml_sub_workflows
+            # CSV inputs carry no MTR-side tags (their content is not parsed),
+            # so data_tags is empty here.  Without tags, no EDPS -t target is
+            # inferred and EDPS falls back to the workflow's science products,
+            # which a calibration-only run cannot satisfy -> 0 jobs created.
+            # Recover the tags from the FITS we just simulated, mirroring the
+            # --no-sim path, so the correct calibration target gets scheduled.
+            if not data_tags:
+                fits_tags, _ = scan_fits_inputs(sim_out)
+                data_tags = fits_tags
+                if fits_tags:
+                    print(f"  Data tags     : {sorted(fits_tags)}  "
+                          "(inferred from simulated FITS)")
+                has_science = any(
+                    meta == "science" and tag in data_tags
+                    for wf in active_sub_workflows
+                    for _, tag, meta in WORKFLOW_TASK_CHAIN.get(wf, [])
+                )
 
         target_flags = infer_edps_targets_for_workflows(
             data_tags, has_science, active_sub_workflows,
