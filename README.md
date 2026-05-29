@@ -189,7 +189,7 @@ Two input formats are supported and may be mixed in a single run:
 - **YAML observation blocks** (`*.yaml`, `*.yml`) — the primary, human-authored format. Workflow auto-detection works on YAML content.
 - **AIT-format CSV test sequences** (`*.csv`) — the AIT performance-test sheet exported as CSV. Parsed by `metis_simulations.csvParser` at simulation time. Because MTR does **not** inspect CSV content itself, CSV-only runs that execute the pipeline require an explicit workflow choice (the GUI's *Workflow* dropdown, or `--workflow NAME` on the CLI).
 
-See [`examples/small_test.csv`](examples/small_test.csv) for a minimal CSV; the rest of this section covers YAML.
+See [`examples/small_test_img_lm.csv`](examples/small_test_img_lm.csv) (IMAGE,LM) and [`examples/small_test_img_n.csv`](examples/small_test_img_n.csv) (IMAGE,N) for minimal CSVs; the rest of this section covers YAML.
 
 ### YAML Format
 
@@ -215,6 +215,19 @@ BLOCK_NAME:
 ```
 
 See `examples/LMS_RAD_06.yaml` for a complete IFU example covering the full calibration + science chain.
+
+The small per-mode examples — `examples/small_test.yaml` (IFU),
+`examples/small_test_img_lm.yaml` / `examples/small_test_img_lm.csv` (IMAGE,LM), and
+`examples/small_test_img_n.yaml` / `examples/small_test_img_n.csv` (IMAGE,N) —
+are minimal inputs that exercise the detector linearity + gain step
+(`metis_det_lingain`) and the master-dark step (`metis_det_dark`). Each provides
+the DETLIN frames that recipe requires: **six distinct DITs**, each with two
+illuminated (ON) and two dark (OFF) frames (the OFF frames use
+`filter_name: "closed"`), plus ≥2 dark frames for the dark step. Six DITs are
+used because `metis_det_lingain`'s gain fit — `np.polyfit(deg=1, cov=True)` —
+needs at least **four** DIT points below the linearity limit (`len > order+2`);
+fewer raises *"the number of data points must exceed order to scale the
+covariance matrix."*
 
 ## Supported Workflows
 
@@ -307,13 +320,13 @@ mtr-cli --no-sim -o /tmp/myrun examples/LMS_RAD_06.yaml
 mtr-cli --no-sim --pipeline-input /data/sim_fits -o /tmp/myrun
 
 # CSV-only input, simulate only (workflow auto-detection not needed)
-mtr-cli --no-pipeline examples/small_test.csv
+mtr-cli --no-pipeline examples/small_test_img_lm.csv
 
 # CSV-only input, full simulate + pipeline run (workflow must be explicit)
-mtr-cli --workflow metis.metis_lm_img_wkf examples/small_test.csv
+mtr-cli --workflow metis.metis_lm_img_wkf examples/small_test_img_lm.csv
 
 # Mixed YAML + CSV in a single run
-mtr-cli examples/small_test.yaml examples/small_test.csv
+mtr-cli examples/small_test.yaml examples/small_test_img_lm.csv
 ```
 
 ## Repository Layout

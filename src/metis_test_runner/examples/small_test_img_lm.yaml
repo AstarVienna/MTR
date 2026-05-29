@@ -1,29 +1,28 @@
-# IFU (LMS) example.
+# IMAGE,LM (L/M-band imaging) example.
 #
-# Exercises the detector linearity + gain step (metis_ifu_lingain / metis_det_lingain) and the master-dark
+# Exercises the detector linearity + gain step (metis_lm_img_lingain / metis_det_lingain) and the master-dark
 # step (metis_det_dark). metis_det_lingain fits a photon-transfer line with
 # np.polyfit(deg=1, cov=True), which needs >=4 distinct DIT points below the
 # linearity limit, so we provide 6 DITs, each with 2 illuminated (ON) and 2 dark
-# (OFF) DETLIN frames (nObs: 2). ON/OFF split: median flux (ON = illuminated filter "open", OFF = filter "closed" = shuttered dark). Both ON and OFF are
-# DPR.TYPE=DETLIN so they classify as DETLIN_IFU_RAW and reach the lingain task.
+# (OFF) DETLIN frames (nObs: 2). ON/OFF split: ON = real filter "IB_4.05" (DRS.FILTER != open), OFF = filter "closed". Both ON and OFF are
+# DPR.TYPE=DETLIN so they classify as DETLIN_2RG_RAW and reach the lingain task.
 
 
-DETLIN_IFU_RAW_DIT1_ON:
-  do.catg: DETLIN_IFU_RAW
-  mode: "wcu_lms"
+DETLIN_2RG_RAW_DIT1_ON:
+  do.catg: DETLIN_2RG_RAW
+  mode: "wcu_img_lm"
   source:
     name: empty_sky
     kwargs: {}
   properties:
-    dit: 1.5
+    dit: 0.05
     ndit: 1
-    wavelen: 3.555
-    filter_name: "open"
-    nd_filter_name: "open"
+    filter_name: "IB_4.05"
+    nd_filter_name: "ND_OD3"
     catg: "CALIB"
-    tech: "IFU"
+    tech: "IMAGE,LM"
     type: "DETLIN"
-    tplname: "METIS_ifu_cal_DetLin"
+    tplname: "METIS_img_lm_cal_DetLin"
     nObs: 2
   wcu:
     current_lamp: "bb"
@@ -33,22 +32,21 @@ DETLIN_IFU_RAW_DIT1_ON:
     is_temp: 300
     wcu_temp: 300
 
-DETLIN_IFU_RAW_DIT1_OFF:
-  do.catg: DETLIN_IFU_RAW
-  mode: "wcu_lms"
+DETLIN_2RG_RAW_DIT1_OFF:
+  do.catg: DETLIN_2RG_RAW
+  mode: "wcu_img_lm"
   source:
     name: empty_sky
     kwargs: {}
   properties:
-    dit: 1.5
+    dit: 0.05
     ndit: 1
-    wavelen: 3.555
     filter_name: "closed"
-    nd_filter_name: "open"
+    nd_filter_name: "ND_OD3"
     catg: "CALIB"
-    tech: "IFU"
+    tech: "IMAGE,LM"
     type: "DETLIN"
-    tplname: "METIS_ifu_cal_DetLin"
+    tplname: "METIS_img_lm_cal_DetLin"
     nObs: 2
   wcu:
     current_lamp: "bb"
@@ -58,22 +56,213 @@ DETLIN_IFU_RAW_DIT1_OFF:
     is_temp: 300
     wcu_temp: 300
 
-DETLIN_IFU_RAW_DIT2_ON:
-  do.catg: DETLIN_IFU_RAW
-  mode: "wcu_lms"
+DETLIN_2RG_RAW_DIT2_ON:
+  do.catg: DETLIN_2RG_RAW
+  mode: "wcu_img_lm"
+  source:
+    name: empty_sky
+    kwargs: {}
+  properties:
+    dit: 0.1
+    ndit: 1
+    filter_name: "IB_4.05"
+    nd_filter_name: "ND_OD3"
+    catg: "CALIB"
+    tech: "IMAGE,LM"
+    type: "DETLIN"
+    tplname: "METIS_img_lm_cal_DetLin"
+    nObs: 2
+  wcu:
+    current_lamp: "bb"
+    current_fpmask: "open"
+    bb_aperture: 0.5
+    bb_temp: 800
+    is_temp: 300
+    wcu_temp: 300
+
+DETLIN_2RG_RAW_DIT2_OFF:
+  do.catg: DETLIN_2RG_RAW
+  mode: "wcu_img_lm"
+  source:
+    name: empty_sky
+    kwargs: {}
+  properties:
+    dit: 0.1
+    ndit: 1
+    filter_name: "closed"
+    nd_filter_name: "ND_OD3"
+    catg: "CALIB"
+    tech: "IMAGE,LM"
+    type: "DETLIN"
+    tplname: "METIS_img_lm_cal_DetLin"
+    nObs: 2
+  wcu:
+    current_lamp: "bb"
+    current_fpmask: "open"
+    bb_aperture: 0.5
+    bb_temp: 800
+    is_temp: 300
+    wcu_temp: 300
+
+DETLIN_2RG_RAW_DIT3_ON:
+  do.catg: DETLIN_2RG_RAW
+  mode: "wcu_img_lm"
+  source:
+    name: empty_sky
+    kwargs: {}
+  properties:
+    dit: 0.2
+    ndit: 1
+    filter_name: "IB_4.05"
+    nd_filter_name: "ND_OD3"
+    catg: "CALIB"
+    tech: "IMAGE,LM"
+    type: "DETLIN"
+    tplname: "METIS_img_lm_cal_DetLin"
+    nObs: 2
+  wcu:
+    current_lamp: "bb"
+    current_fpmask: "open"
+    bb_aperture: 0.5
+    bb_temp: 800
+    is_temp: 300
+    wcu_temp: 300
+
+DETLIN_2RG_RAW_DIT3_OFF:
+  do.catg: DETLIN_2RG_RAW
+  mode: "wcu_img_lm"
+  source:
+    name: empty_sky
+    kwargs: {}
+  properties:
+    dit: 0.2
+    ndit: 1
+    filter_name: "closed"
+    nd_filter_name: "ND_OD3"
+    catg: "CALIB"
+    tech: "IMAGE,LM"
+    type: "DETLIN"
+    tplname: "METIS_img_lm_cal_DetLin"
+    nObs: 2
+  wcu:
+    current_lamp: "bb"
+    current_fpmask: "open"
+    bb_aperture: 0.5
+    bb_temp: 800
+    is_temp: 300
+    wcu_temp: 300
+
+DETLIN_2RG_RAW_DIT4_ON:
+  do.catg: DETLIN_2RG_RAW
+  mode: "wcu_img_lm"
+  source:
+    name: empty_sky
+    kwargs: {}
+  properties:
+    dit: 0.4
+    ndit: 1
+    filter_name: "IB_4.05"
+    nd_filter_name: "ND_OD3"
+    catg: "CALIB"
+    tech: "IMAGE,LM"
+    type: "DETLIN"
+    tplname: "METIS_img_lm_cal_DetLin"
+    nObs: 2
+  wcu:
+    current_lamp: "bb"
+    current_fpmask: "open"
+    bb_aperture: 0.5
+    bb_temp: 800
+    is_temp: 300
+    wcu_temp: 300
+
+DETLIN_2RG_RAW_DIT4_OFF:
+  do.catg: DETLIN_2RG_RAW
+  mode: "wcu_img_lm"
+  source:
+    name: empty_sky
+    kwargs: {}
+  properties:
+    dit: 0.4
+    ndit: 1
+    filter_name: "closed"
+    nd_filter_name: "ND_OD3"
+    catg: "CALIB"
+    tech: "IMAGE,LM"
+    type: "DETLIN"
+    tplname: "METIS_img_lm_cal_DetLin"
+    nObs: 2
+  wcu:
+    current_lamp: "bb"
+    current_fpmask: "open"
+    bb_aperture: 0.5
+    bb_temp: 800
+    is_temp: 300
+    wcu_temp: 300
+
+DETLIN_2RG_RAW_DIT5_ON:
+  do.catg: DETLIN_2RG_RAW
+  mode: "wcu_img_lm"
+  source:
+    name: empty_sky
+    kwargs: {}
+  properties:
+    dit: 1.0
+    ndit: 1
+    filter_name: "IB_4.05"
+    nd_filter_name: "ND_OD3"
+    catg: "CALIB"
+    tech: "IMAGE,LM"
+    type: "DETLIN"
+    tplname: "METIS_img_lm_cal_DetLin"
+    nObs: 2
+  wcu:
+    current_lamp: "bb"
+    current_fpmask: "open"
+    bb_aperture: 0.5
+    bb_temp: 800
+    is_temp: 300
+    wcu_temp: 300
+
+DETLIN_2RG_RAW_DIT5_OFF:
+  do.catg: DETLIN_2RG_RAW
+  mode: "wcu_img_lm"
+  source:
+    name: empty_sky
+    kwargs: {}
+  properties:
+    dit: 1.0
+    ndit: 1
+    filter_name: "closed"
+    nd_filter_name: "ND_OD3"
+    catg: "CALIB"
+    tech: "IMAGE,LM"
+    type: "DETLIN"
+    tplname: "METIS_img_lm_cal_DetLin"
+    nObs: 2
+  wcu:
+    current_lamp: "bb"
+    current_fpmask: "open"
+    bb_aperture: 0.5
+    bb_temp: 800
+    is_temp: 300
+    wcu_temp: 300
+
+DETLIN_2RG_RAW_DIT6_ON:
+  do.catg: DETLIN_2RG_RAW
+  mode: "wcu_img_lm"
   source:
     name: empty_sky
     kwargs: {}
   properties:
     dit: 2.0
     ndit: 1
-    wavelen: 3.555
-    filter_name: "open"
-    nd_filter_name: "open"
+    filter_name: "IB_4.05"
+    nd_filter_name: "ND_OD3"
     catg: "CALIB"
-    tech: "IFU"
+    tech: "IMAGE,LM"
     type: "DETLIN"
-    tplname: "METIS_ifu_cal_DetLin"
+    tplname: "METIS_img_lm_cal_DetLin"
     nObs: 2
   wcu:
     current_lamp: "bb"
@@ -83,222 +272,21 @@ DETLIN_IFU_RAW_DIT2_ON:
     is_temp: 300
     wcu_temp: 300
 
-DETLIN_IFU_RAW_DIT2_OFF:
-  do.catg: DETLIN_IFU_RAW
-  mode: "wcu_lms"
+DETLIN_2RG_RAW_DIT6_OFF:
+  do.catg: DETLIN_2RG_RAW
+  mode: "wcu_img_lm"
   source:
     name: empty_sky
     kwargs: {}
   properties:
     dit: 2.0
     ndit: 1
-    wavelen: 3.555
     filter_name: "closed"
-    nd_filter_name: "open"
+    nd_filter_name: "ND_OD3"
     catg: "CALIB"
-    tech: "IFU"
+    tech: "IMAGE,LM"
     type: "DETLIN"
-    tplname: "METIS_ifu_cal_DetLin"
-    nObs: 2
-  wcu:
-    current_lamp: "bb"
-    current_fpmask: "open"
-    bb_aperture: 0.5
-    bb_temp: 800
-    is_temp: 300
-    wcu_temp: 300
-
-DETLIN_IFU_RAW_DIT3_ON:
-  do.catg: DETLIN_IFU_RAW
-  mode: "wcu_lms"
-  source:
-    name: empty_sky
-    kwargs: {}
-  properties:
-    dit: 3.0
-    ndit: 1
-    wavelen: 3.555
-    filter_name: "open"
-    nd_filter_name: "open"
-    catg: "CALIB"
-    tech: "IFU"
-    type: "DETLIN"
-    tplname: "METIS_ifu_cal_DetLin"
-    nObs: 2
-  wcu:
-    current_lamp: "bb"
-    current_fpmask: "open"
-    bb_aperture: 0.5
-    bb_temp: 800
-    is_temp: 300
-    wcu_temp: 300
-
-DETLIN_IFU_RAW_DIT3_OFF:
-  do.catg: DETLIN_IFU_RAW
-  mode: "wcu_lms"
-  source:
-    name: empty_sky
-    kwargs: {}
-  properties:
-    dit: 3.0
-    ndit: 1
-    wavelen: 3.555
-    filter_name: "closed"
-    nd_filter_name: "open"
-    catg: "CALIB"
-    tech: "IFU"
-    type: "DETLIN"
-    tplname: "METIS_ifu_cal_DetLin"
-    nObs: 2
-  wcu:
-    current_lamp: "bb"
-    current_fpmask: "open"
-    bb_aperture: 0.5
-    bb_temp: 800
-    is_temp: 300
-    wcu_temp: 300
-
-DETLIN_IFU_RAW_DIT4_ON:
-  do.catg: DETLIN_IFU_RAW
-  mode: "wcu_lms"
-  source:
-    name: empty_sky
-    kwargs: {}
-  properties:
-    dit: 4.0
-    ndit: 1
-    wavelen: 3.555
-    filter_name: "open"
-    nd_filter_name: "open"
-    catg: "CALIB"
-    tech: "IFU"
-    type: "DETLIN"
-    tplname: "METIS_ifu_cal_DetLin"
-    nObs: 2
-  wcu:
-    current_lamp: "bb"
-    current_fpmask: "open"
-    bb_aperture: 0.5
-    bb_temp: 800
-    is_temp: 300
-    wcu_temp: 300
-
-DETLIN_IFU_RAW_DIT4_OFF:
-  do.catg: DETLIN_IFU_RAW
-  mode: "wcu_lms"
-  source:
-    name: empty_sky
-    kwargs: {}
-  properties:
-    dit: 4.0
-    ndit: 1
-    wavelen: 3.555
-    filter_name: "closed"
-    nd_filter_name: "open"
-    catg: "CALIB"
-    tech: "IFU"
-    type: "DETLIN"
-    tplname: "METIS_ifu_cal_DetLin"
-    nObs: 2
-  wcu:
-    current_lamp: "bb"
-    current_fpmask: "open"
-    bb_aperture: 0.5
-    bb_temp: 800
-    is_temp: 300
-    wcu_temp: 300
-
-DETLIN_IFU_RAW_DIT5_ON:
-  do.catg: DETLIN_IFU_RAW
-  mode: "wcu_lms"
-  source:
-    name: empty_sky
-    kwargs: {}
-  properties:
-    dit: 6.0
-    ndit: 1
-    wavelen: 3.555
-    filter_name: "open"
-    nd_filter_name: "open"
-    catg: "CALIB"
-    tech: "IFU"
-    type: "DETLIN"
-    tplname: "METIS_ifu_cal_DetLin"
-    nObs: 2
-  wcu:
-    current_lamp: "bb"
-    current_fpmask: "open"
-    bb_aperture: 0.5
-    bb_temp: 800
-    is_temp: 300
-    wcu_temp: 300
-
-DETLIN_IFU_RAW_DIT5_OFF:
-  do.catg: DETLIN_IFU_RAW
-  mode: "wcu_lms"
-  source:
-    name: empty_sky
-    kwargs: {}
-  properties:
-    dit: 6.0
-    ndit: 1
-    wavelen: 3.555
-    filter_name: "closed"
-    nd_filter_name: "open"
-    catg: "CALIB"
-    tech: "IFU"
-    type: "DETLIN"
-    tplname: "METIS_ifu_cal_DetLin"
-    nObs: 2
-  wcu:
-    current_lamp: "bb"
-    current_fpmask: "open"
-    bb_aperture: 0.5
-    bb_temp: 800
-    is_temp: 300
-    wcu_temp: 300
-
-DETLIN_IFU_RAW_DIT6_ON:
-  do.catg: DETLIN_IFU_RAW
-  mode: "wcu_lms"
-  source:
-    name: empty_sky
-    kwargs: {}
-  properties:
-    dit: 8.0
-    ndit: 1
-    wavelen: 3.555
-    filter_name: "open"
-    nd_filter_name: "open"
-    catg: "CALIB"
-    tech: "IFU"
-    type: "DETLIN"
-    tplname: "METIS_ifu_cal_DetLin"
-    nObs: 2
-  wcu:
-    current_lamp: "bb"
-    current_fpmask: "open"
-    bb_aperture: 0.5
-    bb_temp: 800
-    is_temp: 300
-    wcu_temp: 300
-
-DETLIN_IFU_RAW_DIT6_OFF:
-  do.catg: DETLIN_IFU_RAW
-  mode: "wcu_lms"
-  source:
-    name: empty_sky
-    kwargs: {}
-  properties:
-    dit: 8.0
-    ndit: 1
-    wavelen: 3.555
-    filter_name: "closed"
-    nd_filter_name: "open"
-    catg: "CALIB"
-    tech: "IFU"
-    type: "DETLIN"
-    tplname: "METIS_ifu_cal_DetLin"
+    tplname: "METIS_img_lm_cal_DetLin"
     nObs: 2
   wcu:
     current_lamp: "bb"
@@ -310,21 +298,19 @@ DETLIN_IFU_RAW_DIT6_OFF:
 
 # Master dark (>=2 frames required for the read-noise calculation).
 
-LMS_RAD_01_DARK_IFU_RAW_03:
-  do.catg: DARK_IFU_RAW
-  mode: "wcu_lms"
+DARK_2RG_RAW:
+  do.catg: DARK_2RG_RAW
+  mode: "img_lm"
   source:
     name: empty_sky
     kwargs: {}
   properties:
-    dit: 40
-    ndit: 3
-    wavelen: 3.555
+    dit: 1.0
+    ndit: 1
     filter_name: "closed"
     nd_filter_name: "open"
     catg: "CALIB"
-    tech: "IFU"
+    tech: "IMAGE,LM"
     type: "DARK"
-    tplname: "METIS_img_lms_det_dark"
-    nObs: 2
-    detector_readout_mode: "slow"
+    tplname: "METIS_img_lm_det_dark"
+    nObs: 3

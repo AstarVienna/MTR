@@ -1,14 +1,24 @@
-DETLIN_GEO_RAW1:
+# IMAGE,N (N-band imaging) example.
+#
+# Exercises the detector linearity + gain step (metis_n_img_lingain / metis_det_lingain) and the master-dark
+# step (metis_det_dark). metis_det_lingain fits a photon-transfer line with
+# np.polyfit(deg=1, cov=True), which needs >=4 distinct DIT points below the
+# linearity limit, so we provide 6 DITs, each with 2 illuminated (ON) and 2 dark
+# (OFF) DETLIN frames (nObs: 2). ON/OFF split: ON = real filter "PAH_8.6" (DRS.FILTER != open), OFF = filter "closed". Both ON and OFF are
+# DPR.TYPE=DETLIN so they classify as DETLIN_GEO_RAW and reach the lingain task.
+
+
+DETLIN_GEO_RAW_DIT1_ON:
   do.catg: DETLIN_GEO_RAW
   mode: "wcu_img_n"
   source:
     name: empty_sky
     kwargs: {}
   properties:
-    dit: 1.0
+    dit: 0.02
     ndit: 1
-    filter_name: "open"
-    nd_filter_name: "open"
+    filter_name: "PAH_8.6"
+    nd_filter_name: "ND_OD2"
     catg: "CALIB"
     tech: "IMAGE,N"
     type: "DETLIN"
@@ -22,29 +32,271 @@ DETLIN_GEO_RAW1:
     is_temp: 300
     wcu_temp: 300
 
-#DETLIN_GEO_RAW2:
-  # do.catg: DETLIN_GEO_RAW
-  # mode: "wcu_img_n"
-  # source:
-  #   name: empty_sky
-  #   kwargs: {}
-  # properties:
-  #   dit: 2.0
-  #   ndit: 1
-  #   filter_name: "open"
-  #   nd_filter_name: "open"
-  #   catg: "CALIB"
-  #   tech: "IMAGE,N"
-  #   type: "DETLIN"
-  #   tplname: "METIS_img_n_cal_DetLin"
-  #   nObs: 2
-  # wcu:
-  #   current_lamp: "bb"
-  #   current_fpmask: "open"
-  #   bb_aperture: 0.5
-  #   bb_temp: 800
-  #   is_temp: 300
-  #   wcu_temp: 300
+DETLIN_GEO_RAW_DIT1_OFF:
+  do.catg: DETLIN_GEO_RAW
+  mode: "wcu_img_n"
+  source:
+    name: empty_sky
+    kwargs: {}
+  properties:
+    dit: 0.02
+    ndit: 1
+    filter_name: "closed"
+    nd_filter_name: "ND_OD2"
+    catg: "CALIB"
+    tech: "IMAGE,N"
+    type: "DETLIN"
+    tplname: "METIS_img_n_cal_DetLin"
+    nObs: 2
+  wcu:
+    current_lamp: "bb"
+    current_fpmask: "open"
+    bb_aperture: 0.5
+    bb_temp: 800
+    is_temp: 300
+    wcu_temp: 300
+
+DETLIN_GEO_RAW_DIT2_ON:
+  do.catg: DETLIN_GEO_RAW
+  mode: "wcu_img_n"
+  source:
+    name: empty_sky
+    kwargs: {}
+  properties:
+    dit: 0.04
+    ndit: 1
+    filter_name: "PAH_8.6"
+    nd_filter_name: "ND_OD2"
+    catg: "CALIB"
+    tech: "IMAGE,N"
+    type: "DETLIN"
+    tplname: "METIS_img_n_cal_DetLin"
+    nObs: 2
+  wcu:
+    current_lamp: "bb"
+    current_fpmask: "open"
+    bb_aperture: 0.5
+    bb_temp: 800
+    is_temp: 300
+    wcu_temp: 300
+
+DETLIN_GEO_RAW_DIT2_OFF:
+  do.catg: DETLIN_GEO_RAW
+  mode: "wcu_img_n"
+  source:
+    name: empty_sky
+    kwargs: {}
+  properties:
+    dit: 0.04
+    ndit: 1
+    filter_name: "closed"
+    nd_filter_name: "ND_OD2"
+    catg: "CALIB"
+    tech: "IMAGE,N"
+    type: "DETLIN"
+    tplname: "METIS_img_n_cal_DetLin"
+    nObs: 2
+  wcu:
+    current_lamp: "bb"
+    current_fpmask: "open"
+    bb_aperture: 0.5
+    bb_temp: 800
+    is_temp: 300
+    wcu_temp: 300
+
+DETLIN_GEO_RAW_DIT3_ON:
+  do.catg: DETLIN_GEO_RAW
+  mode: "wcu_img_n"
+  source:
+    name: empty_sky
+    kwargs: {}
+  properties:
+    dit: 0.1
+    ndit: 1
+    filter_name: "PAH_8.6"
+    nd_filter_name: "ND_OD2"
+    catg: "CALIB"
+    tech: "IMAGE,N"
+    type: "DETLIN"
+    tplname: "METIS_img_n_cal_DetLin"
+    nObs: 2
+  wcu:
+    current_lamp: "bb"
+    current_fpmask: "open"
+    bb_aperture: 0.5
+    bb_temp: 800
+    is_temp: 300
+    wcu_temp: 300
+
+DETLIN_GEO_RAW_DIT3_OFF:
+  do.catg: DETLIN_GEO_RAW
+  mode: "wcu_img_n"
+  source:
+    name: empty_sky
+    kwargs: {}
+  properties:
+    dit: 0.1
+    ndit: 1
+    filter_name: "closed"
+    nd_filter_name: "ND_OD2"
+    catg: "CALIB"
+    tech: "IMAGE,N"
+    type: "DETLIN"
+    tplname: "METIS_img_n_cal_DetLin"
+    nObs: 2
+  wcu:
+    current_lamp: "bb"
+    current_fpmask: "open"
+    bb_aperture: 0.5
+    bb_temp: 800
+    is_temp: 300
+    wcu_temp: 300
+
+DETLIN_GEO_RAW_DIT4_ON:
+  do.catg: DETLIN_GEO_RAW
+  mode: "wcu_img_n"
+  source:
+    name: empty_sky
+    kwargs: {}
+  properties:
+    dit: 0.2
+    ndit: 1
+    filter_name: "PAH_8.6"
+    nd_filter_name: "ND_OD2"
+    catg: "CALIB"
+    tech: "IMAGE,N"
+    type: "DETLIN"
+    tplname: "METIS_img_n_cal_DetLin"
+    nObs: 2
+  wcu:
+    current_lamp: "bb"
+    current_fpmask: "open"
+    bb_aperture: 0.5
+    bb_temp: 800
+    is_temp: 300
+    wcu_temp: 300
+
+DETLIN_GEO_RAW_DIT4_OFF:
+  do.catg: DETLIN_GEO_RAW
+  mode: "wcu_img_n"
+  source:
+    name: empty_sky
+    kwargs: {}
+  properties:
+    dit: 0.2
+    ndit: 1
+    filter_name: "closed"
+    nd_filter_name: "ND_OD2"
+    catg: "CALIB"
+    tech: "IMAGE,N"
+    type: "DETLIN"
+    tplname: "METIS_img_n_cal_DetLin"
+    nObs: 2
+  wcu:
+    current_lamp: "bb"
+    current_fpmask: "open"
+    bb_aperture: 0.5
+    bb_temp: 800
+    is_temp: 300
+    wcu_temp: 300
+
+DETLIN_GEO_RAW_DIT5_ON:
+  do.catg: DETLIN_GEO_RAW
+  mode: "wcu_img_n"
+  source:
+    name: empty_sky
+    kwargs: {}
+  properties:
+    dit: 0.5
+    ndit: 1
+    filter_name: "PAH_8.6"
+    nd_filter_name: "ND_OD2"
+    catg: "CALIB"
+    tech: "IMAGE,N"
+    type: "DETLIN"
+    tplname: "METIS_img_n_cal_DetLin"
+    nObs: 2
+  wcu:
+    current_lamp: "bb"
+    current_fpmask: "open"
+    bb_aperture: 0.5
+    bb_temp: 800
+    is_temp: 300
+    wcu_temp: 300
+
+DETLIN_GEO_RAW_DIT5_OFF:
+  do.catg: DETLIN_GEO_RAW
+  mode: "wcu_img_n"
+  source:
+    name: empty_sky
+    kwargs: {}
+  properties:
+    dit: 0.5
+    ndit: 1
+    filter_name: "closed"
+    nd_filter_name: "ND_OD2"
+    catg: "CALIB"
+    tech: "IMAGE,N"
+    type: "DETLIN"
+    tplname: "METIS_img_n_cal_DetLin"
+    nObs: 2
+  wcu:
+    current_lamp: "bb"
+    current_fpmask: "open"
+    bb_aperture: 0.5
+    bb_temp: 800
+    is_temp: 300
+    wcu_temp: 300
+
+DETLIN_GEO_RAW_DIT6_ON:
+  do.catg: DETLIN_GEO_RAW
+  mode: "wcu_img_n"
+  source:
+    name: empty_sky
+    kwargs: {}
+  properties:
+    dit: 1.0
+    ndit: 1
+    filter_name: "PAH_8.6"
+    nd_filter_name: "ND_OD2"
+    catg: "CALIB"
+    tech: "IMAGE,N"
+    type: "DETLIN"
+    tplname: "METIS_img_n_cal_DetLin"
+    nObs: 2
+  wcu:
+    current_lamp: "bb"
+    current_fpmask: "open"
+    bb_aperture: 0.5
+    bb_temp: 800
+    is_temp: 300
+    wcu_temp: 300
+
+DETLIN_GEO_RAW_DIT6_OFF:
+  do.catg: DETLIN_GEO_RAW
+  mode: "wcu_img_n"
+  source:
+    name: empty_sky
+    kwargs: {}
+  properties:
+    dit: 1.0
+    ndit: 1
+    filter_name: "closed"
+    nd_filter_name: "ND_OD2"
+    catg: "CALIB"
+    tech: "IMAGE,N"
+    type: "DETLIN"
+    tplname: "METIS_img_n_cal_DetLin"
+    nObs: 2
+  wcu:
+    current_lamp: "bb"
+    current_fpmask: "open"
+    bb_aperture: 0.5
+    bb_temp: 800
+    is_temp: 300
+    wcu_temp: 300
+
+# Master dark (>=2 frames required for the read-noise calculation).
 
 DARK_GEO_RAW:
   do.catg: DARK_GEO_RAW

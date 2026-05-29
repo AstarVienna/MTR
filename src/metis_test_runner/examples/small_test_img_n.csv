@@ -1,0 +1,17 @@
+test_ID,step_number,templateName,DPR.TECH,DPR.TYPE,DPR.CATG,DET2.DIT,DET2.NDIT,SEQ.NEXPO2,INS.OPTI13.NAME,INS.OPTI14.NAME,INS.OPTI17.NAME
+component,component,component,component,component,component,component,component,component,component,component,component
+description,description,description,description,description,description,description,description,description,description,description,description
+type,type,type,type,type,type,type,type,type,type,type,type
+N_IMG_DARK,1,METIS_img_n_cal_Dark,IMAGE_N,DARK,CALIB,0.25,1,3,OPEN,DARK,IN
+LINGAIN,1,METIS_img_n_cal_DetLin,IMAGE_N,DETLIN,CALIB,0.02,1,2,PAH8.6,ND2,IN
+LINGAIN,2,METIS_img_n_cal_DetLin,IMAGE_N,DETLIN,CALIB,0.04,1,2,PAH8.6,ND2,IN
+LINGAIN,3,METIS_img_n_cal_DetLin,IMAGE_N,DETLIN,CALIB,0.1,1,2,PAH8.6,ND2,IN
+LINGAIN,4,METIS_img_n_cal_DetLin,IMAGE_N,DETLIN,CALIB,0.2,1,2,PAH8.6,ND2,IN
+LINGAIN,5,METIS_img_n_cal_DetLin,IMAGE_N,DETLIN,CALIB,0.5,1,2,PAH8.6,ND2,IN
+LINGAIN,6,METIS_img_n_cal_DetLin,IMAGE_N,DETLIN,CALIB,1.0,1,2,PAH8.6,ND2,IN
+LINGAIN,7,METIS_img_n_cal_DetLin,IMAGE_N,DETLIN,CALIB,0.02,1,2,DARK,ND2,IN
+LINGAIN,8,METIS_img_n_cal_DetLin,IMAGE_N,DETLIN,CALIB,0.04,1,2,DARK,ND2,IN
+LINGAIN,9,METIS_img_n_cal_DetLin,IMAGE_N,DETLIN,CALIB,0.1,1,2,DARK,ND2,IN
+LINGAIN,10,METIS_img_n_cal_DetLin,IMAGE_N,DETLIN,CALIB,0.2,1,2,DARK,ND2,IN
+LINGAIN,11,METIS_img_n_cal_DetLin,IMAGE_N,DETLIN,CALIB,0.5,1,2,DARK,ND2,IN
+LINGAIN,12,METIS_img_n_cal_DetLin,IMAGE_N,DETLIN,CALIB,1.0,1,2,DARK,ND2,IN
