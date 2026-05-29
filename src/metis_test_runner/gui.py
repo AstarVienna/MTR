@@ -1637,12 +1637,14 @@ class RunTab(QWidget):
         self.cores_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.PlusMinus)
         opts_lay.addWidget(_labeled("CPU cores  (--cores):", self.cores_spin))
 
-        # Workflow override (only required for CSV-only runs with pipeline)
+        # Workflow override. The workflow is auto-detected for every input type
+        # (YAML pre-sim, CSV from the simulated FITS), so this control is
+        # optional and currently kept hidden (see _update_workflow_visibility).
         from . import run_metis as _run_metis
         self._workflow_label = QLabel("Workflow  (--workflow):")
         self._workflow_label.setFixedWidth(LABEL_W)
         self.workflow_combo = QComboBox()
-        self.workflow_combo.addItem("(auto from YAML)")
+        self.workflow_combo.addItem("(auto-detect)")
         self.workflow_combo.addItems(_run_metis.known_workflows())
         self.workflow_row = QWidget()
         _wf_h = QHBoxLayout(self.workflow_row)
@@ -1867,28 +1869,26 @@ class RunTab(QWidget):
         return n_csv > 0 and n_yaml == 0
 
     def _update_workflow_visibility(self) -> None:
-        """Show the workflow combobox only when it can usefully take effect.
+        """Keep the workflow combobox hidden — the workflow is auto-detected.
 
-        - Hidden in pipeline-only mode (no inputs read here).
-        - Hidden in sim-only mode (workflow value unused).
-        - Hidden when any YAML file is present (infer_workflow handles it).
-        - Visible (and marked required) when all inputs are CSV in 'both' mode.
+        The EDPS workflow is now inferred for every input type: YAML is
+        classified before simulation, and CSV is inferred from the simulated
+        FITS headers in run_metis (EDPS runs the umbrella workflow regardless).
+        The row is therefore always hidden.  To bring it back as an optional
+        override for CSV-only runs, restore: ``visible = self._csv_only_run()``.
         """
-        visible = self._csv_only_run()
+        visible = False
         self.workflow_row.setVisible(visible)
         self._refresh_workflow_required_style()
 
     def _refresh_workflow_required_style(self) -> None:
-        """Tint the combo + label when CSV-only and user hasn't picked yet."""
-        required = self._csv_only_run() and self.workflow_combo.currentIndex() == 0
-        if required:
-            self._workflow_label.setText("Workflow  (--workflow)  (required):")
-            self.workflow_combo.setStyleSheet(
-                "QComboBox { border: 1px solid #d9534f; }"
-            )
-        else:
-            self._workflow_label.setText("Workflow  (--workflow):")
-            self.workflow_combo.setStyleSheet("")
+        """Keep the workflow control plain — a selection is never required.
+
+        Retained (and still called) so the optional-override styling stays
+        clean if the row is re-exposed (see _update_workflow_visibility).
+        """
+        self._workflow_label.setText("Workflow  (--workflow):")
+        self.workflow_combo.setStyleSheet("")
 
     def _add_pipeline_input(self) -> None:
         d = QFileDialog.getExistingDirectory(
@@ -1953,14 +1953,6 @@ class RunTab(QWidget):
             QMessageBox.warning(
                 self, "No input files",
                 "Add at least one input file (YAML or CSV)."
-            )
-            return
-        # CSV-only + pipeline-will-run: user must pick a workflow explicitly.
-        if self._csv_only_run() and self.workflow_combo.currentIndex() == 0:
-            QMessageBox.warning(
-                self, "Workflow required",
-                "All inputs are CSV — select a workflow from the dropdown, "
-                "or switch to 'Simulate only' to skip the pipeline."
             )
             return
 

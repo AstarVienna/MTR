@@ -200,9 +200,6 @@ class TestBuildCmdArgs:
 
     def test_inputs_are_last(self, qapp):
         tab = self._tab_with_inputs(qapp, "obs.csv")
-        # CSV-only + 'both' mode → also pick a workflow so the run wouldn't
-        # block; here we just check arg ordering. Pick index 1 (first real wf).
-        tab.workflow_combo.setCurrentIndex(1)
         args = tab._build_cmd_args()
         assert args[-1] == "obs.csv"
 
@@ -332,11 +329,14 @@ class TestBuildCmdArgs:
         tab._update_workflow_visibility()
         assert tab.workflow_row.isHidden()
 
-    def test_workflow_combo_visible_for_csv_only_in_both_mode(self, qapp):
+    def test_workflow_combo_hidden_for_csv_only_in_both_mode(self, qapp):
+        # The workflow is now auto-detected from the simulated FITS for CSV too,
+        # so the row is hidden (like YAML). It can be re-exposed as an optional
+        # override via _update_workflow_visibility (see that method).
         tab = self._tab_with_inputs(qapp, "obs.csv")
         tab.rb_both.setChecked(True)
         tab._update_workflow_visibility()
-        assert not tab.workflow_row.isHidden()
+        assert tab.workflow_row.isHidden()
 
     def test_workflow_combo_hidden_in_sim_only_mode(self, qapp):
         tab = self._tab_with_inputs(qapp, "obs.csv")
@@ -349,9 +349,13 @@ class TestBuildCmdArgs:
         tab._update_workflow_visibility()
         assert tab.workflow_row.isHidden()
 
-    def test_workflow_arg_emitted_when_combo_set(self, qapp):
+    def test_workflow_arg_emitted_when_row_shown_and_combo_set(self, qapp):
+        # The dropdown is hidden by default (workflow auto-detected), but the
+        # override logic is retained: if the row is re-exposed and a real
+        # workflow is picked, --workflow is still emitted.
         tab = self._tab_with_inputs(qapp, "obs.csv")
         tab.workflow_combo.setCurrentIndex(1)  # first real workflow
+        tab.workflow_row.setVisible(True)
         args = tab._build_cmd_args()
         assert "--workflow" in args
         chosen = tab.workflow_combo.currentText()

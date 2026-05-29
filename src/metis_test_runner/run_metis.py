@@ -26,9 +26,10 @@ Four execution modes are supported via --runner (or METIS_RUNNER env var):
       The output directory must be bind-mounted into the container.
 
 The workflow (lm_img / n_img / ifu / lm_lss / n_lss / …) is inferred
-automatically from the DPR.TECH / mode values in YAML blocks. CSV inputs
-cannot be auto-classified — when *every* input is CSV and the pipeline will
-run, pass --workflow NAME explicitly (or run with --no-pipeline).
+automatically from the DPR.TECH / mode values in YAML blocks. CSV content is
+not parsed on the MTR side, so for CSV-only runs the workflow is auto-detected
+from the simulated FITS headers instead (after Step 1); --workflow NAME is then
+an optional override.
 The pipeline target task is inferred from the data types present in the YAML
 (or from FITS headers when --no-sim or all inputs are CSV): it targets the
 deepest task in the workflow chain whose main-input classification tag is
@@ -878,9 +879,9 @@ def parse_args(argv=None):
         "--workflow", metavar="NAME", default=None,
         choices=known_workflows(),
         help="Force EDPS workflow name (e.g. metis.metis_lm_img_wkf). "
-             "Required when all inputs are CSV and the pipeline will run, "
-             "because workflow auto-detection is YAML-only. Overrides "
-             "auto-detection when YAML is also present.",
+             "Optional: the workflow is auto-detected from YAML content, or "
+             "from the simulated FITS headers for CSV-only runs. Pass this to "
+             "override the auto-detection.",
     )
     p.add_argument(
         "-o", "--output", metavar="DIR",
@@ -1073,20 +1074,20 @@ def main():
             # skip inference so a CSV-only set never trips on it here.
             print("  Workflow      : (not needed in --no-pipeline mode)")
         elif csv_only:
-            # CSV inputs cannot be auto-classified into a sub-workflow on the
-            # MTR side; require --workflow and treat it as the single active
-            # sub-workflow for the umbrella run.
-            if not args.workflow:
-                sys.exit(
-                    "Error: all inputs are CSV but the pipeline will run.\n"
-                    "  Sub-workflow cannot be auto-detected from CSV — pass "
-                    "--workflow NAME, or add --no-pipeline.\n"
-                    f"  Available workflows: {', '.join(known_workflows())}"
-                )
-            yaml_sub_workflows = {args.workflow}
-            print(f"  Workflow      : {workflow}")
-            print(f"  Sub-workflows : {sorted(yaml_sub_workflows)}  "
-                  "(explicit; CSV-only run)")
+            # CSV content is not parsed on the MTR side. --workflow is optional:
+            # if given, use it as an explicit override; otherwise the active
+            # sub-workflow(s) and data tags are inferred from the simulated FITS
+            # headers after Step 1 (see the pipeline step below). EDPS always
+            # runs the umbrella workflow, so a single sub-workflow is never
+            # needed up front.
+            if args.workflow:
+                yaml_sub_workflows = {args.workflow}
+                print(f"  Workflow      : {workflow}")
+                print(f"  Sub-workflows : {sorted(yaml_sub_workflows)}  "
+                      "(explicit override; CSV-only run)")
+            else:
+                print("  Workflow      : (auto-detected from simulated FITS; "
+                      "CSV-only run)")
             print("  Data tags     : (will be inferred from FITS headers)")
         else:
             yaml_tags, has_science, yaml_sub_workflows = scan_yaml_inputs(yaml_subset)
@@ -1293,22 +1294,35 @@ def main():
         else:
             data_tags = yaml_tags
             active_sub_workflows = yaml_sub_workflows
-            # CSV inputs carry no MTR-side tags (their content is not parsed),
-            # so data_tags is empty here.  Without tags, no EDPS -t target is
-            # inferred and EDPS falls back to the workflow's science products,
-            # which a calibration-only run cannot satisfy -> 0 jobs created.
-            # Recover the tags from the FITS we just simulated, mirroring the
-            # --no-sim path, so the correct calibration target gets scheduled.
-            if not data_tags:
-                fits_tags, _ = scan_fits_inputs(sim_out)
-                data_tags = fits_tags
-                if fits_tags:
-                    print(f"  Data tags     : {sorted(fits_tags)}  "
+            # CSV inputs carry no MTR-side tags or sub-workflow (their content
+            # is not parsed), so these are empty for a CSV-only run.  Without
+            # them no EDPS -t target is inferred and EDPS falls back to the
+            # workflow's science products, which a calibration-only run cannot
+            # satisfy -> 0 jobs created.  Recover both from the FITS we just
+            # simulated, mirroring the --no-sim path, so the correct calibration
+            # target gets scheduled even when --workflow was omitted.
+            if not data_tags or not active_sub_workflows:
+                fits_tags, fits_wfs = scan_fits_inputs(sim_out)
+                if not data_tags:
+                    data_tags = fits_tags
+                if not active_sub_workflows:
+                    active_sub_workflows = fits_wfs
+                if data_tags:
+                    print(f"  Data tags     : {sorted(data_tags)}  "
+                          "(inferred from simulated FITS)")
+                if active_sub_workflows:
+                    print(f"  Sub-workflows : {sorted(active_sub_workflows)}  "
                           "(inferred from simulated FITS)")
                 has_science = any(
                     meta == "science" and tag in data_tags
                     for wf in active_sub_workflows
                     for _, tag, meta in WORKFLOW_TASK_CHAIN.get(wf, [])
+                )
+            if not active_sub_workflows:
+                sys.exit(
+                    "Error: could not identify any METIS sub-workflow from the "
+                    "simulated FITS headers.\n"
+                    "  Pass --workflow NAME to set it explicitly."
                 )
 
         target_flags = infer_edps_targets_for_workflows(

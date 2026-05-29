@@ -187,7 +187,7 @@ ScopeSim instrument packages (Armazones, ELT, METIS) will be downloaded into `./
 Two input formats are supported and may be mixed in a single run:
 
 - **YAML observation blocks** (`*.yaml`, `*.yml`) — the primary, human-authored format. Workflow auto-detection works on YAML content.
-- **AIT-format CSV test sequences** (`*.csv`) — the AIT performance-test sheet exported as CSV. Parsed by `metis_simulations.csvParser` at simulation time. Because MTR does **not** inspect CSV content itself, CSV-only runs that execute the pipeline require an explicit workflow choice (the GUI's *Workflow* dropdown, or `--workflow NAME` on the CLI).
+- **AIT-format CSV test sequences** (`*.csv`) — the AIT performance-test sheet exported as CSV. Parsed by `metis_simulations.csvParser` at simulation time. MTR does **not** inspect CSV content itself, so for CSV-only runs the workflow is auto-detected from the **simulated FITS headers** (after the simulation step); `--workflow NAME` (or the GUI dropdown, hidden by default) is an optional override.
 
 See [`examples/small_test_img_lm.csv`](examples/small_test_img_lm.csv) (IMAGE,LM) and [`examples/small_test_img_n.csv`](examples/small_test_img_n.csv) (IMAGE,N) for minimal CSVs; the rest of this section covers YAML.
 
@@ -269,7 +269,7 @@ YAML and CSV inputs may be mixed in any combination.
 | `--runner {default,native,docker,podman}` | `default` | Execution mode (see below; env: `METIS_RUNNER`) |
 | `--container NAME` | — | Container name/ID for `docker` / `podman` runners (env: `METIS_CONTAINER`) |
 | `--calib [N]` | `1` | Auto-generate N calibration frames (dark/flat) per unique config, inferred from input content. Pass `--calib 0` to disable. |
-| `--workflow NAME` | auto-detect | Force EDPS workflow name (e.g. `metis.metis_lm_img_wkf`). Required when all inputs are `.csv` and the pipeline will run, because workflow auto-detection is YAML-only. Overrides auto-detection when YAML is also present. |
+| `--workflow NAME` | auto-detect | Force EDPS workflow name (e.g. `metis.metis_lm_img_wkf`). Optional: the workflow is auto-detected from YAML content, or from the simulated FITS headers for CSV-only runs. Pass this to override. |
 | `--cores N` | `4` | CPU cores used for parallel simulations |
 | `--no-sim` | off | Skip simulation; run pipeline on existing FITS data (source defaults to `<output>/sim/` — override with `--pipeline-input`) |
 | `--pipeline-input DIR` | `<output>/sim/` | Directory containing FITS files to feed the pipeline (only with `--no-sim`; env: `METIS_PIPELINE_INPUT`) |
@@ -322,8 +322,9 @@ mtr-cli --no-sim --pipeline-input /data/sim_fits -o /tmp/myrun
 # CSV-only input, simulate only (workflow auto-detection not needed)
 mtr-cli --no-pipeline examples/small_test_img_lm.csv
 
-# CSV-only input, full simulate + pipeline run (workflow must be explicit)
-mtr-cli --workflow metis.metis_lm_img_wkf examples/small_test_img_lm.csv
+# CSV-only input, full simulate + pipeline run (workflow auto-detected from the
+# simulated FITS; pass --workflow only to override)
+mtr-cli examples/small_test_img_lm.csv
 
 # Mixed YAML + CSV in a single run
 mtr-cli examples/small_test.yaml examples/small_test_img_lm.csv
