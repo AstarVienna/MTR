@@ -585,9 +585,27 @@ def infer_edps_targets_for_workflows(data_tags, has_science, sub_workflows):
 # Simulation driver script builder
 # ---------------------------------------------------------------------------
 
+def _resolve_inst_pkgs_path(args, runner):
+    """Resolve the ScopeSim instrument-packages path for *runner*.
+
+    metis_simulations builds METIS OpticalTrains at import time, so this path
+    must point at the real packages even for the CSV→YAML dry run (the import
+    happens before any simulate() call). Returns None for docker/podman without
+    an explicit --inst-pkgs (ScopeSim resolves ./inst_pkgs inside the container).
+    """
+    if args.inst_pkgs:
+        return args.inst_pkgs if runner in ("docker", "podman") \
+            else str(Path(args.inst_pkgs).resolve())
+    if runner == "default":
+        return str(paths.inst_pkgs_dir())
+    if runner == "native":
+        return str(Path.cwd() / "inst_pkgs")
+    return None
+
+
 def _build_sim_script(out_dir, do_calib, do_static, n_cores, input_list,
                       inst_pkgs_path=None, sims_root=None,
-                      static_calibs_dir=None, do_sim=True):
+                      static_calibs_dir=None, do_sim=True, write_yaml=False):
     """Return the simulation driver script as a string.
 
     When *inst_pkgs_path* is given (default and native runners) the script
@@ -702,7 +720,10 @@ def _build_sim_script(out_dir, do_calib, do_static, n_cores, input_list,
             "        startMJD  = None,",
             "        calibFile = None,",
             f"        nCores    = {n_cores!r},",
-            "        testRun   = False,",
+            # testRun + writeYaml together = translate CSV -> YAML and skip
+            # simulation entirely (METIS_Simulations PR #202).
+            f"        testRun   = {write_yaml!r},",
+            f"        writeYaml = {write_yaml!r},",
             "    )",
             "    try:",
             f"        rsb.runSimulationBlock({input_list!r}, params, [])",
@@ -927,6 +948,12 @@ def parse_args(argv=None):
         help="Run simulations only; skip EDPS pipeline",
     )
     p.add_argument(
+        "--csv-to-yaml", action="store_true",
+        help="Dry run: translate CSV input(s) to YAML via METIS_Simulations "
+             "(testRun+writeYaml). Writes <name>.yaml next to each CSV and skips "
+             "simulation and the EDPS pipeline. Only CSV inputs are affected.",
+    )
+    p.add_argument(
         "--runner",
         choices=["default", "native", "docker", "podman"],
         default=os.environ.get("METIS_RUNNER", "default"),
@@ -1149,22 +1176,38 @@ def main():
     print()
 
     # -----------------------------------------------------------------------
+    # Dry run: translate CSV input(s) to YAML and stop (no simulation/pipeline).
+    # -----------------------------------------------------------------------
+    if args.csv_to_yaml:
+        if not any(p.suffix.lower() == ".csv" for p in input_files):
+            print("  Note: --csv-to-yaml only affects CSV inputs; "
+                  "no .csv given, nothing to translate.")
+        # metis_simulations imports (and builds METIS OpticalTrains) before the
+        # translation runs, so it still needs the real instrument-packages path
+        # — only the per-frame simulate() calls are skipped (testRun+writeYaml).
+        sim_code = _build_sim_script(
+            out_dir            = str(sim_out),
+            do_calib           = 0,
+            do_static          = 0,
+            n_cores            = args.cores,
+            input_list         = [str(p) for p in input_files],
+            inst_pkgs_path     = _resolve_inst_pkgs_path(args, runner),
+            sims_root          = sims_root,
+            static_calibs_dir  = str(static_calibs_dir),
+            write_yaml         = True,
+        )
+        print("=== Translating CSV input(s) to YAML (no simulation) ===")
+        rc = _run_simulation(runner, args.container, sim_code, sims_cwd)
+        if rc != 0:
+            sys.exit(f"Error: CSV→YAML translation failed (exit code {rc}).")
+        print("\nDone. A .yaml file was written next to each CSV input.")
+        return
+
+    # -----------------------------------------------------------------------
     # Step 1: Simulations
     # -----------------------------------------------------------------------
     if not args.no_sim:
-        if args.inst_pkgs:
-            # Explicit override: use as-is for docker/podman (container path),
-            # resolve to absolute for default/native.
-            inst_pkgs_path = args.inst_pkgs if runner in ("docker", "podman") \
-                             else str(Path(args.inst_pkgs).resolve())
-        elif runner == "default":
-            inst_pkgs_path = str(paths.inst_pkgs_dir())
-        elif runner == "native":
-            inst_pkgs_path = str(Path.cwd() / "inst_pkgs")
-        else:
-            # docker/podman without explicit --inst-pkgs: ScopeSim resolves
-            # ./inst_pkgs relative to sims_cwd inside the container.
-            inst_pkgs_path = None
+        inst_pkgs_path = _resolve_inst_pkgs_path(args, runner)
         sim_code = _build_sim_script(
             out_dir            = str(sim_out),
             do_calib           = args.calib,

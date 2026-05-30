@@ -139,7 +139,7 @@ The Run tab wraps `mtr-cli` in a file-picker UI. All CLI options are exposed as 
 Workflow:
 
 1. **Add input files** via the file browser — YAML observation blocks (`*.yaml`, `*.yml`) and AIT-format CSV test sequences (`*.csv`) may be added freely and mixed in a single run. A live tally (e.g. `2 YAML  ·  1 CSV`) appears below the list.
-2. **Tune options** — output directory, CPU cores, auto-calibration, runner mode, pipeline mode (simulate + run, simulate only, pipeline only), simulations directory, instrument packages directory
+2. **Tune options** — output directory, CPU cores, auto-calibration, runner mode, pipeline mode (simulate + run, simulate only, pipeline only), simulations directory, instrument packages directory, or **Translate CSV → YAML** (a dry run that converts a CSV test sheet to YAML without simulating)
 3. **Pick a workflow** (only for CSV-only runs that include the pipeline) — workflow auto-detection reads YAML content, so when the list contains only CSV files and you intend to run the pipeline, the *Workflow* dropdown appears and must be set; otherwise it stays hidden
 4. **Click Run** — the Run button becomes Stop, and pipeline output streams into the log view with ANSI colouring stripped and stderr highlighted
 5. **Inspect output** — the pane below the option form shows exactly where simulation frames and pipeline products will be written, updating live as you edit the output path
@@ -274,6 +274,7 @@ YAML and CSV inputs may be mixed in any combination.
 | `--no-sim` | off | Skip simulation; run pipeline on existing FITS data (source defaults to `<output>/sim/` — override with `--pipeline-input`) |
 | `--pipeline-input DIR` | `<output>/sim/` | Directory containing FITS files to feed the pipeline (only with `--no-sim`; env: `METIS_PIPELINE_INPUT`) |
 | `--no-pipeline` | off | Run simulation only; skip EDPS pipeline |
+| `--csv-to-yaml` | off | Dry run: translate CSV input(s) to YAML via METIS_Simulations (`testRun`+`writeYaml`) and stop — writes `<name>.yaml` next to each CSV, with no simulation and no pipeline. Only CSV inputs are affected. Note: the YAML is written next to the source CSV, so don't point it at a bundled `examples/*.csv` whose `.yaml` you want to keep. |
 | `--simulations-dir PATH` | `./METIS_Simulations` (host) or `/home/metis/METIS_Simulations` (container) | Path to ScopeSim scripts (env: `METIS_SIMULATIONS_DIR`) |
 | `--inst-pkgs PATH` | see below | Path to ScopeSim instrument packages (Armazones, ELT, METIS). Defaults to the user data dir for the `default` runner, `./inst_pkgs` for `native`, and container-resolved `./inst_pkgs` for `docker`/`podman` (env: `METIS_INST_PKGS`) |
 | `--auto-fetch-calibrations` | off | Before running the pipeline, query the remote METIS archive (via MetisWISE) for any master calibrations the input set is missing and download them into the pipeline input directory. Requires MetisWISE to be installed and `~/.awe/Environment.cfg` to hold valid credentials — see the Archive tab. |
@@ -325,6 +326,10 @@ mtr-cli --no-pipeline examples/small_test_img_lm.csv
 # CSV-only input, full simulate + pipeline run (workflow auto-detected from the
 # simulated FITS; pass --workflow only to override)
 mtr-cli examples/small_test_img_lm.csv
+
+# Dry run: translate a CSV test sheet to YAML (writes my_sheet.yaml next to it),
+# no simulation and no pipeline
+mtr-cli --csv-to-yaml /path/to/my_sheet.csv
 
 # Mixed YAML + CSV in a single run
 mtr-cli examples/small_test.yaml examples/small_test_img_lm.csv

@@ -1092,6 +1092,20 @@ class TestBuildSimScript:
         )
         assert "generateStaticCalibs" not in script
 
+    def test_script_testrun_and_writeyaml_false_by_default(self):
+        script = _build_sim_script(**self._base_kwargs)
+        assert "testRun   = False" in script
+        assert "writeYaml = False" in script
+
+    def test_script_write_yaml_sets_testrun_and_writeyaml(self):
+        # CSV->YAML dry run: both testRun and writeYaml must be True so
+        # metis_simulations translates the CSV and skips simulation.
+        import ast
+        script = _build_sim_script(**self._base_kwargs, write_yaml=True)
+        assert "testRun   = True" in script
+        assert "writeYaml = True" in script
+        ast.parse(script)  # still valid python
+
     def test_script_sys_path_uses_sims_root(self):
         script = _build_sim_script(**self._base_kwargs)
         assert "/fake/METIS_Simulations" in script
@@ -1452,3 +1466,11 @@ class TestWorkflowFlag:
     def test_unknown_workflow_rejected(self):
         with pytest.raises(SystemExit):
             parse_args(["--workflow", "not.a.real.workflow", "foo.csv"])
+
+
+class TestCsvToYamlFlag:
+    def test_default_is_false(self):
+        assert parse_args(["foo.csv"]).csv_to_yaml is False
+
+    def test_flag_sets_attribute(self):
+        assert parse_args(["--csv-to-yaml", "foo.csv"]).csv_to_yaml is True

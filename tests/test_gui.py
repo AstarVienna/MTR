@@ -664,6 +664,35 @@ class TestAutoFetchCheckbox:
         assert not tab.auto_fetch_cb.isChecked()
 
 
+class TestCsvToYamlCheckbox:
+    def test_flag_when_checked(self, qapp):
+        tab = _make_run_tab(qapp)
+        tab.input_list.addItem("seq.csv")
+        tab.csv_to_yaml_cb.setChecked(True)
+        assert "--csv-to-yaml" in tab._build_cmd_args()
+
+    def test_flag_absent_when_unchecked(self, qapp):
+        tab = _make_run_tab(qapp)
+        tab.input_list.addItem("seq.csv")
+        tab.csv_to_yaml_cb.setChecked(False)
+        assert "--csv-to-yaml" not in tab._build_cmd_args()
+
+    def test_unchecked_by_default(self, qapp):
+        tab = _make_run_tab(qapp)
+        assert not tab.csv_to_yaml_cb.isChecked()
+
+    def test_disables_mode_and_calib_options_when_checked(self, qapp):
+        tab = _make_run_tab(qapp)
+        tab.csv_to_yaml_cb.setChecked(True)
+        for w in (tab.rb_both, tab.rb_sim_only, tab.rb_pipe_only,
+                  tab.calib_cb, tab.static_cb, tab.auto_fetch_cb, tab.cores_spin):
+            assert not w.isEnabled()
+        tab.csv_to_yaml_cb.setChecked(False)
+        for w in (tab.rb_both, tab.rb_sim_only, tab.rb_pipe_only,
+                  tab.calib_cb, tab.static_cb, tab.auto_fetch_cb, tab.cores_spin):
+            assert w.isEnabled()
+
+
 # ---------------------------------------------------------------------------
 # ArchiveTab construction
 # ---------------------------------------------------------------------------

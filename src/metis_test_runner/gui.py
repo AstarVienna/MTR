@@ -1655,6 +1655,21 @@ class RunTab(QWidget):
         af_h.addStretch()
         opts_lay.addWidget(af_row)
 
+        # CSV → YAML translation (dry run): no simulation, no pipeline.
+        cty_row = QWidget()
+        cty_h = QHBoxLayout(cty_row)
+        cty_h.setContentsMargins(0, 0, 0, 0)
+        cty_lbl = QLabel("")
+        cty_lbl.setFixedWidth(LABEL_W)
+        cty_h.addWidget(cty_lbl)
+        self.csv_to_yaml_cb = QCheckBox(
+            "Translate CSV → YAML, no simulation  (--csv-to-yaml)"
+        )
+        self.csv_to_yaml_cb.toggled.connect(self._update_csv_to_yaml_state)
+        cty_h.addWidget(self.csv_to_yaml_cb)
+        cty_h.addStretch()
+        opts_lay.addWidget(cty_row)
+
         # Cores
         self.cores_spin = QSpinBox()
         self.cores_spin.setRange(1, os.cpu_count() or 16)
@@ -1838,6 +1853,15 @@ class RunTab(QWidget):
         self._update_output_info()
         self._update_workflow_visibility()
 
+    def _update_csv_to_yaml_state(self) -> None:
+        """CSV→YAML is a translate-only dry run, so the simulation/pipeline
+        options don't apply — disable them while it's ticked."""
+        on = self.csv_to_yaml_cb.isChecked()
+        for w in (self.rb_both, self.rb_sim_only, self.rb_pipe_only,
+                  self.calib_cb, self.static_cb, self.auto_fetch_cb,
+                  self.cores_spin):
+            w.setEnabled(not on)
+
     # ── Runner-dependent field visibility ────────────────────────────────────
 
     def _update_runner_fields(self) -> None:
@@ -1960,6 +1984,10 @@ class RunTab(QWidget):
             args += ["--inst-pkgs", self.inst_edit.text().strip()]
         if self.auto_fetch_cb.isChecked():
             args.append("--auto-fetch-calibrations")
+        # Dry-run translate; run_metis handles this early and ignores the
+        # sim/pipeline flags above (those controls are disabled in the GUI).
+        if self.csv_to_yaml_cb.isChecked():
+            args.append("--csv-to-yaml")
 
         # --workflow flag: emit whenever the row is shown (i.e. not explicitly
         # hidden) and the user picked a real workflow. Index 0 is the
@@ -2089,6 +2117,8 @@ class RunTab(QWidget):
         self.sim_dir_edit.setText(s.value("sim_dir", ""))
         self.inst_edit.setText(s.value("inst_pkgs", ""))
         self.auto_fetch_cb.setChecked(s.value("auto_fetch", False, type=bool))
+        self.csv_to_yaml_cb.setChecked(s.value("csv_to_yaml", False, type=bool))
+        self._update_csv_to_yaml_state()
         for f in (s.value("pipeline_input_dirs") or []):
             self.pipeline_input_list.addItem(f)
         # Backward-compat: prefer the new "input_files" key, fall back to the
@@ -2122,6 +2152,7 @@ class RunTab(QWidget):
         s.setValue("sim_dir", self.sim_dir_edit.text())
         s.setValue("inst_pkgs", self.inst_edit.text())
         s.setValue("auto_fetch", self.auto_fetch_cb.isChecked())
+        s.setValue("csv_to_yaml", self.csv_to_yaml_cb.isChecked())
         s.setValue("pipeline_input_dirs", [
             self.pipeline_input_list.item(i).text()
             for i in range(self.pipeline_input_list.count())
