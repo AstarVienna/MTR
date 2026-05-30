@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.0
+
+### Added
+- DETLIN ON/OFF examples (IFU/LM/N, YAML + CSV) so the det-lin/gain + dark steps complete.
+- `--csv-to-yaml` dry-run (CLI flag + GUI checkbox): translate a CSV test sheet to YAML, no simulation/pipeline.
+
+### Changed
+- `--workflow` is now optional for CSV-only runs (auto-detected from the simulated FITS).
+- EDPS products are hardlinked into the per-run output dir instead of copied (no disk duplication).
+- GUI log renders carriage-return progress (download bars, FOV steps) in place.
+
+### Fixed
+- CSV-only combined runs no longer create 0 EDPS jobs (target inferred from simulated FITS).
+
 ## 0.3.0
 
 ### Removed
