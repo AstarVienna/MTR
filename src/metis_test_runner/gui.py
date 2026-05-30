@@ -628,7 +628,7 @@ class InstallWorker(QThread):
             # store ~/EDPS_data, once under the run's output folder). Requires
             # both to be on the same filesystem (true by default — both under
             # $HOME); use "symlink" instead if the output dir is on another mount.
-            "packager_mode": (r"^mode=.*", "mode=link"),
+            "mode": (r"^mode=.*", "mode=link"),
             # Wipe EDPS bookkeeping on every server startup. Without this, a
             # stale db.json entry whose on-disk outputs have been removed will
             # collide with a fresh submission's deterministic job UUID and make

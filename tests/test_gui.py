@@ -402,6 +402,7 @@ class TestPatchEdpsConfig:
         "port=5000\nworkflow_dir=/old\nesorex_path=esorex\n"
         "association_preference=raw_per_quality_level\n"
         "categories=\npattern=$DATASET/$TIMESTAMP/$object$_$pro.catg$.$EXT\n"
+        "mode=copy\n"
         "truncate=False\n"
     )
 
@@ -442,7 +443,7 @@ class TestPatchEdpsConfig:
             "workflow_dir=/old\nesorex_path=esorex\n"
             "association_preference=raw_per_quality_level\n"
             "categories=\npattern=$DATASET/$TIMESTAMP/$object$_$pro.catg$.$EXT\n"
-            "truncate=False\n",
+            "mode=copy\ntruncate=False\n",
         )
         self._make_worker(qapp)._patch_edps_config()
         assert "some.other.key=value" in props.read_text()
@@ -479,6 +480,26 @@ class TestPatchEdpsConfig:
         props = self._seed(tmp_path, self.FULL_PROPS)
         self._make_worker(qapp)._patch_edps_config()
         assert "$TASK/" in props.read_text()
+
+    def test_patches_mode_to_link(self, qapp, tmp_path, monkeypatch):
+        # Products are hardlinked into the per-run output dir, not copied, so
+        # they don't consume disk twice (working store + output folder).
+        monkeypatch.setenv("HOME", str(tmp_path))
+        props = self._seed(tmp_path, self.FULL_PROPS)
+        self._make_worker(qapp)._patch_edps_config()
+        content = props.read_text()
+        assert "mode=link" in content
+        assert "mode=copy" not in content
+
+    def test_raises_when_mode_key_absent(self, qapp, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        self._seed(
+            tmp_path,
+            "port=5000\nworkflow_dir=/old\nesorex_path=esorex\n"
+            "association_preference=raw\ncategories=\npattern=x\ntruncate=False\n",
+        )
+        with pytest.raises(RuntimeError, match="mode"):
+            self._make_worker(qapp)._patch_edps_config()
 
     def test_raises_when_port_key_absent(self, qapp, tmp_path, monkeypatch):
         # If EDPS drifts its config format, we want a loud error that names
@@ -518,7 +539,7 @@ class TestPatchEdpsConfig:
         self._seed(
             tmp_path,
             "port=5000\nworkflow_dir=/old\nesorex_path=esorex\n"
-            "association_preference=raw\ncategories=\npattern=x\n",
+            "association_preference=raw\ncategories=\npattern=x\nmode=copy\n",
         )
         with pytest.raises(RuntimeError, match="truncate"):
             self._make_worker(qapp)._patch_edps_config()
