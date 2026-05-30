@@ -394,7 +394,14 @@ def apply_theme(app: QApplication, name: str) -> None:
 # ---------------------------------------------------------------------------
 
 def log_append(widget: QTextEdit, text: str, color: str | None = None) -> None:
-    """Append text to a read-only QTextEdit, optionally in colour."""
+    """Append text to a read-only QTextEdit, optionally in colour.
+
+    Carriage returns are interpreted like a terminal: a lone ``\\r`` returns to
+    the start of the current line so the following text overwrites it. This lets
+    tqdm-style progress bars (package downloads, ScopeSim FOV/trace steps) update
+    one line in place instead of scrolling the log. Text without ``\\r`` behaves
+    exactly as a plain append.
+    """
     cursor = widget.textCursor()
     cursor.movePosition(QTextCursor.MoveOperation.End)
     fmt = QTextCharFormat()
@@ -402,7 +409,19 @@ def log_append(widget: QTextEdit, text: str, color: str | None = None) -> None:
         resolved = LOG_COLORS.get(f"log_{color}", color)
         fmt.setForeground(QColor(resolved))
     cursor.setCharFormat(fmt)
-    cursor.insertText(text)
+    # Split on line separators (kept) so a bare CR can overwrite the current
+    # line rather than being inserted literally. Pass `fmt` to every insert:
+    # removeSelectedText() resets the cursor's char format, so relying on
+    # setCharFormat above would drop the colour on overwritten (CR) lines.
+    for token in re.split(r"(\r\n|\r|\n)", text):
+        if token in ("\n", "\r\n"):
+            cursor.insertText("\n", fmt)
+        elif token == "\r":
+            cursor.movePosition(QTextCursor.MoveOperation.StartOfLine,
+                                QTextCursor.MoveMode.KeepAnchor)
+            cursor.removeSelectedText()
+        elif token:
+            cursor.insertText(token, fmt)
     widget.setTextCursor(cursor)
     widget.ensureCursorVisible()
 
@@ -604,6 +623,12 @@ class InstallWorker(QThread):
                 r"^pattern=.*",
                 "pattern=$TASK/$TIMESTAMP/$object$_$pro.catg$.$EXT",
             ),
+            # Hardlink products into the per-run output dir instead of copying
+            # them, so they don't consume disk twice (once in the EDPS working
+            # store ~/EDPS_data, once under the run's output folder). Requires
+            # both to be on the same filesystem (true by default — both under
+            # $HOME); use "symlink" instead if the output dir is on another mount.
+            "packager_mode": (r"^mode=.*", "mode=link"),
             # Wipe EDPS bookkeeping on every server startup. Without this, a
             # stale db.json entry whose on-disk outputs have been removed will
             # collide with a fresh submission's deterministic job UUID and make
