@@ -29,11 +29,10 @@ _DB_MOCKS = {
     "common.database.Database": MagicMock(),
 }
 
-# Mocks for the modules imported by _ensure_metiswise_imports().
+# Mocks for the modules imported by _ensure_metiswise_imports().  With
+# metiswise 0.0.4 this is just ``metiswise.main.aweimports`` (which pulls in
+# metis_drld + pymetis via real pip packages); no codes.drld_parser shim.
 _IMPORT_MOCKS = {
-    "codes": MagicMock(),
-    "codes.drld_parser": MagicMock(),
-    "codes.drld_parser.data_reduction_library_design": MagicMock(),
     "metiswise.main.aweimports": MagicMock(),
 }
 
@@ -59,33 +58,57 @@ class TestMetisWISEAvailable:
 
 
 class TestInstallMetisWiseCommand:
-    def test_command_structure(self):
-        cmd = archive.install_metiswise_command("user:secret")
-        # `<python> -m pip install ...` — installs into the same interpreter
-        # that hosts MTR (sys.executable).
-        assert cmd[0] == sys.executable
-        assert cmd[1:4] == ["-m", "pip", "install"]
-        assert "metiswise" in cmd
+    # install_metiswise_command returns a SEQUENCE of pip commands:
+    #   [0] runtime deps (normal resolution), [1] metiswise itself (--no-deps).
+
+    def test_returns_two_commands(self):
+        cmds = archive.install_metiswise_command("user:secret")
+        assert isinstance(cmds, list) and len(cmds) == 2
+        for cmd in cmds:
+            # `<python> -m pip install ...` — installs into the same interpreter
+            # that hosts MTR (sys.executable).
+            assert cmd[0] == sys.executable
+            assert cmd[1:4] == ["-m", "pip", "install"]
+
+    def test_deps_command_pulls_index_deps_not_pycpl(self):
+        deps_cmd, _ = archive.install_metiswise_command("u:p")
+        # commonwise + metis-drld come from the credentialed index; psycopg2 is
+        # the DB driver. pycpl is deliberately absent so it is never downgraded.
+        assert "commonwise" in deps_cmd
+        assert "metis-drld" in deps_cmd
+        assert "psycopg2-binary" in deps_cmd
+        assert not any(a.startswith("pycpl") for a in deps_cmd)
+        # The deps step must NOT carry --no-deps (it needs full resolution).
+        assert "--no-deps" not in deps_cmd
+
+    def test_metiswise_command_is_no_deps_v0_0_4_tarball(self):
+        _, mw_cmd = archive.install_metiswise_command("u:p")
+        # --no-deps keeps eso-pymetis's pycpl==post4 pin out of the resolver.
+        assert "--no-deps" in mw_cmd
+        reqs = [a for a in mw_cmd if a.startswith("metiswise @ ")]
+        assert len(reqs) == 1
+        assert "github.com/AstarVienna/MetisWISE" in reqs[0]
+        assert "v0.0.4" in reqs[0]
 
     def test_credentials_in_url(self):
-        cmd = archive.install_metiswise_command("alice:p4ss")
-        urls = [arg for arg in cmd if "entropynaut" in arg]
-        assert len(urls) == 1
-        assert "alice:p4ss@pip.entropynaut.com" in urls[0]
+        for cmd in archive.install_metiswise_command("alice:p4ss"):
+            urls = [arg for arg in cmd if "entropynaut" in arg]
+            assert len(urls) == 1
+            assert "alice:p4ss@pip.entropynaut.com" in urls[0]
 
     def test_extra_index_urls(self):
-        cmd = archive.install_metiswise_command("u:p")
-        idx_flags = [i for i, a in enumerate(cmd) if a == "--extra-index-url"]
-        assert len(idx_flags) == 3
-        urls = [cmd[i + 1] for i in idx_flags]
-        assert any("ftp.eso.org" in u for u in urls)
-        assert any("ivh.github.io" in u for u in urls)
-        assert any("entropynaut" in u for u in urls)
+        for cmd in archive.install_metiswise_command("u:p"):
+            idx_flags = [i for i, a in enumerate(cmd) if a == "--extra-index-url"]
+            assert len(idx_flags) == 3
+            urls = [cmd[i + 1] for i in idx_flags]
+            assert any("ftp.eso.org" in u for u in urls)
+            assert any("ivh.github.io" in u for u in urls)
+            assert any("entropynaut" in u for u in urls)
 
     def test_does_not_include_pymetis(self):
-        cmd = archive.install_metiswise_command("u:p")
-        git_args = [a for a in cmd if a.startswith("git+")]
-        assert len(git_args) == 0
+        for cmd in archive.install_metiswise_command("u:p"):
+            git_args = [a for a in cmd if a.startswith("git+")]
+            assert len(git_args) == 0
 
 
 # ---------------------------------------------------------------------------

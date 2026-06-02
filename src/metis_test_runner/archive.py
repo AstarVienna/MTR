@@ -15,7 +15,6 @@ from __future__ import annotations
 import os
 import re
 import shutil
-import subprocess
 import sys
 import threading
 from dataclasses import dataclass
@@ -47,22 +46,86 @@ def metiswise_available() -> bool:
         return False
 
 
-def install_metiswise_command(credentials: str) -> list[str]:
-    """Return the ``pip install`` command to install MetisWISE.
+# metiswise 0.0.4 is the first release that imports the ``metis_drld`` pip
+# package (instead of a git-cloned ``codes.drld_parser``).  It is not yet
+# published to the entropynaut index (which still tops out at 0.0.3) and its
+# GitHub release ships no wheel asset, so we install it from the public GitHub
+# tag source tarball.
+#
+# TODO: once metiswise 0.0.4+ lands on the entropynaut index, drop the tarball
+# URL and use a plain ``"metiswise"`` / ``"metiswise>=0.0.4"`` requirement.
+METISWISE_REQUIREMENT = (
+    "metiswise @ https://github.com/AstarVienna/MetisWISE/archive/refs/tags/v0.0.4.tar.gz"
+)
 
-    Installs into the same interpreter that hosts MTR (sys.executable
-    points at pipx's isolated venv or whatever venv the user installed
-    MTR into).  *credentials* should be ``"username:password"`` for the
-    OmegaCEN pip channel.
+# metiswise 0.0.4's runtime dependencies, MINUS ``eso-pymetis`` (provided as an
+# editable install of the cloned pymetis by the Install tab) and MINUS its
+# jupyter/sphinx/pytest/coverage/mock/build dev/notebook deps (which the
+# archive client does not need).  We install these first, with normal
+# resolution, then install metiswise itself with ``--no-deps`` — see the long
+# comment in install_metiswise_command for why.
+_METISWISE_RUNTIME_DEPS: tuple[str, ...] = (
+    "commonwise",
+    "metis-drld",
+    "psycopg2-binary",
+    "astropy",
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "pooch",
+    "docutils",
+    "httpx",
+    "httpcore",
+    "lxml",
+)
+
+
+def install_metiswise_command(credentials: str) -> list[list[str]]:
+    """Return the ``pip install`` commands to install MetisWISE 0.0.4.
+
+    Installs into the same interpreter that hosts MTR (sys.executable points at
+    pipx's isolated venv or whatever venv the user installed MTR into).
+    *credentials* should be ``"username:password"`` for the OmegaCEN pip
+    channel; the credentialed entropynaut index also serves MetisWISE's
+    ``commonwise`` and ``metis-drld`` dependencies.
+
+    Two commands, run in order:
+
+      1. Install metiswise's runtime deps (``_METISWISE_RUNTIME_DEPS``) with
+         normal resolution.  None of these depend on ``pycpl`` or
+         ``eso-pymetis``, so this neither downgrades pycpl nor pulls a second
+         pymetis copy.
+      2. Install metiswise itself with ``--no-deps``.
+
+    Why ``--no-deps`` for metiswise: metiswise 0.0.4 declares ``eso-pymetis``,
+    and the cloned eso-pymetis the Install tab installs editable pins
+    ``pycpl==1.0.3.post4``.  A normal ``pip install metiswise`` would let that
+    pin downgrade our ``pycpl==1.0.3.post10`` — which we must keep, because
+    post10 is where ivh's index ships prebuilt wheels for the macOS versions
+    our users run (post4 would force a source build that fails there).
+    ``--no-deps`` keeps pip from ever seeing eso-pymetis's pycpl pin.
+
+    TODO: once pymetis (eso-pymetis) bumps its pycpl pin to >= post10, the
+    downgrade risk is gone — collapse this back into a single
+    ``pip install <metiswise>`` with normal dependency resolution.
     """
-    return [
-        sys.executable, "-m", "pip", "install",
+    index_flags = [
         "--extra-index-url", ESO_INDEX,
         "--extra-index-url", PYCPL_INDEX,
         "--extra-index-url",
         f"https://{credentials}@pip.entropynaut.com/packages/",
-        "metiswise",
     ]
+    deps_cmd = [
+        sys.executable, "-m", "pip", "install",
+        *index_flags,
+        *_METISWISE_RUNTIME_DEPS,
+    ]
+    metiswise_cmd = [
+        sys.executable, "-m", "pip", "install", "--no-deps",
+        *index_flags,
+        METISWISE_REQUIREMENT,
+    ]
+    return [deps_cmd, metiswise_cmd]
 
 
 def _ensure_awetarget() -> None:
@@ -74,50 +137,37 @@ def _ensure_awetarget() -> None:
     os.environ.setdefault("AWETARGET", "metiswise")
 
 
-DRLD_DIR = paths.drld_dir()
-DRLD_REPO_URL = "https://github.com/AstarVienna/METIS_DRLD.git"
-
 _metiswise_imports_done = False
 
 
 def _ensure_metiswise_imports() -> None:
-    """Ensure the ``codes`` package (METIS_DRLD) is importable, then
-    import the full MetisWISE class hierarchy.
+    """Import the full MetisWISE class hierarchy.
 
-    ``metiswise.main.raw`` imports ``from metiswise.main.drld import drld``
-    at module scope, which in turn does
-    ``from codes.drld_parser.data_reduction_library_design import
-    DataReductionLibraryDesign`` and instantiates it.  ``codes`` is **not**
-    a MetisWISE pip dependency — the upstream MetisWISE Containerfile
-    clones ``METIS_DRLD`` and adds it to ``PYTHONPATH``.  We do the same:
-    clone on first call and stick it on ``sys.path``.
+    ``metiswise.main.aweimports`` pulls in ``raw``/``pro``/``drld``.  With
+    metiswise 0.0.4 those resolve against pip-installed packages:
+      - ``metiswise.main.drld`` imports ``metis_drld`` (a declared metiswise
+        dependency, installed from the entropynaut index), and
+      - ``raw``/``pro`` import ``pymetis`` (provided by the editable
+        ``eso-pymetis`` the Install tab installs from the METIS_Pipeline
+        clone).
+    So this is now a plain import — no git clone, no ``sys.path`` munging.
+
+    Pre-0.0.4 this used to git-clone METIS_DRLD and alias ``codes.drld_parser``;
+    that is no longer needed.  If metiswise's packaging changes again, this is
+    the spot to revisit.
     """
     global _metiswise_imports_done
     if _metiswise_imports_done:
         return
 
-    import importlib
-    import sys
-
-    drld_path = str(DRLD_DIR)
-    if drld_path not in sys.path:
-        sys.path.insert(0, drld_path)
-
-    # Clone METIS_DRLD on first use.  Must happen before the import so that
-    # Python's finder sees a real ``codes`` package on sys.path; a failed
-    # import populates a negative cache that persists for the process, which
-    # is why invalidate_caches() is called after the clone.
-    if not (DRLD_DIR / "codes").is_dir():
-        subprocess.run(
-            ["git", "clone", "--depth", "1", DRLD_REPO_URL, str(DRLD_DIR)],
-            check=True,
-        )
-        importlib.invalidate_caches()
-
-    from codes.drld_parser.data_reduction_library_design import (
-        DataReductionLibraryDesign,  # noqa: F401
-    )
-    import metiswise.main.aweimports  # noqa: F401
+    try:
+        import metiswise.main.aweimports  # noqa: F401
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "MetisWISE and its dependencies (metis_drld, pymetis) are not "
+            "fully installed — run Install, then (re)install MetisWISE from "
+            "the Archive tab."
+        ) from exc
 
     _metiswise_imports_done = True
 

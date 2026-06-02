@@ -493,6 +493,23 @@ class InstallWorker(QThread):
                 cwd=REPO_ROOT,
             )
 
+            self._step("Installing pymetis (eso-pymetis, editable)…")
+            # metiswise 0.0.4 (Archive tab) depends on ``eso-pymetis``, which is
+            # just the pip build of the ``pymetis`` we already clone above.
+            # Install the clone editable with --no-deps so that:
+            #   (a) ``pymetis`` is importable in-process (metiswise imports it), and
+            #   (b) the Archive-tab metiswise install finds ``eso-pymetis`` already
+            #       satisfied — avoiding a 2nd pymetis copy and the eso-pymetis
+            #       pycpl==1.0.3.post4 vs our pycpl==1.0.3.post10 pin clash.
+            # --no-deps keeps our own pycpl/edps/pyesorex pins authoritative.
+            # TODO: remove/revisit if metiswise drops the eso-pymetis dependency
+            # or eso-pymetis stops pinning pycpl.
+            self._run(
+                [sys.executable, "-m", "pip", "install", "--editable",
+                 str(TARGET_A / "metisp" / "pymetis"), "--no-deps"],
+                cwd=REPO_ROOT,
+            )
+
             self._step("Installing METIS_Simulations (editable)…")
             # METIS_Simulations is cloned at install time (above) and pip-
             # installed editable so changes to the working tree are picked up
@@ -647,6 +664,10 @@ class InstallWorker(QThread):
 
     def _write_env(self) -> None:
         env_path = REPO_ROOT / ".env"
+        # The ``metisp/pymetis/src/`` PYTHONPATH entry is now redundant for
+        # in-process imports (pymetis is editable-installed as eso-pymetis
+        # above), but is kept so EDPS/pyesorex subprocesses resolve the same
+        # clone copy regardless of how the venv is laid out.
         env_path.write_text(
             f"PYTHONPATH={TARGET_B}:{TARGET_A}/metisp/pymetis/src/\n"
             f"PYCPL_RECIPE_DIR={TARGET_A}/metisp/pyrecipes/\n"
@@ -744,22 +765,24 @@ class MetisWISEInstallWorker(QThread):
     def run(self) -> None:
         from .archive import install_metiswise_command
         try:
-            cmd = install_metiswise_command(self._credentials)
-            self.log.emit(f"$ {' '.join(cmd)}\n", "cyan")
-            proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True,
-            )
-            for line in iter(proc.stdout.readline, ""):
-                self.log.emit(line, "")
-            proc.wait()
-            if proc.returncode != 0:
-                self.log.emit(
-                    f"\n✗ Install failed (exit code {proc.returncode}).\n",
-                    "red",
+            # install_metiswise_command returns a SEQUENCE of pip commands
+            # (deps first, then metiswise --no-deps — see archive.py for why).
+            for cmd in install_metiswise_command(self._credentials):
+                self.log.emit(f"$ {' '.join(cmd)}\n", "cyan")
+                proc = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True,
                 )
-                self.done.emit(False)
-                return
+                for line in iter(proc.stdout.readline, ""):
+                    self.log.emit(line, "")
+                proc.wait()
+                if proc.returncode != 0:
+                    self.log.emit(
+                        f"\n✗ Install failed (exit code {proc.returncode}).\n",
+                        "red",
+                    )
+                    self.done.emit(False)
+                    return
             self.log.emit("\n✓ MetisWISE installed successfully.\n", "green")
             self.done.emit(True)
         except Exception as exc:

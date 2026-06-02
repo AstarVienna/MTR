@@ -1,6 +1,25 @@
 # Changelog
 
-## 0.4.0
+## 0.3.2
+
+### Changed
+- The Install tab now editable-installs the cloned `pymetis` as `eso-pymetis`
+  (`--no-deps`) so MetisWISE reuses the same checkout instead of pulling a
+  second `pymetis` copy from the index.
+- The Archive tab installs MetisWISE in two steps — its runtime deps
+  (`commonwise`, `metis-drld`, …) with normal resolution, then `metiswise`
+  itself with `--no-deps` — so the cloned `eso-pymetis`'s `pycpl==1.0.3.post4`
+  pin can't downgrade our `pycpl==1.0.3.post10` (post10 ships the prebuilt
+  macOS wheels). This also skips MetisWISE's jupyter/sphinx/pytest dev deps.
+
+### Fixed
+- Archive connection no longer fails with `No module named 'codes.drld_parser'`.
+  MetisWISE now installs at **0.0.4** (from its GitHub tag), which imports the
+  `metis-drld` pip package — installed from the credentialed private index.
+  Removed the `METIS_DRLD` `git clone` and the legacy `codes.drld_parser`
+  import path.
+
+## 0.3.1
 
 ### Added
 - DETLIN ON/OFF examples (IFU/LM/N, YAML + CSV) so the det-lin/gain + dark steps complete.

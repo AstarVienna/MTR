@@ -1,7 +1,7 @@
 """Resolution of user data directories.
 
 All filesystem locations the GUI reads or writes (clones, .env, instrument
-packages, DRLD) flow through this module so tests can monkeypatch a single
+packages) flow through this module so tests can monkeypatch a single
 seam and so a future user-configurable Settings tab has one place to hook.
 
 Resolution order (highest first):
@@ -43,10 +43,6 @@ def inst_pkgs_dir() -> Path:
 
 def env_file() -> Path:
     return data_dir() / ".env"
-
-
-def drld_dir() -> Path:
-    return data_dir() / "METIS_DRLD"
 
 
 def venv_python() -> Path:
