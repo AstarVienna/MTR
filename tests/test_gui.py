@@ -7,7 +7,6 @@ Covers:
   - Runner-dependent field visibility
   - _build_cmd_args argument construction (including auto-fetch flag)
   - InstallWorker._patch_edps_config regex patching (including association_preference)
-  - InstallWorker._write_env file content
   - ArchiveTab construction
 
 All tests run with QT_QPA_PLATFORM=offscreen (set in conftest.py) so no
@@ -217,6 +216,30 @@ class TestBuildCmdArgs:
         assert "--cores" in args
         assert args[args.index("--cores") + 1] == "2"
 
+    def test_csv_lines_omitted_when_both_unset(self, qapp):
+        tab = self._tab_with_inputs(qapp, "seq.csv")
+        # Default spin values are 0 (= unset).
+        assert "--csv-lines" not in tab._build_cmd_args()
+
+    def test_csv_lines_both_bounds(self, qapp):
+        tab = self._tab_with_inputs(qapp, "seq.csv")
+        tab.csv_start_spin.setValue(6)
+        tab.csv_end_spin.setValue(12)
+        args = tab._build_cmd_args()
+        assert args[args.index("--csv-lines") + 1] == "6:12"
+
+    def test_csv_lines_open_end(self, qapp):
+        tab = self._tab_with_inputs(qapp, "seq.csv")
+        tab.csv_start_spin.setValue(6)
+        args = tab._build_cmd_args()
+        assert args[args.index("--csv-lines") + 1] == "6:"
+
+    def test_csv_lines_open_start(self, qapp):
+        tab = self._tab_with_inputs(qapp, "seq.csv")
+        tab.csv_end_spin.setValue(12)
+        args = tab._build_cmd_args()
+        assert args[args.index("--csv-lines") + 1] == ":12"
+
     def test_calib_flag_when_checked(self, qapp):
         tab = self._tab_with_inputs(qapp, "obs.yaml")
         tab.calib_cb.setChecked(True)
@@ -322,62 +345,10 @@ class TestBuildCmdArgs:
         args = tab._build_cmd_args()
         assert args[-3:] == ["a.yaml", "b.yaml", "c.yaml"]
 
-    # --- Workflow combobox visibility + --workflow arg emission ---
-
-    def test_workflow_combo_hidden_when_yaml_present(self, qapp):
-        tab = self._tab_with_inputs(qapp, "obs.yaml")
-        tab._update_workflow_visibility()
-        assert tab.workflow_row.isHidden()
-
-    def test_workflow_combo_hidden_for_csv_only_in_both_mode(self, qapp):
-        # The workflow is now auto-detected from the simulated FITS for CSV too,
-        # so the row is hidden (like YAML). It can be re-exposed as an optional
-        # override via _update_workflow_visibility (see that method).
+    def test_workflow_arg_never_emitted(self, qapp):
+        """The --workflow override was removed; the GUI never emits it."""
         tab = self._tab_with_inputs(qapp, "obs.csv")
-        tab.rb_both.setChecked(True)
-        tab._update_workflow_visibility()
-        assert tab.workflow_row.isHidden()
-
-    def test_workflow_combo_hidden_in_sim_only_mode(self, qapp):
-        tab = self._tab_with_inputs(qapp, "obs.csv")
-        tab.rb_sim_only.setChecked(True)
-        assert tab.workflow_row.isHidden()
-
-    def test_workflow_combo_hidden_for_mixed_yaml_csv(self, qapp):
-        """When YAML is present, infer_workflow handles it — combo hides."""
-        tab = self._tab_with_inputs(qapp, "obs.yaml", "extra.csv")
-        tab._update_workflow_visibility()
-        assert tab.workflow_row.isHidden()
-
-    def test_workflow_arg_emitted_when_row_shown_and_combo_set(self, qapp):
-        # The dropdown is hidden by default (workflow auto-detected), but the
-        # override logic is retained: if the row is re-exposed and a real
-        # workflow is picked, --workflow is still emitted.
-        tab = self._tab_with_inputs(qapp, "obs.csv")
-        tab.workflow_combo.setCurrentIndex(1)  # first real workflow
-        tab.workflow_row.setVisible(True)
-        args = tab._build_cmd_args()
-        assert "--workflow" in args
-        chosen = tab.workflow_combo.currentText()
-        assert args[args.index("--workflow") + 1] == chosen
-
-    def test_workflow_arg_omitted_when_combo_at_placeholder(self, qapp):
-        tab = self._tab_with_inputs(qapp, "obs.csv")
-        tab.workflow_combo.setCurrentIndex(0)  # "(auto from YAML)"
-        args = tab._build_cmd_args()
-        assert "--workflow" not in args
-
-    def test_workflow_arg_omitted_when_row_hidden(self, qapp):
-        """Even if the user previously picked a workflow, hiding the row
-        (e.g. by adding a YAML) should suppress the --workflow arg."""
-        tab = self._tab_with_inputs(qapp, "obs.csv")
-        tab.workflow_combo.setCurrentIndex(1)
-        # Now add a YAML — combobox should hide.
-        tab.input_list.addItem("obs.yaml")
-        tab._update_workflow_visibility()
-        assert tab.workflow_row.isVisible() is False
-        args = tab._build_cmd_args()
-        assert "--workflow" not in args
+        assert "--workflow" not in tab._build_cmd_args()
 
     # --- Input status line ---
 
@@ -584,47 +555,6 @@ class TestBackupEdpsConfig:
         self._make_worker(qapp)._backup_edps_config()
         assert not props.exists()
         assert old_backup.read_text() == "port=9999\n"
-
-
-# ---------------------------------------------------------------------------
-# InstallWorker._write_env
-# ---------------------------------------------------------------------------
-
-class TestWriteEnv:
-    def _make_worker(self, qapp):
-        from metis_test_runner.gui import InstallWorker
-        return InstallWorker()
-
-    def test_env_file_created(self, qapp, tmp_path, monkeypatch):
-        from metis_test_runner import gui
-        monkeypatch.setattr(gui, "REPO_ROOT", tmp_path)
-        self._make_worker(qapp)._write_env()
-        assert (tmp_path / ".env").exists()
-
-    def test_env_contains_pythonpath(self, qapp, tmp_path, monkeypatch):
-        from metis_test_runner import gui
-        monkeypatch.setattr(gui, "REPO_ROOT", tmp_path)
-        self._make_worker(qapp)._write_env()
-        assert "PYTHONPATH" in (tmp_path / ".env").read_text()
-
-    def test_env_contains_pycpl_recipe_dir(self, qapp, tmp_path, monkeypatch):
-        from metis_test_runner import gui
-        monkeypatch.setattr(gui, "REPO_ROOT", tmp_path)
-        self._make_worker(qapp)._write_env()
-        assert "PYCPL_RECIPE_DIR" in (tmp_path / ".env").read_text()
-
-    def test_env_contains_pyesorex_plugin_dir(self, qapp, tmp_path, monkeypatch):
-        from metis_test_runner import gui
-        monkeypatch.setattr(gui, "REPO_ROOT", tmp_path)
-        self._make_worker(qapp)._write_env()
-        assert "PYESOREX_PLUGIN_DIR" in (tmp_path / ".env").read_text()
-
-    def test_env_paths_reference_target_a(self, qapp, tmp_path, monkeypatch):
-        from metis_test_runner import gui
-        monkeypatch.setattr(gui, "REPO_ROOT", tmp_path)
-        self._make_worker(qapp)._write_env()
-        content = (tmp_path / ".env").read_text()
-        assert str(gui.TARGET_A) in content
 
 
 # ---------------------------------------------------------------------------

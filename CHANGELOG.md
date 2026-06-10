@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.4.0
+
+### Added
+- `mtr-exec` and `mtr-shell` console scripts for direct, env-file-free access to
+  the pipeline environment. `mtr-exec -- <cmd>` runs a single command (e.g.
+  `mtr-exec -- edps -lw`) and `mtr-shell` opens an interactive shell with `edps`,
+  `pyesorex`, and `python`+ScopeSim resolved. Both are runner-aware
+  (`default`/`native`/`docker`/`podman`); container runners wrap the command in
+  `docker exec` / `podman exec`. These replace the old `uv run --env-file .env …`
+  workflow.
+- `--csv-lines START:END` (CLI flag + GUI Run-tab field): restrict CSV inputs to
+  a range of 1-based file lines (`6:12`, `6:`, `:12`). The fixed 4-row AIT header
+  block is always preserved; MTR writes a header-preserving sliced copy under
+  `<output>/sliced_inputs/` and feeds that to the simulation.
+- `metis_test_runner.env.resolve_runtime_env()` — a single source of truth for
+  the runtime environment, shared by the GUI, `mtr-cli`, and `mtr-exec` /
+  `mtr-shell`.
+
+### Changed
+- The `default` runner now **derives** its environment (`PYTHONPATH`, recipe
+  directories, `METIS_INST_PKGS`, venv `bin/` on `PATH`) from the install
+  locations instead of a generated `.env` file. An optional
+  `~/.local/share/metis-test-runner/.env` is read only to *override* the derived
+  defaults. The Install tab no longer writes `.env`, and the default-runner
+  readiness checks now look for the pipeline clone rather than that file.
+
+### Removed
+- The `--workflow` override — both the CLI flag and the long-hidden GUI dropdown.
+  The EDPS workflow is auto-detected for every input type (YAML pre-simulation,
+  CSV from the simulated FITS headers); for manual control over the EDPS /
+  pyesorex invocation, use `mtr-exec` / `mtr-shell`.
+
 ## 0.3.2
 
 ### Changed

@@ -101,8 +101,7 @@ The Install tab performs the full pipeline bootstrap non-interactively. Use it i
 
 1. Clone (or update, if already present) `METIS_Pipeline` and `METIS_Simulations` into the user data directory (`~/.local/share/metis-test-runner/` by default)
 2. `pip install` all ESO pipeline Python dependencies — `pycpl`, `edps`, `pyesorex`, `adari_core`, `scopesim`, `scopesim_templates` — into the same isolated venv that hosts MTR (via `--extra-index-url` against the ESO mirrors). Out-of-band installs such as MetisWISE from the Archive tab are preserved.
-3. Write `.env` into the user data directory (environment variables for PYTHONPATH, plugin directories, etc.)
-4. Initialise and configure EDPS on port 4444
+3. Initialise and configure EDPS on port 4444
 
 Re-running is safe — existing repositories are updated in place rather than re-cloned.
 
@@ -156,9 +155,10 @@ The Install tab takes care of this automatically. It pip-installs all pipeline
 dependencies (`pycpl`, `edps`, `pyesorex`, `adari_core`, `scopesim`,
 `scopesim_templates`) into the same isolated venv that hosts MTR, clones
 `METIS_Pipeline` and `METIS_Simulations` into the user data directory
-(`~/.local/share/metis-test-runner/` by default), and writes a `.env` file
-there. The `default` runner reads that `.env` automatically and invokes every
-subprocess with the MTR venv's Python interpreter.
+(`~/.local/share/metis-test-runner/` by default). The `default` runner then
+derives the environment (PYTHONPATH, recipe directories, instrument-packages
+path) from those locations automatically and invokes every subprocess with the
+MTR venv's Python interpreter — no `.env` file required.
 
 **Option B — Docker or Podman container** (runner `docker` / `podman`)
 
@@ -187,7 +187,7 @@ ScopeSim instrument packages (Armazones, ELT, METIS) will be downloaded into `./
 Two input formats are supported and may be mixed in a single run:
 
 - **YAML observation blocks** (`*.yaml`, `*.yml`) — the primary, human-authored format. Workflow auto-detection works on YAML content.
-- **AIT-format CSV test sequences** (`*.csv`) — the AIT performance-test sheet exported as CSV. Parsed by `metis_simulations.csvParser` at simulation time. MTR does **not** inspect CSV content itself, so for CSV-only runs the workflow is auto-detected from the **simulated FITS headers** (after the simulation step); `--workflow NAME` (or the GUI dropdown, hidden by default) is an optional override.
+- **AIT-format CSV test sequences** (`*.csv`) — the AIT performance-test sheet exported as CSV. Parsed by `metis_simulations.csvParser` at simulation time. MTR does **not** inspect CSV content itself, so for CSV-only runs the workflow is auto-detected from the **simulated FITS headers** (after the simulation step).
 
 See [`examples/small_test_img_lm.csv`](examples/small_test_img_lm.csv) (IMAGE,LM) and [`examples/small_test_img_n.csv`](examples/small_test_img_n.csv) (IMAGE,N) for minimal CSVs; the rest of this section covers YAML.
 
@@ -269,12 +269,12 @@ YAML and CSV inputs may be mixed in any combination.
 | `--runner {default,native,docker,podman}` | `default` | Execution mode (see below; env: `METIS_RUNNER`) |
 | `--container NAME` | — | Container name/ID for `docker` / `podman` runners (env: `METIS_CONTAINER`) |
 | `--calib [N]` | `1` | Auto-generate N calibration frames (dark/flat) per unique config, inferred from input content. Pass `--calib 0` to disable. |
-| `--workflow NAME` | auto-detect | Force EDPS workflow name (e.g. `metis.metis_lm_img_wkf`). Optional: the workflow is auto-detected from YAML content, or from the simulated FITS headers for CSV-only runs. Pass this to override. |
 | `--cores N` | `4` | CPU cores used for parallel simulations |
 | `--no-sim` | off | Skip simulation; run pipeline on existing FITS data (source defaults to `<output>/sim/` — override with `--pipeline-input`) |
 | `--pipeline-input DIR` | `<output>/sim/` | Directory containing FITS files to feed the pipeline (only with `--no-sim`; env: `METIS_PIPELINE_INPUT`) |
 | `--no-pipeline` | off | Run simulation only; skip EDPS pipeline |
 | `--csv-to-yaml` | off | Dry run: translate CSV input(s) to YAML via METIS_Simulations (`testRun`+`writeYaml`) and stop — writes `<name>.yaml` next to each CSV, with no simulation and no pipeline. Only CSV inputs are affected. Note: the YAML is written next to the source CSV, so don't point it at a bundled `examples/*.csv` whose `.yaml` you want to keep. |
+| `--csv-lines START:END` | all rows | Restrict CSV inputs to a range of 1-based file lines (e.g. `6:12`, `6:` from line 6 to end, `:12` from start to line 12). The header block (column-name row + `component`/`description`/`type` rows) is always kept; MTR writes a sliced copy under `<output>/sliced_inputs/` and feeds that to the simulation. Applies to `.csv` inputs only; ignored with `--no-sim`. Also exposed in the GUI Run tab. |
 | `--simulations-dir PATH` | `./METIS_Simulations` (host) or `/home/metis/METIS_Simulations` (container) | Path to ScopeSim scripts (env: `METIS_SIMULATIONS_DIR`) |
 | `--inst-pkgs PATH` | see below | Path to ScopeSim instrument packages (Armazones, ELT, METIS). Defaults to the user data dir for the `default` runner, `./inst_pkgs` for `native`, and container-resolved `./inst_pkgs` for `docker`/`podman` (env: `METIS_INST_PKGS`) |
 | `--auto-fetch-calibrations` | off | Before running the pipeline, query the remote METIS archive (via MetisWISE) for any master calibrations the input set is missing and download them into the pipeline input directory. Requires MetisWISE to be installed and `~/.awe/Environment.cfg` to hold valid credentials — see the Archive tab. |
@@ -284,11 +284,24 @@ YAML and CSV inputs may be mixed in any combination.
 
 | Mode | When to use |
 |---|---|
-| `default` | You used the GUI's Install tab. Pipeline tools are pip-installed alongside MTR in the same isolated pipx/venv. Subprocesses run with that venv's Python interpreter and load the Install-tab `.env` from `~/.local/share/metis-test-runner/.env`. No external dependencies. |
+| `default` | You used the GUI's Install tab. Pipeline tools are pip-installed alongside MTR in the same isolated pipx/venv. Subprocesses run with that venv's Python interpreter and an environment derived automatically from the install locations (see [Overriding the environment](#overriding-the-environment)). No external dependencies. |
 | `native` | Tools (`edps`, `python`, ScopeSim) are installed directly on PATH — e.g. you are running **inside** a Docker/Podman container, or have a bare-metal install. |
 | `docker` / `podman` | Tools live inside a container and you are running the script **outside** it. The runner wraps every command with `docker exec` / `podman exec`. |
 
 > **Note for `docker` / `podman` runners:** the output directory (`-o`) must be bind-mounted into the container so EDPS can write pipeline products to it. The `--simulations-dir` flag should point to the path of `METIS_Simulations/Simulations` *inside* the container (default: `/home/metis/METIS_Simulations`).
+
+### Overriding the environment
+
+For the `default` runner, the environment (`PYTHONPATH`, `PYCPL_RECIPE_DIR`, `PYESOREX_PLUGIN_DIR`, `METIS_INST_PKGS`, …) is **derived automatically** from the install locations — there is no env file to maintain. The same resolved environment is shared by `mtr-cli`, the GUI, and the `mtr-exec` / `mtr-shell` commands.
+
+If you need to override or add a variable, create a `.env` file in the user data directory (`~/.local/share/metis-test-runner/.env`); any keys in it take precedence over the derived defaults. For example, to raise the pyesorex log verbosity:
+
+```dotenv
+PYESOREX_MSG_LEVEL=info
+PYESOREX_LOG_LEVEL=info
+```
+
+The file is entirely optional — it is read if present and ignored if absent.
 
 ### Examples
 
@@ -324,7 +337,7 @@ mtr-cli --no-sim --pipeline-input /data/sim_fits -o /tmp/myrun
 mtr-cli --no-pipeline examples/small_test_img_lm.csv
 
 # CSV-only input, full simulate + pipeline run (workflow auto-detected from the
-# simulated FITS; pass --workflow only to override)
+# simulated FITS headers)
 mtr-cli examples/small_test_img_lm.csv
 
 # Dry run: translate a CSV test sheet to YAML (writes my_sheet.yaml next to it),
@@ -334,6 +347,32 @@ mtr-cli --csv-to-yaml /path/to/my_sheet.csv
 # Mixed YAML + CSV in a single run
 mtr-cli examples/small_test.yaml examples/small_test_img_lm.csv
 ```
+
+## Direct environment access (`mtr-exec` / `mtr-shell`)
+
+For developers who want to drive the pipeline tools themselves — bypassing MTR's
+simulation, workflow detection, and EDPS server lifecycle — two commands hand you
+the fully-resolved environment with **no env file to pass** (`PYTHONPATH`, recipe
+dirs, instrument-packages path, and the MTR venv on `PATH` are all set for you):
+
+```bash
+# Run a single command in MTR's environment (everything after -- is verbatim)
+mtr-exec -- edps -w metis.metis_wkf -t metis_ifu_dark -i ./sim -o ./out
+mtr-exec -- pyesorex --recipes
+mtr-exec -- python my_scopesim_probe.py
+
+# Open an interactive shell with the environment pre-applied
+mtr-shell
+# then, inside it:
+(mtr) $ edps -lw
+(mtr) $ pyesorex metis_ifu_dark ...
+(mtr) $ python        # scopesim importable, instrument packages resolved
+```
+
+Both accept `--runner {default,native,docker,podman}` and `--container NAME`
+(same semantics and env vars as `mtr-cli`); for `docker`/`podman` the command or
+shell runs inside the named container. These replace the old
+`uv run --env-file .env …` workflow.
 
 ## Repository Layout
 

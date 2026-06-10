@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "metis-test-runner"
-version = "0.3.2"
+version = "0.4.0"
 description = "GUI and CLI wrapper for end-to-end ESO METIS pipeline testing"
 readme = "README.md"
 license = { text = "BSD-3-Clause" }
@@ -35,8 +35,10 @@ dependencies = [
 dev = ["pytest", "build", "twine"]
 
 [project.scripts]
-mtr     = "metis_test_runner.gui:main"
-mtr-cli = "metis_test_runner.run_metis:main"
+mtr       = "metis_test_runner.gui:main"
+mtr-cli   = "metis_test_runner.run_metis:main"
+mtr-exec  = "metis_test_runner.direct:exec_main"
+mtr-shell = "metis_test_runner.direct:shell_main"
 
 [project.gui-scripts]
 mtr-gui = "metis_test_runner.gui:main"

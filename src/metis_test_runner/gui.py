@@ -15,7 +15,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from dotenv import dotenv_values
 from PyQt6.QtCore import Qt, QProcess, QProcessEnvironment, QSettings, QThread, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices, QFont, QPalette, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
@@ -28,6 +27,7 @@ from PyQt6.QtWidgets import (
 )
 
 from . import paths
+from .env import resolve_runtime_env
 from .indexes import ESO_INDEX, PYCPL_INDEX
 
 # ---------------------------------------------------------------------------
@@ -56,22 +56,20 @@ LABEL_W = 280   # fixed label column width in the Run options form
 def _child_env() -> dict[str, str]:
     """Build the environment for subprocesses spawned by the GUI.
 
-    Loads variables from the MTR `.env` file (paths.env_file()) on top of
-    the current process environment.
+    Thin wrapper over the shared env-resolution seam so the GUI launcher, the
+    orchestrated run, and the direct mtr-exec / mtr-shell commands all resolve
+    the same environment (derived from paths.py, with an optional .env override).
     """
-    env = os.environ.copy()
-    env["PYTHONUNBUFFERED"] = "1"
-    env_path = paths.env_file()
-    if env_path.exists():
-        for k, v in dotenv_values(env_path).items():
-            if v is not None:
-                env[k] = v
-    return env
+    return resolve_runtime_env("default")
 
 
 def _installation_complete() -> bool:
-    """Return True if the essential install artifacts exist."""
-    return (TARGET_A / ".git").exists() and paths.env_file().exists()
+    """Return True if the essential install artifacts exist.
+
+    The runtime environment is derived from paths.py (see env.py), so this no
+    longer depends on a generated .env — only the pipeline clone is required.
+    """
+    return (TARGET_A / ".git").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -519,9 +517,6 @@ class InstallWorker(QThread):
                 cwd=REPO_ROOT,
             )
 
-            self._step("Writing .env…")
-            self._write_env()
-
             self._step("Checking for existing EDPS configuration…")
             self._backup_edps_config()
 
@@ -662,22 +657,6 @@ class InstallWorker(QThread):
         props.write_text(text)
         self.log.emit(f"Patched {props}\n", "")
 
-    def _write_env(self) -> None:
-        env_path = REPO_ROOT / ".env"
-        # The ``metisp/pymetis/src/`` PYTHONPATH entry is now redundant for
-        # in-process imports (pymetis is editable-installed as eso-pymetis
-        # above), but is kept so EDPS/pyesorex subprocesses resolve the same
-        # clone copy regardless of how the venv is laid out.
-        env_path.write_text(
-            f"PYTHONPATH={TARGET_B}:{TARGET_A}/metisp/pymetis/src/\n"
-            f"PYCPL_RECIPE_DIR={TARGET_A}/metisp/pyrecipes/\n"
-            f"PYESOREX_PLUGIN_DIR={TARGET_A}/metisp/pyrecipes/\n"
-            "PYESOREX_MSG_LEVEL=debug\n"
-            "PYESOREX_LOG_LEVEL=debug\n"
-        )
-        self.log.emit(f"Written {env_path}\n", "")
-
-
 def _resolve_run_metis_command() -> list[str]:
     """Build the `python -m metis_test_runner.run_metis` invocation list."""
     return [sys.executable, "-u", "-m", "metis_test_runner.run_metis"]
@@ -715,7 +694,6 @@ class InstallTab(QWidget):
             f"into <code>{REPO_ROOT}</code></li>"
             "<li>Install all Python dependencies (pycpl, edps, pyesorex, adari_core, "
             "scopesim, scopesim_templates) into MTR's own pipx/venv</li>"
-            f"<li>Write <code>{REPO_ROOT / '.env'}</code></li>"
             "<li>Initialise and configure EDPS on port 4444</li>"
             "</ol>"
             "Re-running is safe — existing repositories will be updated, not re-cloned."
@@ -1620,6 +1598,41 @@ class RunTab(QWidget):
         self.input_status = QLabel("0 YAML  ·  0 CSV")
         self.input_status.setProperty("hint", "true")
         input_lay.addWidget(self.input_status)
+
+        # CSV line range (power-user): restrict .csv inputs to 1-based file
+        # lines. 0 = unset (shown as "—"). The header block is always kept.
+        self.csv_start_spin = QSpinBox()
+        self.csv_start_spin.setRange(0, 1_000_000)
+        self.csv_start_spin.setSpecialValueText("—")
+        self.csv_start_spin.setMaximumWidth(90)
+        self.csv_end_spin = QSpinBox()
+        self.csv_end_spin.setRange(0, 1_000_000)
+        self.csv_end_spin.setSpecialValueText("—")
+        self.csv_end_spin.setMaximumWidth(90)
+        # Build the row by hand so the "Start:" / "End:" words sit directly
+        # next to their spin boxes and a trailing stretch keeps everything
+        # left-aligned (the generic _labeled() helper lets the words drift).
+        csv_range_row = QWidget()
+        csv_h = QHBoxLayout(csv_range_row)
+        csv_h.setContentsMargins(0, 0, 0, 0)
+        csv_main_lbl = QLabel("CSV line range  (--csv-lines):")
+        csv_main_lbl.setFixedWidth(LABEL_W)
+        csv_main_lbl.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        csv_h.addWidget(csv_main_lbl)
+        csv_h.addWidget(QLabel("Start:"))
+        csv_h.addWidget(self.csv_start_spin)
+        csv_h.addSpacing(16)
+        csv_h.addWidget(QLabel("End:"))
+        csv_h.addWidget(self.csv_end_spin)
+        csv_h.addStretch()
+        csv_range_row.setToolTip(
+            "Restrict CSV inputs to these 1-based file lines (0 = unset).\n"
+            "The header block (column row + component/description/type rows) "
+            "is always kept. Applies to .csv inputs only; ignored with --no-sim."
+        )
+        input_lay.addWidget(csv_range_row)
         top_lay.addWidget(self.input_grp)
 
         # ── Options ──
@@ -1700,30 +1713,10 @@ class RunTab(QWidget):
         self.cores_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.PlusMinus)
         opts_lay.addWidget(_labeled("CPU cores  (--cores):", self.cores_spin))
 
-        # Workflow override. The workflow is auto-detected for every input type
-        # (YAML pre-sim, CSV from the simulated FITS), so this control is
-        # optional and currently kept hidden (see _update_workflow_visibility).
-        from . import run_metis as _run_metis
-        self._workflow_label = QLabel("Workflow  (--workflow):")
-        self._workflow_label.setFixedWidth(LABEL_W)
-        self.workflow_combo = QComboBox()
-        self.workflow_combo.addItem("(auto-detect)")
-        self.workflow_combo.addItems(_run_metis.known_workflows())
-        self.workflow_row = QWidget()
-        _wf_h = QHBoxLayout(self.workflow_row)
-        _wf_h.setContentsMargins(0, 0, 0, 0)
-        _wf_h.addWidget(self._workflow_label)
-        _wf_h.addWidget(self.workflow_combo)
-        opts_lay.addWidget(self.workflow_row)
-        # Visibility tracks both list content (model row changes) and mode
-        # toggles. Wiring model signals here means programmatic addItem()
-        # calls (e.g. settings reload, tests) also trigger the update.
-        self.workflow_combo.currentIndexChanged.connect(
-            lambda _i: self._refresh_workflow_required_style())
-        self.input_list.model().rowsInserted.connect(
-            lambda *_a: self._update_workflow_visibility())
-        self.input_list.model().rowsRemoved.connect(
-            lambda *_a: self._update_workflow_visibility())
+        # The EDPS workflow and targets are auto-detected for every input type
+        # (YAML pre-sim, CSV from the simulated FITS). There is no workflow
+        # override here: for manual control over the EDPS/pyesorex invocation
+        # use the mtr-exec / mtr-shell commands.
         self.input_list.model().rowsInserted.connect(
             lambda *_a: self._refresh_input_status())
         self.input_list.model().rowsRemoved.connect(
@@ -1874,7 +1867,6 @@ class RunTab(QWidget):
         self.input_grp.setVisible(not pipe_only)
         self.pipeline_input_row.setVisible(pipe_only)
         self._update_output_info()
-        self._update_workflow_visibility()
 
     def _update_csv_to_yaml_state(self) -> None:
         """CSV→YAML is a translate-only dry run, so the simulation/pipeline
@@ -1910,13 +1902,11 @@ class RunTab(QWidget):
             if f not in existing:
                 self.input_list.addItem(f)
         self._refresh_input_status()
-        self._update_workflow_visibility()
 
     def _remove_input(self) -> None:
         for item in self.input_list.selectedItems():
             self.input_list.takeItem(self.input_list.row(item))
         self._refresh_input_status()
-        self._update_workflow_visibility()
 
     def _input_format_counts(self) -> tuple[int, int]:
         """Return (yaml_count, csv_count) across self.input_list."""
@@ -1932,35 +1922,6 @@ class RunTab(QWidget):
     def _refresh_input_status(self) -> None:
         n_yaml, n_csv = self._input_format_counts()
         self.input_status.setText(f"{n_yaml} YAML  ·  {n_csv} CSV")
-
-    def _csv_only_run(self) -> bool:
-        """True when input list is non-empty, all CSV, and pipeline will run."""
-        if self.rb_pipe_only.isChecked() or self.rb_sim_only.isChecked():
-            return False
-        n_yaml, n_csv = self._input_format_counts()
-        return n_csv > 0 and n_yaml == 0
-
-    def _update_workflow_visibility(self) -> None:
-        """Keep the workflow combobox hidden — the workflow is auto-detected.
-
-        The EDPS workflow is now inferred for every input type: YAML is
-        classified before simulation, and CSV is inferred from the simulated
-        FITS headers in run_metis (EDPS runs the umbrella workflow regardless).
-        The row is therefore always hidden.  To bring it back as an optional
-        override for CSV-only runs, restore: ``visible = self._csv_only_run()``.
-        """
-        visible = False
-        self.workflow_row.setVisible(visible)
-        self._refresh_workflow_required_style()
-
-    def _refresh_workflow_required_style(self) -> None:
-        """Keep the workflow control plain — a selection is never required.
-
-        Retained (and still called) so the optional-override styling stays
-        clean if the row is re-exposed (see _update_workflow_visibility).
-        """
-        self._workflow_label.setText("Workflow  (--workflow):")
-        self.workflow_combo.setStyleSheet("")
 
     def _add_pipeline_input(self) -> None:
         d = QFileDialog.getExistingDirectory(
@@ -1989,6 +1950,12 @@ class RunTab(QWidget):
         # Same pattern for static calibration prototypes.
         args += ["--static", "1" if self.static_cb.isChecked() else "0"]
         args += ["--cores", str(self.cores_spin.value())]
+        # CSV line range: 0 means unset on either side. Emit START:END with the
+        # unset side left blank (e.g. "6:", ":12"); skip entirely if both unset.
+        csv_start = self.csv_start_spin.value()
+        csv_end = self.csv_end_spin.value()
+        if csv_start or csv_end:
+            args += ["--csv-lines", f"{csv_start or ''}:{csv_end or ''}"]
         if self.rb_sim_only.isChecked():
             args.append("--no-pipeline")
         elif self.rb_pipe_only.isChecked():
@@ -2011,13 +1978,6 @@ class RunTab(QWidget):
         # sim/pipeline flags above (those controls are disabled in the GUI).
         if self.csv_to_yaml_cb.isChecked():
             args.append("--csv-to-yaml")
-
-        # --workflow flag: emit whenever the row is shown (i.e. not explicitly
-        # hidden) and the user picked a real workflow. Index 0 is the
-        # "(auto from YAML)" placeholder. Using isHidden() rather than
-        # isVisible() so the check works in headless test environments too.
-        if not self.workflow_row.isHidden() and self.workflow_combo.currentIndex() > 0:
-            args += ["--workflow", self.workflow_combo.currentText()]
 
         for i in range(self.input_list.count()):
             args.append(self.input_list.item(i).text())
@@ -2131,6 +2091,8 @@ class RunTab(QWidget):
         self.calib_cb.setChecked(s.value("calib", True, type=bool))
         self.static_cb.setChecked(s.value("static", True, type=bool))
         self.cores_spin.setValue(s.value("cores", 4, type=int))
+        self.csv_start_spin.setValue(s.value("csv_start", 0, type=int))
+        self.csv_end_spin.setValue(s.value("csv_end", 0, type=int))
         mode = s.value("pipeline_mode", "both")
         {"sim_only": self.rb_sim_only, "pipe_only": self.rb_pipe_only}.get(
             mode, self.rb_both
@@ -2152,11 +2114,6 @@ class RunTab(QWidget):
         for f in saved_inputs:
             self.input_list.addItem(f)
         self._refresh_input_status()
-        saved_workflow = s.value("workflow", "(auto from YAML)")
-        idx = self.workflow_combo.findText(saved_workflow)
-        if idx >= 0:
-            self.workflow_combo.setCurrentIndex(idx)
-        self._update_workflow_visibility()
 
     def _save_settings(self) -> None:
         s = self._settings
@@ -2164,6 +2121,8 @@ class RunTab(QWidget):
         s.setValue("calib", self.calib_cb.isChecked())
         s.setValue("static", self.static_cb.isChecked())
         s.setValue("cores", self.cores_spin.value())
+        s.setValue("csv_start", self.csv_start_spin.value())
+        s.setValue("csv_end", self.csv_end_spin.value())
         mode = "both"
         if self.rb_sim_only.isChecked():
             mode = "sim_only"
@@ -2183,9 +2142,9 @@ class RunTab(QWidget):
         s.setValue("input_files", [
             self.input_list.item(i).text() for i in range(self.input_list.count())
         ])
-        # Remove legacy key after successful migration to avoid confusion.
+        # Remove legacy keys after successful migration to avoid confusion.
         s.remove("yaml_files")
-        s.setValue("workflow", self.workflow_combo.currentText())
+        s.remove("workflow")
 
 
 # ---------------------------------------------------------------------------

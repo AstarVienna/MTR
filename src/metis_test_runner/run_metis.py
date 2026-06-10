@@ -28,8 +28,9 @@ Four execution modes are supported via --runner (or METIS_RUNNER env var):
 The workflow (lm_img / n_img / ifu / lm_lss / n_lss / …) is inferred
 automatically from the DPR.TECH / mode values in YAML blocks. CSV content is
 not parsed on the MTR side, so for CSV-only runs the workflow is auto-detected
-from the simulated FITS headers instead (after Step 1); --workflow NAME is then
-an optional override.
+from the simulated FITS headers instead (after Step 1). For direct, manual
+control over the EDPS/pyesorex invocation, use the mtr-exec / mtr-shell
+commands instead of this orchestrated runner.
 The pipeline target task is inferred from the data types present in the YAML
 (or from FITS headers when --no-sim or all inputs are CSV): it targets the
 deepest task in the workflow chain whose main-input classification tag is
@@ -49,6 +50,7 @@ from pathlib import Path
 from datetime import datetime
 
 from . import paths
+from .env import resolve_runtime_env
 
 # Recognised input file extensions
 INPUT_EXTS = (".yaml", ".yml", ".csv")
@@ -350,8 +352,8 @@ def infer_workflow(input_files):
     CSV inputs are skipped here: their AIT format does not carry enough
     information for MTR to map to an EDPS workflow without parsing the full
     csvParser logic. When the input list contains *no* YAML files this
-    function raises ValueError; callers should then require an explicit
-    --workflow choice (or fall back to FITS header inference).
+    function raises ValueError; callers should then fall back to FITS header
+    inference (after simulation).
 
     For YAML files, checks ``properties.tech`` first, then ``mode`` as a
     fallback. ``has_science`` is True when any block has
@@ -363,8 +365,8 @@ def infer_workflow(input_files):
                   if Path(p).suffix.lower() in (".yaml", ".yml")]
     if not yaml_files:
         raise ValueError(
-            "No YAML files provided; workflow cannot be inferred from CSV.\n"
-            "  Pass --workflow NAME explicitly, or skip the pipeline with --no-pipeline."
+            "No YAML files provided; workflow cannot be inferred from CSV "
+            "(it is auto-detected from the simulated FITS headers instead)."
         )
 
     techs = []
@@ -774,33 +776,27 @@ def _build_sim_script(out_dir, do_calib, do_static, n_cores, input_list,
 def _check_default_env(runner):
     """Validate that the default runner can be used.
 
-    Confirms the .env file written by the GUI Install tab exists at
-    ``paths.env_file()``; otherwise points the user at the Install tab.
+    Confirms the MTR-managed pipeline clone exists at ``paths.pipeline_dir()``
+    (created by the GUI Install tab); otherwise points the user at it. The
+    runtime environment itself is derived in :mod:`metis_test_runner.env`, so
+    no ``.env`` file is required.
     """
     if runner != "default":
         return
-    env_file = paths.env_file()
-    if not env_file.exists():
+    if not (paths.pipeline_dir() / ".git").exists():
         raise FileNotFoundError(
-            f"{env_file} not found — run the Install tab in the MTR GUI"
+            f"{paths.pipeline_dir()} not found — run the Install tab in the MTR GUI"
         )
 
 
 def _default_subprocess_env() -> dict[str, str]:
     """Build the subprocess env for the default runner.
 
-    Merges the parent process env with the parsed .env file written by the
-    Install tab, and prepends the MTR pipx/venv ``bin/`` to ``PATH`` so
-    ``edps`` and ``pyesorex`` resolve to the venv copies even when the
-    parent's PATH does not include them.
+    Thin wrapper over :func:`metis_test_runner.env.resolve_runtime_env` so the
+    orchestrated run and the direct ``mtr-exec`` / ``mtr-shell`` commands share
+    one env-resolution seam.
     """
-    from dotenv import dotenv_values
-    env = os.environ.copy()
-    env.update({k: v for k, v in dotenv_values(paths.env_file()).items()
-                if v is not None})
-    venv_bin = str(Path(sys.executable).parent)
-    env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
-    return env
+    return resolve_runtime_env("default")
 
 
 def _run_simulation(runner, container, sim_code, sims_cwd):
@@ -883,6 +879,103 @@ def _restore_association_preference(original: str | None) -> None:
 
 
 # ---------------------------------------------------------------------------
+# CSV row slicing (power-user --csv-lines)
+# ---------------------------------------------------------------------------
+
+# The AIT CSV format has a fixed 4-row header that metis_simulations.csvParser
+# consumes unconditionally — four successive next(reader) calls for the column
+# ids, component names, descriptions and data types (see csvParser.loadCSV).
+# Slicing must always preserve exactly these rows regardless of their content
+# (the metadata rows may have blank leading columns), or the parser reads past
+# the end of a sliced file and raises StopIteration.
+_CSV_HEADER_ROWS = 4
+
+
+def _parse_line_range(s):
+    """Parse a ``START:END`` line-range string into a ``(start, end)`` tuple.
+
+    Both bounds are 1-based and optional: ``6:12`` -> ``(6, 12)``, ``6:`` ->
+    ``(6, None)``, ``:12`` -> ``(None, 12)``.  Raises ``ArgumentTypeError`` on
+    malformed input (no colon, non-integer, non-positive, or ``start > end``).
+    """
+    if ":" not in s:
+        raise argparse.ArgumentTypeError(
+            f"expected START:END (e.g. 6:12, 6:, :12), got {s!r}"
+        )
+    start_s, end_s = s.split(":", 1)
+
+    def _bound(token, name):
+        token = token.strip()
+        if not token:
+            return None
+        try:
+            value = int(token)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"{name} must be an integer, got {token!r}"
+            )
+        if value < 1:
+            raise argparse.ArgumentTypeError(
+                f"{name} must be >= 1, got {value}"
+            )
+        return value
+
+    start = _bound(start_s, "start")
+    end = _bound(end_s, "end")
+    if start is not None and end is not None and start > end:
+        raise argparse.ArgumentTypeError(
+            f"start ({start}) must not exceed end ({end})"
+        )
+    return (start, end)
+
+
+def _slice_csv(path, line_range, out_dir):
+    """Write a row-sliced copy of CSV *path* into *out_dir* and return its Path.
+
+    *line_range* is a ``(start, end)`` tuple of 1-based file line numbers (either
+    may be ``None`` for open-ended).  The fixed 4-row AIT header block
+    (:data:`_CSV_HEADER_ROWS`) is always preserved so the downstream csvParser
+    still finds its column ids / components / descriptions / data types.
+    Operates on raw text lines so field formatting is kept verbatim (AIT CSVs
+    have no embedded newlines).  Prints a warning if no data rows are selected.
+    """
+    path = Path(path)
+    lines = path.read_text().splitlines(keepends=True)
+    start, end = line_range
+    lo = start if start is not None else 1
+    hi = end if end is not None else len(lines)
+
+    header_end = min(_CSV_HEADER_ROWS, len(lines))
+
+    kept = []
+    selected_data = 0
+    for idx, line in enumerate(lines):
+        lineno = idx + 1  # 1-based
+        if lineno <= header_end:
+            kept.append(line)
+        elif lo <= lineno <= hi and line.strip():
+            kept.append(line)
+            selected_data += 1
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / path.name
+    text = "".join(kept)
+    if text and not text.endswith("\n"):
+        text += "\n"
+    out_path.write_text(text)
+
+    if selected_data == 0:
+        print(
+            f"  WARNING: --csv-lines {lo}:{hi} selected no data rows from "
+            f"{path.name} (header has {header_end} row(s)); simulation will "
+            "produce nothing.",
+            file=sys.stderr,
+        )
+    return out_path
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -897,12 +990,12 @@ def parse_args(argv=None):
              "YAML and CSV may be mixed. Not required with --no-sim.",
     )
     p.add_argument(
-        "--workflow", metavar="NAME", default=None,
-        choices=known_workflows(),
-        help="Force EDPS workflow name (e.g. metis.metis_lm_img_wkf). "
-             "Optional: the workflow is auto-detected from YAML content, or "
-             "from the simulated FITS headers for CSV-only runs. Pass this to "
-             "override the auto-detection.",
+        "--csv-lines", metavar="START:END", type=_parse_line_range, default=None,
+        help="Restrict CSV inputs to a range of 1-based file lines "
+             "(e.g. 6:12, 6: for line 6 to end, :12 for start to line 12). "
+             "The header block (column-name row + component/description/type "
+             "rows) is always kept. Applies to .csv inputs only; ignored with "
+             "--no-sim. [default: all rows]",
     )
     p.add_argument(
         "-o", "--output", metavar="DIR",
@@ -1040,11 +1133,13 @@ def main():
             )
         input_files.append(p)
 
-    # For the default runner, confirm the Install tab has produced a .env
-    # under paths.data_dir(). Other runners don't need this check.
-    if runner == "default" and not paths.env_file().exists():
+    # For the default runner, confirm the Install tab has produced the
+    # pipeline clone under paths.data_dir(). The runtime environment is derived
+    # in env.resolve_runtime_env, so no .env file is needed. Other runners
+    # don't need this check.
+    if runner == "default" and not (paths.pipeline_dir() / ".git").exists():
         sys.exit(
-            f"Error: {paths.env_file()} not found.\n"
+            f"Error: {paths.pipeline_dir()} not found.\n"
             "Run the Install tab in the MTR GUI before invoking the default runner."
         )
 
@@ -1101,20 +1196,13 @@ def main():
             # skip inference so a CSV-only set never trips on it here.
             print("  Workflow      : (not needed in --no-pipeline mode)")
         elif csv_only:
-            # CSV content is not parsed on the MTR side. --workflow is optional:
-            # if given, use it as an explicit override; otherwise the active
+            # CSV content is not parsed on the MTR side: the active
             # sub-workflow(s) and data tags are inferred from the simulated FITS
             # headers after Step 1 (see the pipeline step below). EDPS always
             # runs the umbrella workflow, so a single sub-workflow is never
             # needed up front.
-            if args.workflow:
-                yaml_sub_workflows = {args.workflow}
-                print(f"  Workflow      : {workflow}")
-                print(f"  Sub-workflows : {sorted(yaml_sub_workflows)}  "
-                      "(explicit override; CSV-only run)")
-            else:
-                print("  Workflow      : (auto-detected from simulated FITS; "
-                      "CSV-only run)")
+            print("  Workflow      : (auto-detected from simulated FITS; "
+                  "CSV-only run)")
             print("  Data tags     : (will be inferred from FITS headers)")
         else:
             yaml_tags, has_science, yaml_sub_workflows = scan_yaml_inputs(yaml_subset)
@@ -1124,13 +1212,8 @@ def main():
                     "YAML input(s). Check that properties.tech or mode is set "
                     "to one of the known values."
                 )
-            if args.workflow and args.workflow not in yaml_sub_workflows:
-                print(f"  Sub-workflows : {{{args.workflow}}}  "
-                      f"(override; inferred was {sorted(yaml_sub_workflows)})")
-                yaml_sub_workflows = {args.workflow}
-            else:
-                print(f"  Workflow      : {workflow}")
-                print(f"  Sub-workflows : {sorted(yaml_sub_workflows)}")
+            print(f"  Workflow      : {workflow}")
+            print(f"  Sub-workflows : {sorted(yaml_sub_workflows)}")
             print(f"  Data tags     : {sorted(yaml_tags) or '(none found)'}")
     else:
         if input_files:
@@ -1175,6 +1258,23 @@ def main():
         print(f"  Static calibs  : {static_calibs_dir}")
     print()
 
+    # Power-user CSV row slicing: write a header-preserving sliced copy of each
+    # CSV input and feed those to the simulation instead of the originals.  YAML
+    # inputs pass through unchanged.  Irrelevant under --no-sim (inputs ignored).
+    sim_input_files = input_files
+    if args.csv_lines and not args.no_sim:
+        sliced_dir = output_root / "sliced_inputs"
+        start, end = args.csv_lines
+        sim_input_files = []
+        for p in input_files:
+            if p.suffix.lower() == ".csv":
+                sliced = _slice_csv(p, args.csv_lines, sliced_dir)
+                print(f"  CSV slice     : {p.name} lines "
+                      f"{start or 1}-{end or 'EOF'} → {sliced}")
+                sim_input_files.append(sliced)
+            else:
+                sim_input_files.append(p)
+
     # -----------------------------------------------------------------------
     # Dry run: translate CSV input(s) to YAML and stop (no simulation/pipeline).
     # -----------------------------------------------------------------------
@@ -1190,7 +1290,7 @@ def main():
             do_calib           = 0,
             do_static          = 0,
             n_cores            = args.cores,
-            input_list         = [str(p) for p in input_files],
+            input_list         = [str(p) for p in sim_input_files],
             inst_pkgs_path     = _resolve_inst_pkgs_path(args, runner),
             sims_root          = sims_root,
             static_calibs_dir  = str(static_calibs_dir),
@@ -1213,7 +1313,7 @@ def main():
             do_calib           = args.calib,
             do_static          = args.static,
             n_cores            = args.cores,
-            input_list         = [str(p) for p in input_files],
+            input_list         = [str(p) for p in sim_input_files],
             inst_pkgs_path     = inst_pkgs_path,
             sims_root          = sims_root,
             static_calibs_dir  = str(static_calibs_dir),
@@ -1343,7 +1443,7 @@ def main():
             # workflow's science products, which a calibration-only run cannot
             # satisfy -> 0 jobs created.  Recover both from the FITS we just
             # simulated, mirroring the --no-sim path, so the correct calibration
-            # target gets scheduled even when --workflow was omitted.
+            # target gets scheduled for a CSV-only run.
             if not data_tags or not active_sub_workflows:
                 fits_tags, fits_wfs = scan_fits_inputs(sim_out)
                 if not data_tags:
@@ -1364,8 +1464,7 @@ def main():
             if not active_sub_workflows:
                 sys.exit(
                     "Error: could not identify any METIS sub-workflow from the "
-                    "simulated FITS headers.\n"
-                    "  Pass --workflow NAME to set it explicitly."
+                    "simulated FITS headers."
                 )
 
         target_flags = infer_edps_targets_for_workflows(

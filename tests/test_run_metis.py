@@ -24,6 +24,8 @@ from metis_test_runner.run_metis import (
     _check_default_env,
     _default_subprocess_env,
     _edps_base_cmd,
+    _parse_line_range,
+    _slice_csv,
     classify_fits_file,
     collect_tags_from_fits,
     infer_edps_target,
@@ -35,6 +37,8 @@ from metis_test_runner.run_metis import (
     scan_fits_inputs,
     scan_yaml_inputs,
 )
+
+import argparse
 
 
 # ---------------------------------------------------------------------------
@@ -303,12 +307,12 @@ class TestInferWorkflow:
         with pytest.raises(ValueError):
             infer_workflow([f])
 
-    # --- CSV handling: introspection is skipped, error must point at --workflow ---
+    # --- CSV handling: introspection is skipped; workflow comes from FITS ---
 
     def test_raises_when_only_csv_inputs(self, tmp_path):
-        """CSV-only input set → ValueError pointing the user at --workflow."""
+        """CSV-only input set → ValueError (workflow is inferred from FITS later)."""
         csv_file = _write_csv(tmp_path, "obs.csv")
-        with pytest.raises(ValueError, match="--workflow"):
+        with pytest.raises(ValueError, match="cannot be inferred from CSV"):
             infer_workflow([csv_file])
 
     def test_csv_files_skipped_in_mixed_input(self, tmp_path):
@@ -1293,23 +1297,26 @@ class TestEdpsBaseCmd:
 
 
 class TestCheckDefaultEnv:
-    def test_raises_when_env_file_missing(self, tmp_path):
-        missing = tmp_path / "nope" / ".env"
-        with patch("metis_test_runner.run_metis.paths.env_file", return_value=missing):
+    def test_raises_when_pipeline_clone_missing(self, tmp_path):
+        missing = tmp_path / "nope"
+        with patch("metis_test_runner.run_metis.paths.pipeline_dir",
+                   return_value=missing):
             with pytest.raises(FileNotFoundError, match="Install tab"):
                 _check_default_env("default")
 
-    def test_returns_silently_when_env_file_present(self, tmp_path):
-        env_path = tmp_path / ".env"
-        env_path.write_text("")
-        with patch("metis_test_runner.run_metis.paths.env_file", return_value=env_path):
+    def test_returns_silently_when_pipeline_clone_present(self, tmp_path):
+        clone = tmp_path / "METIS_Pipeline"
+        (clone / ".git").mkdir(parents=True)
+        with patch("metis_test_runner.run_metis.paths.pipeline_dir",
+                   return_value=clone):
             _check_default_env("default")  # no exception
 
     def test_noop_for_non_default_runners(self, tmp_path):
-        missing = tmp_path / "nope" / ".env"
-        with patch("metis_test_runner.run_metis.paths.env_file", return_value=missing):
+        missing = tmp_path / "nope"
+        with patch("metis_test_runner.run_metis.paths.pipeline_dir",
+                   return_value=missing):
             for r in ("native", "docker", "podman"):
-                _check_default_env(r)  # no exception even though .env is missing
+                _check_default_env(r)  # no exception even though clone is missing
 
 
 class TestDefaultSubprocessEnv:
@@ -1437,7 +1444,7 @@ class TestPipelineInputArg:
 
 
 # ---------------------------------------------------------------------------
-# Input file positional + --workflow flag
+# Input file positional argument
 # ---------------------------------------------------------------------------
 
 class TestInputFilesArg:
@@ -1454,23 +1461,153 @@ class TestInputFilesArg:
         assert args.input_files == ["seq.csv"]
 
 
-class TestWorkflowFlag:
-    def test_default_is_none(self):
-        args = parse_args(["foo.yaml"])
-        assert args.workflow is None
-
-    def test_explicit_workflow_accepted(self):
-        args = parse_args(["--workflow", "metis.metis_lm_img_wkf", "foo.csv"])
-        assert args.workflow == "metis.metis_lm_img_wkf"
-
-    def test_unknown_workflow_rejected(self):
-        with pytest.raises(SystemExit):
-            parse_args(["--workflow", "not.a.real.workflow", "foo.csv"])
-
-
 class TestCsvToYamlFlag:
     def test_default_is_false(self):
         assert parse_args(["foo.csv"]).csv_to_yaml is False
 
     def test_flag_sets_attribute(self):
         assert parse_args(["--csv-to-yaml", "foo.csv"]).csv_to_yaml is True
+
+
+# ---------------------------------------------------------------------------
+# --csv-lines: parse + slice
+# ---------------------------------------------------------------------------
+
+# A minimal AIT-format CSV: column-name row + 3 metadata rows + 5 data rows.
+_AIT_CSV = (
+    "test_ID,step_number,DPR.TECH\n"      # line 1 (header)
+    "component,component,component\n"      # line 2 (header)
+    "description,description,description\n"  # line 3 (header)
+    "type,type,type\n"                     # line 4 (header)
+    "LM_IMG_DARK,1,IMAGE_LM\n"             # line 5 (data row 1)
+    "LINGAIN,1,IMAGE_LM\n"                 # line 6 (data row 2)
+    "LINGAIN,2,IMAGE_LM\n"                 # line 7 (data row 3)
+    "LINGAIN,3,IMAGE_LM\n"                 # line 8 (data row 4)
+    "LINGAIN,4,IMAGE_LM\n"                 # line 9 (data row 5)
+)
+
+
+class TestParseLineRange:
+    def test_both_bounds(self):
+        assert _parse_line_range("6:12") == (6, 12)
+
+    def test_open_end(self):
+        assert _parse_line_range("6:") == (6, None)
+
+    def test_open_start(self):
+        assert _parse_line_range(":12") == (None, 12)
+
+    def test_both_open(self):
+        assert _parse_line_range(":") == (None, None)
+
+    def test_missing_colon_rejected(self):
+        with pytest.raises(argparse.ArgumentTypeError):
+            _parse_line_range("6")
+
+    def test_non_positive_rejected(self):
+        with pytest.raises(argparse.ArgumentTypeError):
+            _parse_line_range("0:5")
+
+    def test_non_integer_rejected(self):
+        with pytest.raises(argparse.ArgumentTypeError):
+            _parse_line_range("abc:5")
+
+    def test_start_after_end_rejected(self):
+        with pytest.raises(argparse.ArgumentTypeError):
+            _parse_line_range("12:6")
+
+
+class TestSliceCsv:
+    def _write(self, tmp_path, content=_AIT_CSV):
+        p = tmp_path / "seq.csv"
+        p.write_text(content)
+        return p
+
+    def test_header_preserved_and_data_range_selected(self, tmp_path):
+        src = self._write(tmp_path)
+        out = _slice_csv(src, (6, 8), tmp_path / "sliced")
+        lines = out.read_text().splitlines()
+        # 4 header rows + file lines 6-8 (3 data rows); line 5 dropped.
+        assert lines[:4] == [
+            "test_ID,step_number,DPR.TECH",
+            "component,component,component",
+            "description,description,description",
+            "type,type,type",
+        ]
+        assert lines[4:] == [
+            "LINGAIN,1,IMAGE_LM",
+            "LINGAIN,2,IMAGE_LM",
+            "LINGAIN,3,IMAGE_LM",
+        ]
+        assert "LM_IMG_DARK,1,IMAGE_LM" not in lines  # line 5 excluded
+
+    def test_output_written_next_to_out_dir_with_same_name(self, tmp_path):
+        src = self._write(tmp_path)
+        out = _slice_csv(src, (6, 8), tmp_path / "sliced")
+        assert out == tmp_path / "sliced" / "seq.csv"
+        assert out.exists()
+
+    def test_open_end_keeps_through_eof(self, tmp_path):
+        src = self._write(tmp_path)
+        out = _slice_csv(src, (7, None), tmp_path / "sliced")
+        lines = out.read_text().splitlines()
+        assert lines[4:] == [
+            "LINGAIN,2,IMAGE_LM",
+            "LINGAIN,3,IMAGE_LM",
+            "LINGAIN,4,IMAGE_LM",
+        ]
+
+    def test_open_start_counts_from_line_one(self, tmp_path):
+        src = self._write(tmp_path)
+        out = _slice_csv(src, (None, 6), tmp_path / "sliced")
+        lines = out.read_text().splitlines()
+        # lo defaults to 1, so data lines 5-6 are kept.
+        assert lines[4:] == [
+            "LM_IMG_DARK,1,IMAGE_LM",
+            "LINGAIN,1,IMAGE_LM",
+        ]
+
+    def test_zero_data_rows_warns(self, tmp_path, capsys):
+        src = self._write(tmp_path)
+        out = _slice_csv(src, (100, 200), tmp_path / "sliced")
+        lines = out.read_text().splitlines()
+        assert len(lines) == 4  # header only
+        assert "selected no data rows" in capsys.readouterr().err
+
+    def test_fixed_four_row_header_kept_with_blank_metadata_cells(self, tmp_path):
+        # Real AIT sheets leave test_ID/templateName/step_number blank in the
+        # three metadata rows, so their first cell is empty. The fixed 4-row
+        # header must still be preserved in full — otherwise csvParser's four
+        # unconditional next(reader) calls run off the end (StopIteration).
+        content = (
+            "test_ID,step_number,DPR.TECH\n"    # line 1: column ids
+            ",,Data product technique\n"         # line 2: descriptions (blank 1st)
+            ",,keyword\n"                         # line 3: data types (blank 1st)
+            ",,keyword\n"                         # line 4: (blank 1st)
+            "ROW_A,1,IFU\n"                       # line 5: data
+            "ROW_B,2,IFU\n"                       # line 6: data
+            "ROW_C,3,IFU\n"                       # line 7: data
+        )
+        src = tmp_path / "real.csv"
+        src.write_text(content)
+        out = _slice_csv(src, (6, 6), tmp_path / "sliced")
+        lines = out.read_text().splitlines()
+        assert lines[:4] == [
+            "test_ID,step_number,DPR.TECH",
+            ",,Data product technique",
+            ",,keyword",
+            ",,keyword",
+        ]
+        assert lines[4:] == ["ROW_B,2,IFU"]  # only the selected data row
+
+
+class TestCsvLinesFlag:
+    def test_default_is_none(self):
+        assert parse_args(["foo.csv"]).csv_lines is None
+
+    def test_parsed_into_tuple(self):
+        assert parse_args(["--csv-lines", "6:12", "foo.csv"]).csv_lines == (6, 12)
+
+    def test_malformed_rejected(self):
+        with pytest.raises(SystemExit):
+            parse_args(["--csv-lines", "nope", "foo.csv"])
