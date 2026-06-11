@@ -118,11 +118,18 @@ The Archive tab connects to the remote METIS AIT archive via the
 1. **Install & Configure** — paste the OmegaCEN credentials from the
    [METIS wiki](https://metis.strw.leidenuniv.nl/wiki/doku.php?id=ait:archive)
    and click **Install MetisWISE** to pip-install the package into the same
-   isolated venv that hosts MTR. Then fill in the five `[global]` fields (`database_user`,
+   isolated venv that hosts MTR. Then fill in the five database fields (`database_user`,
    `database_password`, `project`, `database_tablespacename`, `database_name`)
-   and click **Save & Test Connection**. The values are written to
-   `~/.awe/Environment.cfg`; `data_server`, port and protocol are inherited
-   from the MetisWISE-packaged default (`metis-ds.hpc.rug.nl:8013`, https).
+   and click **Save & Test Connection**. After a successful test, all
+   credentials are stored in the OS keyring (macOS Keychain / Windows
+   Credential Locker / Linux Secret Service) — never in plaintext on disk —
+   and injected into the process environment for MetisWISE at connect time.
+   On later runs, leave fields blank to use the stored values. A legacy
+   `~/.awe/Environment.cfg` from older MTR versions is still read as a
+   fallback and is scrubbed of credentials on the first successful test
+   (on keyring-less headless machines it remains the manual fallback);
+   `data_server`, port and protocol are inherited from the
+   MetisWISE-packaged default (`metis-ds.hpc.rug.nl:8013`, https).
 
 2. **Query & Download** — filter by raw classification tag or master
    `PRO.CATG`, click **Search**, select files and download them to a local
@@ -277,7 +284,7 @@ YAML and CSV inputs may be mixed in any combination.
 | `--csv-lines START:END` | all rows | Restrict CSV inputs to a range of 1-based file lines (e.g. `6:12`, `6:` from line 6 to end, `:12` from start to line 12). The header block (column-name row + `component`/`description`/`type` rows) is always kept; MTR writes a sliced copy under `<output>/sliced_inputs/` and feeds that to the simulation. Applies to `.csv` inputs only; ignored with `--no-sim`. Also exposed in the GUI Run tab. |
 | `--simulations-dir PATH` | `./METIS_Simulations` (host) or `/home/metis/METIS_Simulations` (container) | Path to ScopeSim scripts (env: `METIS_SIMULATIONS_DIR`) |
 | `--inst-pkgs PATH` | see below | Path to ScopeSim instrument packages (Armazones, ELT, METIS). Defaults to the user data dir for the `default` runner, `./inst_pkgs` for `native`, and container-resolved `./inst_pkgs` for `docker`/`podman` (env: `METIS_INST_PKGS`) |
-| `--auto-fetch-calibrations` | off | Before running the pipeline, query the remote METIS archive (via MetisWISE) for any master calibrations the input set is missing and download them into the pipeline input directory. Requires MetisWISE to be installed and `~/.awe/Environment.cfg` to hold valid credentials — see the Archive tab. |
+| `--auto-fetch-calibrations` | off | Before running the pipeline, query the remote METIS archive (via MetisWISE) for any master calibrations the input set is missing and download them into the pipeline input directory. Requires MetisWISE to be installed and archive credentials stored via the Archive tab (OS keyring; a legacy `~/.awe/Environment.cfg` also works). |
 | `--prefer-masters` | off | Set EDPS `association_preference` to `master_per_quality_level` for this run, preferring master calibrations over reduced raw data. |
 
 ### Runner modes

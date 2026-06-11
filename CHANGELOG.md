@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.4.1
+
+### Changed
+- **Archive credentials now live in the OS keyring** (macOS Keychain / Windows
+  Credential Locker / Linux Secret Service via the `keyring` package) instead
+  of plaintext files. Both the OmegaCEN pip credentials and the five database
+  fields are stored under the `metis-test-runner` keyring service after a
+  successful install / connection test, and are injected into the process
+  environment for MetisWISE at connect time — `~/.awe/Environment.cfg` is no
+  longer written. A legacy `Environment.cfg` is still read as a fallback
+  (e.g. on keyring-less headless machines) and is scrubbed of credentials on
+  the first successful **Save & Test Connection** after the upgrade. The
+  keyring is only ever touched when installing MetisWISE or connecting to the
+  archive, never at GUI startup, so local-only workflows see no unlock prompt.
+  In the Archive tab, leave the credential fields blank to use the stored
+  values.
+- The MetisWISE pip install now passes the credentialed index URL via the
+  `PIP_EXTRA_INDEX_URL` environment variable instead of the command line, so
+  the OmegaCEN password no longer appears in `/proc/<pid>/cmdline` (visible
+  to all local users while pip runs) or in the GUI log echo.
+
 ## 0.4.0
 
 ### Added

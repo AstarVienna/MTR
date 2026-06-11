@@ -13,12 +13,14 @@ Covers:
 import sys
 from unittest.mock import patch, MagicMock
 
+import pytest
+
 # Import astropy.io.fits once at module load: re-importing it after
 # importlib.reload(archive) in later tests trips astropy's logger which has
 # global warnings.showwarning state.
 from astropy.io import fits as _afits
 
-from metis_test_runner import archive
+from metis_test_runner import archive, credentials
 
 # Mocks for the commonwise database modules imported by _ensure_db_connection().
 _DB_MOCKS = {
@@ -35,6 +37,33 @@ _DB_MOCKS = {
 _IMPORT_MOCKS = {
     "metiswise.main.aweimports": MagicMock(),
 }
+
+# The five DB fields used throughout (also stocked into the fake keyring).
+_FIVE = {
+    "database_user":            "AWTEST",
+    "database_password":        "lmno",
+    "project":                  "SIM",
+    "database_tablespacename":  "metis_data",
+    "database_name":            "metis.example.com:5436/pgmetis",
+}
+
+
+@pytest.fixture(autouse=True)
+def _stub_keyring(monkeypatch):
+    """Never touch the real OS keyring; default to a stocked store.
+
+    _ensure_db_connection lazily loads credentials, so every test that
+    exercises query/download/upload would otherwise hit the real backend
+    (and could pop an unlock prompt on a developer machine).  os.environ
+    is snapshotted because apply_db_credentials mutates it.
+    """
+    monkeypatch.setattr(
+        credentials, "get_db_credentials", lambda: dict(_FIVE),
+    )
+    archive._db_creds_applied = False
+    with patch.dict("os.environ"):
+        yield
+    archive._db_creds_applied = False
 
 
 # ---------------------------------------------------------------------------
@@ -58,12 +87,14 @@ class TestMetisWISEAvailable:
 
 
 class TestInstallMetisWiseCommand:
-    # install_metiswise_command returns a SEQUENCE of pip commands:
-    #   [0] runtime deps (normal resolution), [1] metiswise itself (--no-deps).
+    # install_metiswise_command returns (pip_commands, env_overrides):
+    #   commands[0] runtime deps (normal resolution), [1] metiswise (--no-deps);
+    #   the index URLs (incl. credentials) travel in PIP_EXTRA_INDEX_URL.
 
-    def test_returns_two_commands(self):
-        cmds = archive.install_metiswise_command("user:secret")
+    def test_returns_two_commands_and_env(self):
+        cmds, env = archive.install_metiswise_command("user:secret")
         assert isinstance(cmds, list) and len(cmds) == 2
+        assert isinstance(env, dict)
         for cmd in cmds:
             # `<python> -m pip install ...` — installs into the same interpreter
             # that hosts MTR (sys.executable).
@@ -71,7 +102,7 @@ class TestInstallMetisWiseCommand:
             assert cmd[1:4] == ["-m", "pip", "install"]
 
     def test_deps_command_pulls_index_deps_not_pycpl(self):
-        deps_cmd, _ = archive.install_metiswise_command("u:p")
+        (deps_cmd, _), _ = archive.install_metiswise_command("u:p")
         # commonwise + metis-drld come from the credentialed index; psycopg2 is
         # the DB driver. pycpl is deliberately absent so it is never downgraded.
         assert "commonwise" in deps_cmd
@@ -82,7 +113,7 @@ class TestInstallMetisWiseCommand:
         assert "--no-deps" not in deps_cmd
 
     def test_metiswise_command_is_no_deps_v0_0_4_tarball(self):
-        _, mw_cmd = archive.install_metiswise_command("u:p")
+        (_, mw_cmd), _ = archive.install_metiswise_command("u:p")
         # --no-deps keeps eso-pymetis's pycpl==post4 pin out of the resolver.
         assert "--no-deps" in mw_cmd
         reqs = [a for a in mw_cmd if a.startswith("metiswise @ ")]
@@ -90,23 +121,26 @@ class TestInstallMetisWiseCommand:
         assert "github.com/AstarVienna/MetisWISE" in reqs[0]
         assert "v0.0.4" in reqs[0]
 
-    def test_credentials_in_url(self):
-        for cmd in archive.install_metiswise_command("alice:p4ss"):
-            urls = [arg for arg in cmd if "entropynaut" in arg]
-            assert len(urls) == 1
-            assert "alice:p4ss@pip.entropynaut.com" in urls[0]
+    def test_credentials_only_in_env_never_argv(self):
+        cmds, env = archive.install_metiswise_command("alice:p4ss")
+        assert "alice:p4ss@pip.entropynaut.com" in env["PIP_EXTRA_INDEX_URL"]
+        # argv is visible in /proc/<pid>/cmdline and gets echoed to logs —
+        # it must carry neither credentials nor index URLs.
+        for cmd in cmds:
+            assert "--extra-index-url" not in cmd
+            assert not any("alice" in a or "entropynaut" in a for a in cmd)
 
-    def test_extra_index_urls(self):
-        for cmd in archive.install_metiswise_command("u:p"):
-            idx_flags = [i for i, a in enumerate(cmd) if a == "--extra-index-url"]
-            assert len(idx_flags) == 3
-            urls = [cmd[i + 1] for i in idx_flags]
-            assert any("ftp.eso.org" in u for u in urls)
-            assert any("ivh.github.io" in u for u in urls)
-            assert any("entropynaut" in u for u in urls)
+    def test_extra_index_urls_in_env(self):
+        _, env = archive.install_metiswise_command("u:p")
+        urls = env["PIP_EXTRA_INDEX_URL"].split(" ")
+        assert len(urls) == 3
+        assert any("ftp.eso.org" in u for u in urls)
+        assert any("ivh.github.io" in u for u in urls)
+        assert any("entropynaut" in u for u in urls)
 
     def test_does_not_include_pymetis(self):
-        for cmd in archive.install_metiswise_command("u:p"):
+        cmds, _ = archive.install_metiswise_command("u:p")
+        for cmd in cmds:
             git_args = [a for a in cmd if a.startswith("git+")]
             assert len(git_args) == 0
 
@@ -187,14 +221,6 @@ class TestResetDbConnection:
 # ---------------------------------------------------------------------------
 # Environment.cfg read/write helpers
 # ---------------------------------------------------------------------------
-
-_FIVE = {
-    "database_user":            "AWTEST",
-    "database_password":        "lmno",
-    "project":                  "SIM",
-    "database_tablespacename":  "metis_data",
-    "database_name":            "metis.example.com:5436/pgmetis",
-}
 
 
 class TestWriteEnvCfg:
@@ -340,6 +366,171 @@ class TestReadEnvCfg:
             archive.write_env_cfg(**_FIVE)
             values = archive.read_env_cfg()
         assert values == _FIVE
+
+
+# ---------------------------------------------------------------------------
+# Credential injection (keyring → os.environ → commonwise Env)
+# ---------------------------------------------------------------------------
+
+
+class TestApplyDbCredentials:
+    def test_sets_environment_variables(self):
+        import os
+        archive.apply_db_credentials(dict(_FIVE))
+        for key, value in _FIVE.items():
+            assert os.environ[key] == value
+        # Suppresses commonwise's blocking getpass() for admin accounts.
+        assert os.environ["ask_administrator_password"] == ""
+        assert archive._db_creds_applied is True
+
+    def test_patches_already_imported_env_in_place(self):
+        env_dict = {"database_user": "stale", "other_key": "untouched"}
+        fake_module = MagicMock(Env=env_dict)
+        with patch.dict(
+            "sys.modules", {"common.config.Environment": fake_module},
+        ):
+            archive.apply_db_credentials(dict(_FIVE))
+        # Same dict object, updated in place (Profile binds Env by name).
+        assert env_dict["database_user"] == _FIVE["database_user"]
+        assert env_dict["database_password"] == _FIVE["database_password"]
+        assert env_dict["ask_administrator_password"] == ""
+        assert env_dict["other_key"] == "untouched"
+
+    def test_rejects_missing_field(self):
+        fields = dict(_FIVE)
+        fields["project"] = ""
+        with pytest.raises(RuntimeError, match="project"):
+            archive.apply_db_credentials(fields)
+        assert archive._db_creds_applied is False
+
+    def test_rejects_empty_or_undefined_password(self):
+        # Either value would send commonwise into a blocking getpass().
+        for bad in ("", "undefined"):
+            fields = dict(_FIVE)
+            fields["database_password"] = bad
+            with pytest.raises(RuntimeError, match="database_password"):
+                archive.apply_db_credentials(fields)
+
+
+class TestEnsureCredentialsApplied:
+    def test_keyring_first(self, monkeypatch):
+        import os
+        calls = []
+        monkeypatch.setattr(
+            credentials, "get_db_credentials",
+            lambda: calls.append(1) or dict(_FIVE),
+        )
+        archive._ensure_credentials_applied()
+        assert calls == [1]
+        assert os.environ["database_user"] == _FIVE["database_user"]
+
+    def test_runs_once_per_process(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            credentials, "get_db_credentials",
+            lambda: calls.append(1) or dict(_FIVE),
+        )
+        archive._ensure_credentials_applied()
+        archive._ensure_credentials_applied()
+        assert calls == [1]
+
+    def test_legacy_file_fallback_when_keyring_unavailable(
+        self, monkeypatch, tmp_path,
+    ):
+        import os
+
+        def _raise():
+            raise credentials.CredentialsUnavailable("no backend")
+
+        monkeypatch.setattr(credentials, "get_db_credentials", _raise)
+        with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
+            archive.write_env_cfg(**_FIVE)
+            archive._ensure_credentials_applied()
+        assert os.environ["database_user"] == _FIVE["database_user"]
+
+    def test_no_fallback_on_incomplete_legacy_file(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(credentials, "get_db_credentials", lambda: None)
+        awe = tmp_path / ".awe"
+        awe.mkdir()
+        (awe / "Environment.cfg").write_text(
+            "[global]\ndatabase_user : AWTEST\n"  # four fields missing
+        )
+        with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
+            with pytest.raises(RuntimeError, match="Archive tab"):
+                archive._ensure_credentials_applied()
+
+    def test_error_when_no_source(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(credentials, "get_db_credentials", lambda: None)
+        with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
+            with pytest.raises(RuntimeError, match="Archive tab"):
+                archive._ensure_credentials_applied()
+
+
+class TestScrubEnvCfg:
+    def test_removes_managed_keys_preserves_rest(self, tmp_path):
+        awe = tmp_path / ".awe"
+        awe.mkdir()
+        cfg = awe / "Environment.cfg"
+        cfg.write_text(
+            "# a comment\n"
+            "[global]\n"
+            "database_user : AWTEST\n"
+            "database_password : lmno\n"
+            "project : SIM\n"
+            "database_tablespacename : ts\n"
+            "database_name : metis.example.com:5436/pgmetis\n"
+            "data_server : remote.example.com\n"
+            "data_port : 8013\n"
+        )
+        with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
+            result = archive.scrub_env_cfg()
+        assert result == cfg
+        text = cfg.read_text()
+        for key in archive.ENV_CFG_FIELDS:
+            assert key not in text
+        assert "lmno" not in text
+        assert "data_server : remote.example.com" in text
+        assert "data_port : 8013" in text
+        assert "# a comment" in text
+        assert "[global]" in text
+
+    def test_only_scrubs_global_section(self, tmp_path):
+        awe = tmp_path / ".awe"
+        awe.mkdir()
+        cfg = awe / "Environment.cfg"
+        cfg.write_text(
+            "[global]\n"
+            "database_user : SCRUBME\n"
+            "[other]\n"
+            "database_user : KEEPME\n"
+        )
+        with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
+            archive.scrub_env_cfg()
+        text = cfg.read_text()
+        assert "SCRUBME" not in text
+        assert "database_user : KEEPME" in text
+
+    def test_missing_file_returns_none(self, tmp_path):
+        with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
+            assert archive.scrub_env_cfg() is None
+
+    def test_nothing_to_scrub_returns_none(self, tmp_path):
+        awe = tmp_path / ".awe"
+        awe.mkdir()
+        cfg = awe / "Environment.cfg"
+        original = "[global]\ndata_server : remote.example.com\n"
+        cfg.write_text(original)
+        with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
+            assert archive.scrub_env_cfg() is None
+        assert cfg.read_text() == original
+
+    def test_write_then_scrub_round_trip(self, tmp_path):
+        with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
+            archive.write_env_cfg(**_FIVE)
+            assert archive.scrub_env_cfg() is not None
+            assert archive.read_env_cfg() == {
+                k: "" for k in archive.ENV_CFG_FIELDS
+            }
 
 
 # ---------------------------------------------------------------------------

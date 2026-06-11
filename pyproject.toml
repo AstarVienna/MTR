@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "metis-test-runner"
-version = "0.4.0"
+version = "0.4.1"
 description = "GUI and CLI wrapper for end-to-end ESO METIS pipeline testing"
 readme = "README.md"
 license = { text = "BSD-3-Clause" }
@@ -29,6 +29,9 @@ dependencies = [
     "PyYAML",
     "platformdirs>=4.0",
     "python-dotenv>=1.0",
+    # OS-keyring storage for archive credentials (pulls SecretStorage/jeepney
+    # on Linux automatically).
+    "keyring>=25",
 ]
 
 [project.optional-dependencies]

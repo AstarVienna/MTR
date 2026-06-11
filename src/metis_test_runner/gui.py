@@ -731,25 +731,51 @@ class InstallTab(QWidget):
 # ---------------------------------------------------------------------------
 
 class MetisWISEInstallWorker(QThread):
-    """Install MetisWISE into the project .venv via uv pip install."""
+    """Install MetisWISE into MTR's venv via `sys.executable -m pip install`."""
 
     log  = pyqtSignal(str, str)
     done = pyqtSignal(bool)
+    # Emitted when neither the field nor the keyring provides credentials;
+    # the slot runs on the main thread (queued connection) and shows a dialog.
+    needs_input = pyqtSignal(str)
 
-    def __init__(self, credentials: str) -> None:
+    def __init__(self, pip_credentials: str | None) -> None:
+        """*pip_credentials* is the typed ``user:pass``, or None to use the
+        entry stored in the OS keyring (resolved here, on the worker thread,
+        so a blocking keyring-unlock prompt never freezes the UI)."""
         super().__init__()
-        self._credentials = credentials
+        self._credentials = pip_credentials
 
     def run(self) -> None:
+        from . import credentials as credstore
         from .archive import install_metiswise_command
+
+        creds = self._credentials
+        if creds is None:
+            try:
+                creds = credstore.get_pip_credentials()
+            except credstore.CredentialsUnavailable:
+                creds = None
+            if not creds:
+                self.needs_input.emit(
+                    "No OmegaCEN credentials stored in the OS keyring — "
+                    "enter username:password in the field above.",
+                )
+                self.done.emit(False)
+                return
+            self.log.emit("Using OmegaCEN credentials from keyring.\n", "")
+
         try:
             # install_metiswise_command returns a SEQUENCE of pip commands
-            # (deps first, then metiswise --no-deps — see archive.py for why).
-            for cmd in install_metiswise_command(self._credentials):
+            # (deps first, then metiswise --no-deps — see archive.py for why)
+            # plus env overrides carrying the credentialed index URL, which
+            # must stay out of argv (and out of this log).
+            cmds, env_overrides = install_metiswise_command(creds)
+            for cmd in cmds:
                 self.log.emit(f"$ {' '.join(cmd)}\n", "cyan")
                 proc = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    text=True,
+                    text=True, env=os.environ | env_overrides,
                 )
                 for line in iter(proc.stdout.readline, ""):
                     self.log.emit(line, "")
@@ -761,6 +787,19 @@ class MetisWISEInstallWorker(QThread):
                     )
                     self.done.emit(False)
                     return
+            if self._credentials is not None:
+                # Persist typed credentials only after a successful install.
+                try:
+                    credstore.set_pip_credentials(self._credentials)
+                    self.log.emit(
+                        "Saved OmegaCEN credentials to the OS keyring.\n",
+                        "green",
+                    )
+                except credstore.CredentialsUnavailable:
+                    self.log.emit(
+                        "Keyring unavailable — credentials kept for this "
+                        "session only.\n", "yellow",
+                    )
             self.log.emit("\n✓ MetisWISE installed successfully.\n", "green")
             self.done.emit(True)
         except Exception as exc:
@@ -769,32 +808,87 @@ class MetisWISEInstallWorker(QThread):
 
 
 class TestConnectionWorker(QThread):
-    """Write the five Environment.cfg fields and probe the remote archive."""
+    """Probe the remote archive; on success store the fields in the keyring.
+
+    Typed field values win; blanks are filled from the keyring entry (read
+    here, on the worker thread, so an unlock prompt never freezes the UI).
+    Nothing is persisted unless the connection probe succeeds.
+    """
 
     log  = pyqtSignal(str, str)
     done = pyqtSignal(bool)
+    # Emitted when fields are missing from both the form and the keyring;
+    # the slot runs on the main thread (queued connection) and shows a dialog.
+    needs_input = pyqtSignal(str)
 
     def __init__(self, fields: dict[str, str]) -> None:
         super().__init__()
         self._fields = fields
 
     def run(self) -> None:
-        from .archive import write_env_cfg, reset_db_connection, query_archive
+        from . import credentials as credstore
+        from .archive import (
+            apply_db_credentials,
+            query_archive,
+            reset_db_connection,
+            scrub_env_cfg,
+        )
+
+        fields = dict(self._fields)
+        blanks = [k for k, v in fields.items() if not v]
+        if blanks:
+            try:
+                stored = credstore.get_db_credentials() or {}
+            except credstore.CredentialsUnavailable:
+                stored = {}
+            filled = [k for k in blanks if stored.get(k)]
+            for k in filled:
+                fields[k] = stored[k]
+            if filled:
+                self.log.emit(
+                    f"Loaded {len(filled)} field(s) from keyring.\n", "",
+                )
+        missing = [k for k, v in fields.items() if not v]
+        if missing:
+            self.needs_input.emit(
+                "These fields are neither filled in nor stored in the OS "
+                "keyring:\n  " + "\n  ".join(missing),
+            )
+            self.done.emit(False)
+            return
+
         try:
-            cfg = write_env_cfg(**self._fields)
-            self.log.emit(f"Wrote credentials to {cfg}\n", "green")
+            apply_db_credentials(fields)
             reset_db_connection()
             self.log.emit("Probing archive connection…\n", "cyan")
             items = query_archive(
                 on_log=lambda msg: self.log.emit(msg + "\n", ""),
             )
-            self.log.emit(
-                f"\n✓ Connected — {len(items)} item(s) visible.\n", "green",
-            )
-            self.done.emit(True)
         except Exception as exc:
+            # Nothing persisted on failure — keyring and legacy file untouched.
             self.log.emit(f"\n✗ Connection failed: {exc}\n", "red")
             self.done.emit(False)
+            return
+
+        try:
+            credstore.set_db_credentials(fields)
+            self.log.emit("Saved credentials to the OS keyring.\n", "green")
+            if scrub_env_cfg():
+                self.log.emit(
+                    "Migrated: removed credentials from "
+                    "~/.awe/Environment.cfg\n", "",
+                )
+        except credstore.CredentialsUnavailable:
+            # Keep the legacy file intact — without a keyring backend it is
+            # the only persistent store the user has.
+            self.log.emit(
+                "Keyring unavailable — credentials active for this session "
+                "only (not saved).\n", "yellow",
+            )
+        self.log.emit(
+            f"\n✓ Connected — {len(items)} item(s) visible.\n", "green",
+        )
+        self.done.emit(True)
 
 
 class QueryWorker(QThread):
@@ -899,8 +993,9 @@ class ArchiveTab(QWidget):
     query / download / upload files.
 
     Page 0 — Install & Configure: pip-install MetisWISE into the project
-    venv, fill the five ``[global]`` fields written to
-    ``~/.awe/Environment.cfg``, and run a test connection.
+    venv, fill the five DB fields (stored in the OS keyring after a
+    successful test, injected into the process environment for
+    commonwise), and run a test connection.
     Page 1 — Query & Download: search the remote archive by category /
     filename and retrieve files.
     Page 2 — Upload: stage local FITS files (individually or by folder),
@@ -926,8 +1021,9 @@ class ArchiveTab(QWidget):
 
     def showEvent(self, event) -> None:  # noqa: N802 (Qt override)
         # Re-check whether MetisWISE is still installed every time the tab
-        # becomes visible — the Install tab's `uv sync` can remove it, and
-        # the user needs the Install button to re-enable in that case.
+        # becomes visible — re-running the Install tab can remove it (its pip
+        # reinstall of the pipeline deps doesn't include MetisWISE), and the
+        # user needs the Install button to re-enable in that case.
         super().showEvent(event)
         self._refresh_install_status()
 
@@ -969,10 +1065,11 @@ class ArchiveTab(QWidget):
             "<a href='https://metis.strw.leidenuniv.nl/wiki/doku.php?id=ait:archive'>"
             "METIS wiki</a> to pip-install the package, then fill in the five "
             "database fields (also from the wiki) and click Save &amp; Test. "
-            "The values are written to <code>~/.awe/Environment.cfg</code>; "
-            "<code>data_server</code>, port and protocol are inherited from the "
-            "MetisWISE-packaged default (<code>metis-ds.hpc.rug.nl:8013</code>, "
-            "https)."
+            "After a successful test all credentials are stored in your OS "
+            "keyring (never on disk) — on later runs, leave fields blank to "
+            "use the stored values. <code>data_server</code>, port and "
+            "protocol are inherited from the MetisWISE-packaged default "
+            "(<code>metis-ds.hpc.rug.nl:8013</code>, https)."
         )
         desc.setWordWrap(True)
         desc.setTextFormat(Qt.TextFormat.RichText)
@@ -986,7 +1083,9 @@ class ArchiveTab(QWidget):
         cred_row.addWidget(QLabel("OmegaCEN credentials (user:pass):"))
         self._cred_edit = QLineEdit()
         self._cred_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self._cred_edit.setPlaceholderText("username:password")
+        self._cred_edit.setPlaceholderText(
+            "username:password (blank = use stored keyring entry)",
+        )
         cred_row.addWidget(self._cred_edit)
         mw_lay.addLayout(cred_row)
         mw_btn_row = QHBoxLayout()
@@ -1006,8 +1105,8 @@ class ArchiveTab(QWidget):
         cfg_grp = QGroupBox("2. Remote archive credentials")
         cfg_lay = QVBoxLayout(cfg_grp)
         cfg_desc = QLabel(
-            "These values are written under <code>[global]</code> in "
-            "<code>~/.awe/Environment.cfg</code>."
+            "Stored in your OS keyring after a successful test; leave a "
+            "field blank to use its stored value."
         )
         cfg_desc.setWordWrap(True)
         cfg_desc.setTextFormat(Qt.TextFormat.RichText)
@@ -1029,6 +1128,7 @@ class ArchiveTab(QWidget):
             edit = QLineEdit()
             if key == "database_password":
                 edit.setEchoMode(QLineEdit.EchoMode.Password)
+            edit.setPlaceholderText("blank = use stored keyring value")
             edit.textChanged.connect(self._invalidate_connection)
             row.addWidget(edit)
             cfg_lay.addLayout(row)
@@ -1249,17 +1349,22 @@ class ArchiveTab(QWidget):
 
     def _on_install_metiswise(self) -> None:
         creds = self._cred_edit.text().strip()
-        if not creds:
+        if creds and ":" not in creds:
             QMessageBox.warning(
-                self, "Missing credentials",
-                "Enter OmegaCEN credentials (username:password) "
-                "to install MetisWISE.",
+                self, "Malformed credentials",
+                "OmegaCEN credentials must be username:password "
+                "(or leave the field blank to use the keyring entry).",
             )
             return
         self._log.clear()
         self._install_btn.setEnabled(False)
-        self._worker = MetisWISEInstallWorker(creds)
+        # Blank field → the worker resolves the keyring entry on its own
+        # thread, so a keyring-unlock prompt never blocks the GUI.
+        self._worker = MetisWISEInstallWorker(creds or None)
         self._worker.log.connect(lambda t, c: log_append(self._log, t, c))
+        self._worker.needs_input.connect(
+            lambda msg: QMessageBox.warning(self, "Missing credentials", msg),
+        )
         self._worker.done.connect(self._on_metiswise_installed)
         self._worker.start()
 
@@ -1278,19 +1383,17 @@ class ArchiveTab(QWidget):
             )
             return
         fields = {k: e.text().strip() for k, e in self._cfg_edits.items()}
-        missing = [k for k, v in fields.items() if not v]
-        if missing:
-            QMessageBox.warning(
-                self, "Missing fields",
-                "Fill in all five credential fields:\n  "
-                + "\n  ".join(missing),
-            )
-            return
+        # Blank fields are allowed — the worker fills them from the keyring
+        # (only it can know what is stored without prompting on this thread)
+        # and reports genuinely missing ones via needs_input.
         self._save_test_btn.setEnabled(False)
         self._cfg_status.setText("Testing…")
         self._cfg_status.setStyleSheet("color: gray;")
         self._worker = TestConnectionWorker(fields)
         self._worker.log.connect(lambda t, c: log_append(self._log, t, c))
+        self._worker.needs_input.connect(
+            lambda msg: QMessageBox.warning(self, "Missing fields", msg),
+        )
         self._worker.done.connect(self._on_test_connection_done)
         self._worker.start()
 
@@ -1535,16 +1638,21 @@ class ArchiveTab(QWidget):
                       "archive_db_pass"):
             self._settings.remove(stale)
 
-        # Pre-populate from ~/.awe/Environment.cfg if present.
+        # Pre-populate from a legacy (pre-keyring) ~/.awe/Environment.cfg if
+        # present.  Deliberately NO keyring read here: that could pop an
+        # unlock prompt at GUI startup, annoying users who never touch the
+        # archive.  Stored keyring values are resolved lazily by the workers;
+        # post-migration the file is scrubbed and the fields stay blank
+        # (placeholders explain that blank = stored keyring value).
         from .archive import read_env_cfg
         existing = read_env_cfg()
         for key, edit in self._cfg_edits.items():
             edit.setText(existing.get(key, ""))
 
     def _save_settings(self) -> None:
-        # No archive fields are persisted to QSettings. The DB fields
-        # live in ~/.awe/Environment.cfg after Save & Test; the OmegaCEN
-        # creds are kept in-memory only for this session.
+        # No archive fields are persisted to QSettings. All credentials live
+        # in the OS keyring, written by the workers after a successful
+        # install / connection test.
         return
 
 
