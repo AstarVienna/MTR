@@ -1697,8 +1697,12 @@ class RunTab(QWidget):
         remove_btn = QPushButton("Remove")
         remove_btn.setProperty("role", "danger")
         remove_btn.clicked.connect(self._remove_input)
+        clear_btn = QPushButton("Clear")
+        clear_btn.setProperty("role", "success")
+        clear_btn.clicked.connect(self._clear_inputs)
         btn_col.addWidget(add_btn)
         btn_col.addWidget(remove_btn)
+        btn_col.addWidget(clear_btn)
         btn_col.addStretch()
         file_row.addLayout(btn_col)
         input_lay.addLayout(file_row)
@@ -1857,7 +1861,6 @@ class RunTab(QWidget):
         self.pipeline_input_list = QListWidget()
         self.pipeline_input_list.setSelectionMode(
             QListWidget.SelectionMode.ExtendedSelection)
-        self.pipeline_input_list.setMaximumHeight(100)
         pipe_in_content = QHBoxLayout()
         pipe_in_content.addWidget(self.pipeline_input_list)
         pipe_in_btns = QVBoxLayout()
@@ -1867,10 +1870,19 @@ class RunTab(QWidget):
         pipe_rm_btn = QPushButton("Remove")
         pipe_rm_btn.setProperty("role", "danger")
         pipe_rm_btn.clicked.connect(self._remove_pipeline_input)
+        pipe_clear_btn = QPushButton("Clear")
+        pipe_clear_btn.setProperty("role", "success")
+        pipe_clear_btn.clicked.connect(self._clear_pipeline_inputs)
         pipe_in_btns.addWidget(pipe_add_btn)
         pipe_in_btns.addWidget(pipe_rm_btn)
+        pipe_in_btns.addWidget(pipe_clear_btn)
         pipe_in_btns.addStretch()
         pipe_in_content.addLayout(pipe_in_btns)
+        # The list is capped at 100px; when the row gets more height the list
+        # would be vertically centred while the button column (top-stretched)
+        # stays at the top. Pin the list to the top so both edges line up.
+        pipe_in_content.setAlignment(
+            self.pipeline_input_list, Qt.AlignmentFlag.AlignTop)
 
         self.pipeline_input_row = QWidget()
         pi_outer = QVBoxLayout(self.pipeline_input_row)
@@ -1878,6 +1890,11 @@ class RunTab(QWidget):
         pi_lbl = QLabel("Pipeline input dirs  (--pipeline-input):")
         pi_outer.addWidget(pi_lbl)
         pi_outer.addLayout(pipe_in_content)
+        # Cap the list at the button column's height (computed after the
+        # layouts are parented so style spacing resolves) so the list's
+        # bottom edge lines up with the Clear button.
+        self.pipeline_input_list.setMaximumHeight(
+            pipe_in_btns.sizeHint().height())
         opts_lay.addWidget(self.pipeline_input_row)
         # Connect mode radio buttons now that pipeline_input_row exists
         for rb in (self.rb_both, self.rb_sim_only, self.rb_pipe_only):
@@ -2016,6 +2033,10 @@ class RunTab(QWidget):
             self.input_list.takeItem(self.input_list.row(item))
         self._refresh_input_status()
 
+    def _clear_inputs(self) -> None:
+        self.input_list.clear()
+        self._refresh_input_status()
+
     def _input_format_counts(self) -> tuple[int, int]:
         """Return (yaml_count, csv_count) across self.input_list."""
         n_yaml = n_csv = 0
@@ -2044,6 +2065,10 @@ class RunTab(QWidget):
     def _remove_pipeline_input(self) -> None:
         for it in self.pipeline_input_list.selectedItems():
             self.pipeline_input_list.takeItem(self.pipeline_input_list.row(it))
+        self._update_output_info()
+
+    def _clear_pipeline_inputs(self) -> None:
+        self.pipeline_input_list.clear()
         self._update_output_info()
 
     # ── Run ──────────────────────────────────────────────────────────────────
