@@ -53,6 +53,14 @@
   CSV from the simulated FITS headers); for manual control over the EDPS /
   pyesorex invocation, use `mtr-exec` / `mtr-shell`.
 
+## 0.3.3
+
+### Changed
+- Bumped `pycpl` pin from `1.0.3.post10` to `1.0.3.post11`, matching the
+  upstream `pymetis` `[project]` pin. post11 ships prebuilt macOS wheels on
+  ivh's index; post10 remains compatible but post11 is now the upstream
+  baseline.
+
 ## 0.3.2
 
 ### Changed

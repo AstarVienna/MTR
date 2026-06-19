@@ -482,7 +482,7 @@ class InstallWorker(QThread):
                 [sys.executable, "-m", "pip", "install",
                  "--extra-index-url", PYCPL_INDEX,
                  "--extra-index-url", ESO_INDEX,
-                 "pycpl==1.0.3.post10",
+                 "pycpl==1.0.3.post11",
                  "edps",
                  "pyesorex",
                  "adari_core",
@@ -498,7 +498,7 @@ class InstallWorker(QThread):
             #   (a) ``pymetis`` is importable in-process (metiswise imports it), and
             #   (b) the Archive-tab metiswise install finds ``eso-pymetis`` already
             #       satisfied — avoiding a 2nd pymetis copy and the eso-pymetis
-            #       pycpl==1.0.3.post4 vs our pycpl==1.0.3.post10 pin clash.
+            #       pycpl==1.0.3.post4 vs our pycpl==1.0.3.post11 pin clash.
             # --no-deps keeps our own pycpl/edps/pyesorex pins authoritative.
             # TODO: remove/revisit if metiswise drops the eso-pymetis dependency
             # or eso-pymetis stops pinning pycpl.

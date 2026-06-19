@@ -114,7 +114,7 @@ class TestInstallMetisWiseCommand:
 
     def test_metiswise_command_is_no_deps_v0_0_4_tarball(self):
         (_, mw_cmd), _ = archive.install_metiswise_command("u:p")
-        # --no-deps keeps eso-pymetis's pycpl==post4 pin out of the resolver.
+        # --no-deps keeps eso-pymetis's stale pycpl pin out of the resolver.
         assert "--no-deps" in mw_cmd
         reqs = [a for a in mw_cmd if a.startswith("metiswise @ ")]
         assert len(reqs) == 1
