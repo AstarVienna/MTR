@@ -657,6 +657,176 @@ class InstallWorker(QThread):
         props.write_text(text)
         self.log.emit(f"Patched {props}\n", "")
 
+
+# ---------------------------------------------------------------------------
+# Uninstall worker (background thread)
+# ---------------------------------------------------------------------------
+
+class UninstallWorker(QThread):
+    """Reverses every change made by InstallWorker (and the Archive-tab
+    MetisWISE install).
+
+    Steps: pip-uninstall the installed packages, delete the whole user data
+    directory, restore or remove the EDPS configuration, and clear the stored
+    archive credentials from the OS keyring.
+
+    Each step is isolated in its own ``try/except`` so a single failure (e.g. a
+    keyring backend that is unavailable, or a directory that is busy) is logged
+    but does not abort the remaining steps.  ``done(False)`` is emitted if any
+    step failed.
+    """
+
+    log  = pyqtSignal(str, str)   # (text, colour)
+    done = pyqtSignal(bool)       # success (False if any step failed)
+
+    # Top-level packages the Install tab installs: the pipeline deps plus the
+    # two editable installs, by their distribution names (the pymetis clone
+    # registers as ``eso-pymetis``; METIS_Simulations as ``metis_simulations``).
+    PIPELINE_PACKAGES = [
+        "pycpl", "edps", "pyesorex", "adari_core",
+        "scopesim", "scopesim_templates",
+        "eso-pymetis", "metis_simulations",
+    ]
+
+    def run(self) -> None:
+        from . import credentials as credstore
+        # _METISWISE_RUNTIME_DEPS is the single source of truth for what the
+        # Archive tab installs; reuse it so the two lists never drift apart.
+        from .archive import _METISWISE_RUNTIME_DEPS
+
+        ok = True
+
+        # ── pip uninstall ─────────────────────────────────────────────────
+        self._step("Uninstalling Python packages via pip…")
+        self.log.emit(
+            "Only the explicitly-installed packages are removed; their "
+            "transitive sub-dependencies are left in place.\n", "yellow",
+        )
+        packages = [*self.PIPELINE_PACKAGES, "metiswise", *_METISWISE_RUNTIME_DEPS]
+        try:
+            # pip exits 0 for not-installed names ("WARNING: Skipping …"), so a
+            # single call is safe whether or not MetisWISE was ever installed.
+            self._run([sys.executable, "-m", "pip", "uninstall", "-y", *packages])
+        except Exception as exc:
+            ok = False
+            self.log.emit(f"✗ pip uninstall failed: {exc}\n", "red")
+
+        # ── delete the user data directory ────────────────────────────────
+        self._step(f"Removing the METIS data directory  →  {REPO_ROOT}")
+        try:
+            self._remove_data_dir()
+        except Exception as exc:
+            ok = False
+            self.log.emit(f"✗ Failed to remove data directory: {exc}\n", "red")
+
+        # ── restore / remove EDPS configuration ───────────────────────────
+        self._step("Cleaning up EDPS configuration…")
+        try:
+            self._cleanup_edps()
+        except Exception as exc:
+            ok = False
+            self.log.emit(f"✗ EDPS cleanup failed: {exc}\n", "red")
+
+        # ── clear keyring credentials ─────────────────────────────────────
+        self._step("Clearing stored archive credentials…")
+        for label, deleter in (
+            ("OmegaCEN pip", credstore.delete_pip_credentials),
+            ("archive DB",   credstore.delete_db_credentials),
+        ):
+            try:
+                deleter()
+                self.log.emit(f"Removed {label} credentials from the keyring.\n", "")
+            except credstore.CredentialsUnavailable as exc:
+                # A missing keyring backend is not fatal — there is simply
+                # nothing persisted to clear.
+                self.log.emit(
+                    f"Could not clear {label} credentials: {exc}\n", "yellow",
+                )
+
+        if ok:
+            self.log.emit("\n✓ Uninstall complete.\n", "green")
+        else:
+            self.log.emit(
+                "\n⚠ Uninstall finished with errors (see above).\n", "yellow",
+            )
+        self.done.emit(ok)
+
+    # ── private helpers ───────────────────────────────────────────────────
+
+    def _step(self, msg: str) -> None:
+        self.log.emit(f"\n── {msg}\n", "cyan")
+
+    def _run(self, cmd: list, timeout: int = 300) -> None:
+        self.log.emit(f"$ {' '.join(str(c) for c in cmd)}\n", "")
+        proc = subprocess.Popen(
+            [str(c) for c in cmd],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            env=_child_env(),
+        )
+        for line in proc.stdout:
+            self.log.emit(re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line), "")
+        proc.wait(timeout=timeout)
+        if proc.returncode not in (0, None):
+            raise RuntimeError(
+                f"Command exited {proc.returncode}: {' '.join(str(c) for c in cmd)}"
+            )
+
+    def _remove_data_dir(self) -> None:
+        """Delete the whole user data dir, plus an externally-relocated
+        simulations clone if one exists outside the data dir."""
+        targets = [REPO_ROOT]
+        # If METIS_SIMULATIONS_DIR points outside the data dir, removing
+        # REPO_ROOT won't catch the clone — remove it explicitly.
+        if TARGET_B != REPO_ROOT and REPO_ROOT not in TARGET_B.parents:
+            targets.append(TARGET_B)
+        for target in targets:
+            if target.exists():
+                shutil.rmtree(target)
+                self.log.emit(f"Removed {target}\n", "")
+            else:
+                self.log.emit(f"{target} does not exist — nothing to remove.\n", "")
+
+    def _cleanup_edps(self) -> None:
+        """If the install backed up a pre-existing config, restore it; otherwise
+        the install created the whole EDPS state, so remove it entirely
+        (config dir + the base_dir bookkeeping/data directory)."""
+        edps_dir = Path.home() / ".edps"
+        props = edps_dir / "application.properties"
+        backup = props.with_name("application.properties_backup")
+        if backup.exists():
+            if props.exists():
+                props.unlink()
+            backup.rename(props)
+            self.log.emit(f"Restored original {props} from backup.\n", "green")
+            return
+        # No backup → install owns everything here. Resolve the bookkeeping dir
+        # from the config *before* deleting it.
+        base_dir = self._edps_base_dir(props)
+        for target in (edps_dir, base_dir):
+            if target.exists():
+                shutil.rmtree(target)
+                self.log.emit(f"Removed {target}\n", "")
+            else:
+                self.log.emit(f"{target} does not exist — nothing to remove.\n", "")
+
+    @staticmethod
+    def _edps_base_dir(props: Path) -> Path:
+        """Read ``base_dir=`` from the EDPS config; fall back to ~/EDPS_data."""
+        default = Path.home() / "EDPS_data"
+        if not props.exists():
+            return default
+        for line in props.read_text().splitlines():
+            stripped = line.strip()
+            if stripped.startswith("base_dir="):
+                value = stripped.split("=", 1)[1].strip()
+                if value:
+                    return Path(value).expanduser()
+        return default
+
+
 def _resolve_run_metis_command() -> list[str]:
     """Build the `python -m metis_test_runner.run_metis` invocation list."""
     return [sys.executable, "-u", "-m", "metis_test_runner.run_metis"]
@@ -670,7 +840,7 @@ class InstallTab(QWidget):
 
     def __init__(self) -> None:
         super().__init__()
-        self._worker: InstallWorker | None = None
+        self._worker: InstallWorker | UninstallWorker | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -702,12 +872,24 @@ class InstallTab(QWidget):
         desc.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(desc)
 
+        btn_row = QHBoxLayout()
+
         self.install_btn = QPushButton("Install / Update")
         self.install_btn.setProperty("role", "success")
         self.install_btn.setMinimumHeight(36)
         self.install_btn.setMaximumWidth(200)
         self.install_btn.clicked.connect(self._start)
-        layout.addWidget(self.install_btn)
+        btn_row.addWidget(self.install_btn)
+
+        self.uninstall_btn = QPushButton("Uninstall")
+        self.uninstall_btn.setProperty("role", "danger")
+        self.uninstall_btn.setMinimumHeight(36)
+        self.uninstall_btn.setMaximumWidth(200)
+        self.uninstall_btn.clicked.connect(self._uninstall)
+        btn_row.addWidget(self.uninstall_btn)
+
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
 
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
@@ -717,13 +899,37 @@ class InstallTab(QWidget):
     def _start(self) -> None:
         self.log_view.clear()
         self.install_btn.setEnabled(False)
+        self.uninstall_btn.setEnabled(False)
         self._worker = InstallWorker()
+        self._worker.log.connect(lambda text, color: log_append(self.log_view, text, color))
+        self._worker.done.connect(self._on_done)
+        self._worker.start()
+
+    def _uninstall(self) -> None:
+        reply = QMessageBox.question(
+            self, "Confirm uninstall",
+            "This will permanently:\n"
+            "• pip-uninstall all pipeline and MetisWISE packages\n"
+            f"• delete the entire data directory ({REPO_ROOT})\n"
+            "• restore or remove the EDPS configuration\n"
+            "• delete stored archive credentials from the OS keyring\n\n"
+            "Transitive sub-dependencies are not removed. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self.log_view.clear()
+        self.install_btn.setEnabled(False)
+        self.uninstall_btn.setEnabled(False)
+        self._worker = UninstallWorker()
         self._worker.log.connect(lambda text, color: log_append(self.log_view, text, color))
         self._worker.done.connect(self._on_done)
         self._worker.start()
 
     def _on_done(self, success: bool) -> None:
         self.install_btn.setEnabled(True)
+        self.uninstall_btn.setEnabled(True)
 
 
 # ---------------------------------------------------------------------------

@@ -865,3 +865,112 @@ class TestUploadWorker:
         with mock_patch("metis_test_runner.archive.upload_file", return_value=True):
             worker.run()
         assert emitted["progress"] == [(1, 3), (2, 3), (3, 3)]
+
+
+# ---------------------------------------------------------------------------
+# UninstallWorker._cleanup_edps — restore-from-backup vs full removal
+# ---------------------------------------------------------------------------
+
+class TestUninstallEdpsCleanup:
+    def _make_worker(self, qapp):
+        from metis_test_runner.gui import UninstallWorker
+        return UninstallWorker()
+
+    def _seed(self, tmp_path, content, *, backup=None):
+        edps = tmp_path / ".edps"
+        edps.mkdir()
+        props = edps / "application.properties"
+        props.write_text(content)
+        if backup is not None:
+            props.with_name("application.properties_backup").write_text(backup)
+        return props
+
+    def test_restores_original_from_backup(self, qapp, tmp_path, monkeypatch):
+        # A backup means the install displaced a pre-existing config — restore
+        # it and leave the rest of ~/.edps intact.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        props = self._seed(tmp_path, "port=4444\n", backup="port=9999\n")
+        self._make_worker(qapp)._cleanup_edps()
+        assert props.read_text() == "port=9999\n"
+        assert not props.with_name("application.properties_backup").exists()
+        assert (tmp_path / ".edps").exists()
+
+    def test_removes_edps_and_bookkeeping_when_no_backup(self, qapp, tmp_path, monkeypatch):
+        # No backup → the install created everything; remove ~/.edps AND the
+        # base_dir bookkeeping directory named in the config.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        book = tmp_path / "EDPS_store"
+        book.mkdir()
+        (book / "db.json").write_text("{}")
+        self._seed(tmp_path, f"port=4444\nbase_dir={book}\n")
+        self._make_worker(qapp)._cleanup_edps()
+        assert not (tmp_path / ".edps").exists()
+        assert not book.exists()
+
+    def test_no_backup_falls_back_to_default_bookkeeping(self, qapp, tmp_path, monkeypatch):
+        # When the config has no base_dir line, the default ~/EDPS_data is used.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        default_book = tmp_path / "EDPS_data"
+        default_book.mkdir()
+        self._seed(tmp_path, "port=4444\n")
+        self._make_worker(qapp)._cleanup_edps()
+        assert not (tmp_path / ".edps").exists()
+        assert not default_book.exists()
+
+    def test_edps_base_dir_parses_config_value(self, qapp, tmp_path):
+        from metis_test_runner.gui import UninstallWorker
+        props = tmp_path / "application.properties"
+        props.write_text("port=4444\nbase_dir=/data/edps\nmode=link\n")
+        assert UninstallWorker._edps_base_dir(props) == Path("/data/edps")
+
+    def test_edps_base_dir_defaults_when_absent(self, qapp, tmp_path, monkeypatch):
+        from metis_test_runner.gui import UninstallWorker
+        monkeypatch.setenv("HOME", str(tmp_path))
+        props = tmp_path / "application.properties"
+        props.write_text("port=4444\n")
+        assert UninstallWorker._edps_base_dir(props) == tmp_path / "EDPS_data"
+
+
+# ---------------------------------------------------------------------------
+# UninstallWorker._remove_data_dir — whole-tree removal
+# ---------------------------------------------------------------------------
+
+class TestUninstallRemoveDataDir:
+    def _make_worker(self, qapp):
+        from metis_test_runner.gui import UninstallWorker
+        return UninstallWorker()
+
+    def test_removes_entire_data_tree(self, qapp, tmp_path, monkeypatch):
+        from metis_test_runner import gui
+        data = tmp_path / "data"
+        sims = data / "METIS_Simulations"  # inside the data dir
+        sims.mkdir(parents=True)
+        (data / ".env").write_text("X=1\n")
+        (data / "inst_pkgs").mkdir()
+        monkeypatch.setattr(gui, "REPO_ROOT", data)
+        monkeypatch.setattr(gui, "TARGET_B", sims)
+        self._make_worker(qapp)._remove_data_dir()
+        assert not data.exists()
+
+    def test_also_removes_externally_relocated_simulations(self, qapp, tmp_path, monkeypatch):
+        # METIS_SIMULATIONS_DIR can point outside the data dir; removing the
+        # data dir alone would leave that clone behind.
+        from metis_test_runner import gui
+        data = tmp_path / "data"
+        data.mkdir()
+        external_sims = tmp_path / "elsewhere" / "METIS_Simulations"
+        external_sims.mkdir(parents=True)
+        monkeypatch.setattr(gui, "REPO_ROOT", data)
+        monkeypatch.setattr(gui, "TARGET_B", external_sims)
+        self._make_worker(qapp)._remove_data_dir()
+        assert not data.exists()
+        assert not external_sims.exists()
+
+    def test_noop_when_nothing_to_remove(self, qapp, tmp_path, monkeypatch):
+        from metis_test_runner import gui
+        data = tmp_path / "missing"
+        monkeypatch.setattr(gui, "REPO_ROOT", data)
+        monkeypatch.setattr(gui, "TARGET_B", data / "METIS_Simulations")
+        # Should not raise even though nothing exists.
+        self._make_worker(qapp)._remove_data_dir()
+        assert not data.exists()

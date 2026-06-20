@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Uninstall button** on the Install tab (red, next to Install / Update).
+  Clicking it shows a confirmation dialog, then reverses every change the
+  installer made: pip-uninstalls the pipeline packages (`pycpl`, `edps`,
+  `pyesorex`, `adari_core`, `scopesim`, `scopesim_templates`, `eso-pymetis`,
+  `metis_simulations`) and the Archive-tab MetisWISE packages (`metiswise` plus
+  its runtime deps), deletes the entire METIS data directory
+  (`~/.local/share/metis-test-runner`), cleans up the EDPS configuration
+  (restores a pre-existing config from backup if one exists, otherwise removes
+  `~/.edps` and the EDPS bookkeeping directory), and clears the stored archive
+  credentials from the OS keyring. Both buttons are disabled during the
+  operation. Uninstall is resilient — a failure in one step is logged but does
+  not abort the remaining steps.
+
 ## 0.4.1
 
 ### Changed
