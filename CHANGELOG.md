@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.2
 
 ### Added
 - **Uninstall button** on the Install tab (red, next to Install / Update).
@@ -15,6 +15,16 @@
   credentials from the OS keyring. Both buttons are disabled during the
   operation. Uninstall is resilient — a failure in one step is logged but does
   not abort the remaining steps.
+- **Clear buttons** on the Run-tab input lists — one click empties the file
+  list or the pipeline-directory list (success role). In pipeline-only mode the
+  pipeline list is top-aligned and sized to the button column so the list and
+  button edges line up.
+
+### Changed
+- Bumped `pycpl` pin from `1.0.3.post10` to `1.0.3.post11`, matching the
+  upstream `pymetis` `[project]` pin. post11 ships prebuilt macOS wheels on
+  ivh's index; post10 remains compatible but post11 is now the upstream
+  baseline.
 
 ## 0.4.1
 
@@ -68,14 +78,6 @@
   The EDPS workflow is auto-detected for every input type (YAML pre-simulation,
   CSV from the simulated FITS headers); for manual control over the EDPS /
   pyesorex invocation, use `mtr-exec` / `mtr-shell`.
-
-## 0.3.3
-
-### Changed
-- Bumped `pycpl` pin from `1.0.3.post10` to `1.0.3.post11`, matching the
-  upstream `pymetis` `[project]` pin. post11 ships prebuilt macOS wheels on
-  ivh's index; post10 remains compatible but post11 is now the upstream
-  baseline.
 
 ## 0.3.2
 
