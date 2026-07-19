@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.3
+
+### Fixed
+- **pip bootstrap for pipx installs.** pipx creates each application's venv
+  *without* pip (it installs the app via an external/shared pip), so the Install
+  tab, the Uninstall button, and the Archive (MetisWISE) installer — all of which
+  run `python -m pip …` in MTR's own interpreter — failed immediately with
+  `No module named pip` on every pipx-installed MTR, i.e. the recommended install
+  method. MTR now probes for pip and, when it is absent, bootstraps it with
+  `python -m ensurepip --upgrade` (stdlib, bundled wheels, no network) before its
+  pip calls. A no-op when pip already exists (e.g. a plain-`venv` install), so an
+  existing, possibly newer pip is never touched.
+
+### Changed
+- Install-instructions note in the README: MTR supports Python 3.12–3.13; on a
+  newer interpreter (e.g. 3.14) the ESO pipeline dependencies have no wheels, so
+  pin MTR with `pipx install metis-test-runner --python python3.12`.
+
 ## 0.4.2
 
 ### Added
