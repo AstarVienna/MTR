@@ -16,10 +16,31 @@ wrap commands with ``runner_prefix()`` instead of injecting env vars.
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
 from . import paths
+
+
+def ensurepip_command_if_needed(python_exe: str = sys.executable) -> list[str] | None:
+    """Return an ``ensurepip`` bootstrap command when *python_exe* has no pip.
+
+    pipx creates each app's venv *without* pip (it installs the app via an
+    external/shared pip), so ``python -m pip …`` fails with ``No module named
+    pip`` for every pipx-installed MTR.  ``ensurepip`` (stdlib, bundled wheels,
+    no network) installs pip in-place.  Returns ``None`` when pip is already
+    importable — e.g. a plain-``venv`` install — so an existing, possibly newer
+    pip is never touched.  Runner-agnostic; safe to call before any of MTR's
+    ``python -m pip`` invocations.
+    """
+    probe = subprocess.run(
+        [python_exe, "-m", "pip", "--version"],
+        capture_output=True, text=True,
+    )
+    if probe.returncode == 0:
+        return None
+    return [python_exe, "-m", "ensurepip", "--upgrade"]
 
 
 def resolve_runtime_env(runner: str = "default") -> dict[str, str]:

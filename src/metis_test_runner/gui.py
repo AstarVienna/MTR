@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 )
 
 from . import paths
-from .env import resolve_runtime_env
+from .env import ensurepip_command_if_needed, resolve_runtime_env
 from .indexes import ESO_INDEX, PYCPL_INDEX
 
 # ---------------------------------------------------------------------------
@@ -471,6 +471,8 @@ class InstallWorker(QThread):
             self._step(f"Cloning / updating METIS_Simulations  →  {TARGET_B}")
             self._clone_or_update(REPO_B_URL, TARGET_B)
 
+            self._ensure_pip()
+
             self._step("Installing pipeline Python dependencies via pip…")
             recipe_dir = str(TARGET_A / "metisp" / "pyrecipes") + "/"
             os.environ["PYCPL_RECIPE_DIR"] = recipe_dir
@@ -536,6 +538,13 @@ class InstallWorker(QThread):
 
     def _step(self, msg: str) -> None:
         self.log.emit(f"\n── {msg}\n", "cyan")
+
+    def _ensure_pip(self) -> None:
+        """Bootstrap pip into MTR's interpreter if it is missing (pipx venvs)."""
+        boot = ensurepip_command_if_needed()
+        if boot:
+            self._step("Bootstrapping pip (pipx app venvs ship without it)…")
+            self._run(boot)
 
     def _run(self, cmd: list, cwd: Path | None = None,
              stdin_text: str | None = None, timeout: int = 300) -> None:
@@ -704,6 +713,9 @@ class UninstallWorker(QThread):
         )
         packages = [*self.PIPELINE_PACKAGES, "metiswise", *_METISWISE_RUNTIME_DEPS]
         try:
+            # pipx venvs have no pip; bootstrap it so the uninstall can run
+            # (the packages live in the venv even when pip itself is absent).
+            self._ensure_pip()
             # pip exits 0 for not-installed names ("WARNING: Skipping …"), so a
             # single call is safe whether or not MetisWISE was ever installed.
             self._run([sys.executable, "-m", "pip", "uninstall", "-y", *packages])
@@ -755,6 +767,13 @@ class UninstallWorker(QThread):
 
     def _step(self, msg: str) -> None:
         self.log.emit(f"\n── {msg}\n", "cyan")
+
+    def _ensure_pip(self) -> None:
+        """Bootstrap pip into MTR's interpreter if it is missing (pipx venvs)."""
+        boot = ensurepip_command_if_needed()
+        if boot:
+            self._step("Bootstrapping pip (pipx app venvs ship without it)…")
+            self._run(boot)
 
     def _run(self, cmd: list, timeout: int = 300) -> None:
         self.log.emit(f"$ {' '.join(str(c) for c in cmd)}\n", "")
@@ -977,6 +996,11 @@ class MetisWISEInstallWorker(QThread):
             # plus env overrides carrying the credentialed index URL, which
             # must stay out of argv (and out of this log).
             cmds, env_overrides = install_metiswise_command(creds)
+            # pipx venvs ship without pip; bootstrap it first (no credentialed
+            # index needed for ensurepip, so run it with the plain environment).
+            boot = ensurepip_command_if_needed()
+            if boot:
+                cmds = [boot, *cmds]
             for cmd in cmds:
                 self.log.emit(f"$ {' '.join(cmd)}\n", "cyan")
                 proc = subprocess.Popen(

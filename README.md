@@ -37,6 +37,11 @@ mtr                                  # launches the GUI from anywhere
 mtr-cli examples/LMS_RAD_06.yaml     # CLI equivalent
 ```
 
+> **Tip:** MTR supports Python **3.12–3.13**. On a newer default `python3`
+> (e.g. 3.14) the ESO pipeline dependencies (`scopesim`, `pycpl`, …) have no
+> matching wheels yet, so the Install tab fails to build them. Pin MTR to a
+> supported interpreter: `pipx install metis-test-runner --python python3.12`.
+
 If you'd rather not install pipx, use Python's built-in venv module:
 
 ```bash

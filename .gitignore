@@ -44,3 +44,6 @@ uv.lock
 *~
 .idea/
 .vscode/
+
+# Local-only scratch notes (not for the repo)
+/TODO.md

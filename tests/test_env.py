@@ -3,11 +3,17 @@
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from metis_test_runner import env as env_mod
 from metis_test_runner import paths
-from metis_test_runner.env import resolve_runtime_env, runner_prefix
+from metis_test_runner.env import (
+    ensurepip_command_if_needed,
+    resolve_runtime_env,
+    runner_prefix,
+)
 
 
 def _patch_paths(monkeypatch, tmp_path):
@@ -53,6 +59,37 @@ class TestResolveRuntimeEnv:
         env = resolve_runtime_env("native")
         assert "PYCPL_RECIPE_DIR" not in env
         assert env["PYTHONUNBUFFERED"] == "1"
+
+
+class TestEnsurePipCommandIfNeeded:
+    def test_returns_none_when_pip_present(self, monkeypatch):
+        # pip --version exits 0 → pip already usable, nothing to bootstrap.
+        monkeypatch.setattr(
+            env_mod.subprocess, "run",
+            lambda *a, **k: SimpleNamespace(returncode=0),
+        )
+        assert ensurepip_command_if_needed("/some/python") is None
+
+    def test_returns_ensurepip_command_when_pip_missing(self, monkeypatch):
+        # pip --version exits non-zero (pipx venv) → bootstrap via ensurepip.
+        monkeypatch.setattr(
+            env_mod.subprocess, "run",
+            lambda *a, **k: SimpleNamespace(returncode=1),
+        )
+        assert ensurepip_command_if_needed("/some/python") == [
+            "/some/python", "-m", "ensurepip", "--upgrade",
+        ]
+
+    def test_defaults_to_sys_executable(self, monkeypatch):
+        captured = {}
+
+        def fake_run(cmd, *a, **k):
+            captured["cmd"] = cmd
+            return SimpleNamespace(returncode=0)
+
+        monkeypatch.setattr(env_mod.subprocess, "run", fake_run)
+        ensurepip_command_if_needed()
+        assert captured["cmd"][0] == sys.executable
 
 
 class TestRunnerPrefix:
