@@ -112,15 +112,15 @@ def install_metiswise_command(
     Why ``--no-deps`` for metiswise: metiswise 0.0.4 declares ``eso-pymetis``,
     and the cloned eso-pymetis the Install tab installs editable pins
     ``pycpl==1.0.3.post4``.  A normal ``pip install metiswise`` would let that
-    pin downgrade our ``pycpl==1.0.3.post11`` — which we must keep, because
-    post11 is where ivh's index ships prebuilt wheels for the macOS versions
-    our users run (post4 would force a source build that fails there).
+    pin downgrade our ``pycpl==1.0.4.post6`` — which we must keep, because
+    1.0.4.post6 is where ivh's index ships prebuilt wheels for the macOS
+    versions our users run (post4 would force a source build that fails there).
     ``--no-deps`` keeps pip from ever seeing eso-pymetis's pycpl pin.
 
-    TODO: upstream pymetis [project] block now pins pycpl==1.0.3.post11, but
-    the entropynaut-published eso-pymetis package likely still carries post4.
-    Once the published eso-pymetis is updated to post11, collapse this back
-    into a single ``pip install <metiswise>`` with normal dependency resolution.
+    TODO: upstream pymetis [project] still pins pycpl==1.0.3.post11, so this
+    1.0.4.post6 pin is deliberately ahead of it, and the entropynaut-published
+    eso-pymetis likely still carries post4.  Once both catch up, collapse this
+    back into a single ``pip install <metiswise>`` with normal resolution.
     """
     env_overrides = {
         "PIP_EXTRA_INDEX_URL": " ".join((
