@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.4
+
+### Changed
+- Bumped `pycpl` pin from `1.0.3.post11` to `1.0.4.post6` — the newest release
+  on ivh's index. Note it sorts *above* `1.0.3.post11` under PEP 440 despite the
+  lower post number, and ships the same cp312/cp313/cp314 Linux+macOS wheels.
+  Upstream `pymetis` still pins `1.0.3.post11`, so MTR is deliberately ahead of
+  it; the `--no-deps` pymetis/metiswise installs keep that pin out of pip's
+  resolver, so nothing can downgrade us. ESO's own 1.0.4 changelog lists only
+  additive API changes, but ivh's wheel also bundles PyHDRL 1.0.0 (was 0.2.0),
+  which drops `hdrl.core.Parameter` and reworks `Spectrum1D`/`Efficiency` — the
+  METIS recipes use none of those, only `hdrl.core.Image`/`ImageList` and
+  `hdrl.func.Flat`/`Collapse`/`BPM`.
+
 ## 0.4.3
 
 ### Fixed
