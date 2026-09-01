@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.5
+
+### Changed
+- Temporarily **unpinned** `pycpl` — ivh's index is churning (0.4.4's
+  `1.0.4.post6` has since been withdrawn from it), so the Install tab now takes
+  whatever is newest. Added `--upgrade` so re-installs actually move; this also
+  lets `edps`/`pyesorex`/`adari_core` advance on re-install.
+
 ## 0.4.4
 
 ### Changed
