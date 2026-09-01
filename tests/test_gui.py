@@ -7,6 +7,7 @@ Covers:
   - Runner-dependent field visibility
   - _build_cmd_args argument construction (including auto-fetch flag)
   - InstallWorker._patch_edps_config regex patching (including association_preference)
+  - InstallWorker._pip_deps_command argv (pycpl unpinned, --upgrade present)
   - ArchiveTab construction
 
 All tests run with QT_QPA_PLATFORM=offscreen (set in conftest.py) so no
@@ -555,6 +556,52 @@ class TestBackupEdpsConfig:
         self._make_worker(qapp)._backup_edps_config()
         assert not props.exists()
         assert old_backup.read_text() == "port=9999\n"
+
+
+# ---------------------------------------------------------------------------
+# InstallWorker._pip_deps_command — pipeline dependency pip argv
+# ---------------------------------------------------------------------------
+
+class TestPipDepsCommand:
+    def _cmd(self):
+        from metis_test_runner.gui import InstallWorker
+        return InstallWorker._pip_deps_command()
+
+    def test_runs_pip_in_mtrs_own_interpreter(self):
+        cmd = self._cmd()
+        assert cmd[0] == sys.executable
+        assert cmd[1:4] == ["-m", "pip", "install"]
+
+    def test_pycpl_is_unpinned(self):
+        # pycpl is deliberately unpinned while ivh's index churns; a bare
+        # "pycpl" token (no ==/>=/~=) is the whole point of the change.
+        cmd = self._cmd()
+        assert "pycpl" in cmd
+        assert not any(a.startswith("pycpl") and a != "pycpl" for a in cmd)
+
+    def test_upgrade_flag_present(self):
+        # Without --upgrade an already-installed older pycpl would survive as
+        # "Requirement already satisfied", defeating the unpin.
+        assert "--upgrade" in self._cmd()
+
+    def test_both_extra_indexes_present(self):
+        from metis_test_runner.gui import ESO_INDEX, PYCPL_INDEX
+        cmd = self._cmd()
+        assert cmd.count("--extra-index-url") == 2
+        assert PYCPL_INDEX in cmd
+        assert ESO_INDEX in cmd
+
+    def test_scopesim_stays_pinned(self):
+        # Only pycpl was unpinned; scopesim must still carry an exact pin. The
+        # version itself is not asserted so a routine bump needn't touch tests.
+        cmd = self._cmd()
+        for dist in ("scopesim", "scopesim_templates"):
+            assert any(a.startswith(f"{dist}==") for a in cmd)
+
+    def test_all_pipeline_deps_requested(self):
+        cmd = self._cmd()
+        for dist in ("pycpl", "edps", "pyesorex", "adari_core"):
+            assert any(a == dist or a.startswith(f"{dist}==") for a in cmd)
 
 
 # ---------------------------------------------------------------------------

@@ -461,6 +461,33 @@ class InstallWorker(QThread):
     log    = pyqtSignal(str, str)   # (text, colour)
     done   = pyqtSignal(bool)       # success
 
+    # Pipeline dependencies installed from the ESO/ivh mirrors, as pip
+    # requirement strings (cf. UninstallWorker.PIPELINE_PACKAGES, which lists
+    # bare distribution names).
+    # TODO: ``pycpl`` is deliberately UNPINNED only while ivh's index churns —
+    # re-pin it once that settles (0.4.4's 1.0.4.post6 pin was withdrawn there).
+    PIP_REQUIREMENTS = [
+        "pycpl",
+        "edps",
+        "pyesorex",
+        "adari_core",
+        "scopesim==0.11.3",
+        "scopesim_templates==0.8.1",
+    ]
+
+    @classmethod
+    def _pip_deps_command(cls) -> list[str]:
+        """``pip install`` argv for the ESO-mirror pipeline dependencies."""
+        # --upgrade is what makes the unpinned requirements actually track the
+        # newest release: a bare ``pip install pycpl`` leaves an already-installed
+        # older pycpl in place ("Requirement already satisfied").
+        return [
+            sys.executable, "-m", "pip", "install", "--upgrade",
+            "--extra-index-url", PYCPL_INDEX,
+            "--extra-index-url", ESO_INDEX,
+            *cls.PIP_REQUIREMENTS,
+        ]
+
     # ── public ──────────────────────────────────────────────────────────────
 
     def run(self) -> None:
@@ -480,18 +507,7 @@ class InstallWorker(QThread):
             # ESO-mirror dependencies are installed into the same interpreter
             # that hosts MTR (sys.executable points at pipx's isolated venv or
             # whatever venv the user installed MTR into).
-            self._run(
-                [sys.executable, "-m", "pip", "install",
-                 "--extra-index-url", PYCPL_INDEX,
-                 "--extra-index-url", ESO_INDEX,
-                 "pycpl==1.0.4.post6",
-                 "edps",
-                 "pyesorex",
-                 "adari_core",
-                 "scopesim==0.11.3",
-                 "scopesim_templates==0.8.1"],
-                cwd=REPO_ROOT,
-            )
+            self._run(self._pip_deps_command(), cwd=REPO_ROOT)
 
             self._step("Installing pymetis (eso-pymetis, editable)…")
             # metiswise 0.0.4 (Archive tab) depends on ``eso-pymetis``, which is
@@ -499,9 +515,11 @@ class InstallWorker(QThread):
             # Install the clone editable with --no-deps so that:
             #   (a) ``pymetis`` is importable in-process (metiswise imports it), and
             #   (b) the Archive-tab metiswise install finds ``eso-pymetis`` already
-            #       satisfied — avoiding a 2nd pymetis copy and the eso-pymetis
-            #       pycpl==1.0.3.post4 vs our pycpl==1.0.4.post6 pin clash.
-            # --no-deps keeps our own pycpl/edps/pyesorex pins authoritative.
+            #       satisfied — avoiding a 2nd pymetis copy and the clash between
+            #       eso-pymetis's pycpl==1.0.3.post4 pin and the newer pycpl the
+            #       step above just resolved.
+            # --no-deps keeps the pycpl/edps/pyesorex versions installed above
+            # authoritative.
             # TODO: remove/revisit if metiswise drops the eso-pymetis dependency
             # or eso-pymetis stops pinning pycpl.
             self._run(
