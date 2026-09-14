@@ -110,6 +110,30 @@ The Install tab performs the full pipeline bootstrap non-interactively. Use it i
 
 Re-running is safe — existing repositories are updated in place rather than re-cloned.
 
+#### Pinning a branch, tag or commit
+
+Under **Repository version (advanced)** each repository gets a dropdown, filled
+in the background with that repo's remote branches and tags (↻ reloads it). Leave
+a field blank — the default — and MTR tracks the repository's default branch
+exactly as before. Set one and that repository is checked out at your selection
+instead; the line underneath shows what the local clone is currently on.
+
+This is for people developing *on* `METIS_Pipeline` or `METIS_Simulations` who
+need to install and test their own branch rather than `main`. You can also paste
+a commit SHA; use the **full 40 characters** if you can, since an abbreviated one
+forces a slow full-history fetch. The dropdown is free text, so an entry that is
+not in the list still works.
+
+An existing clone is **overwritten** with the selection. If it has uncommitted
+changes, MTR lists them and asks before discarding anything; declining cancels the
+install. Gitignored files are kept, so build artefacts, simulation `*.fits` output
+and `inst_pkgs/` survive. Clearing a pinned field and re-running returns that
+repository to its default branch.
+
+If your clone's `origin` points at a fork rather than the AstarVienna repo, MTR
+says so in the log and fetches your ref from that fork — it will not silently
+repoint the remote.
+
 **Skip this tab** if you already have the pipeline installed via one of these paths — jump straight to the Run tab instead:
 
 - **Bare-metal / ESO docs install** — choose runner `native`

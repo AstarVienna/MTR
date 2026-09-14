@@ -1,5 +1,54 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Pin a branch, tag or commit per repository in the Install tab.** A new
+  *Repository version (advanced)* group gives `METIS_Pipeline` and
+  `METIS_Simulations` an editable dropdown, populated in the background from
+  `git ls-remote` (↻ reloads), plus a line showing what the local clone is
+  currently on. Blank keeps the previous behaviour — track the default branch —
+  so nothing changes for anyone who ignores the new fields. Intended for people
+  developing *on* those repos, who until now could only install `main`.
+  Selections persist in QSettings and are cleared by Uninstall.
+
+  Clicking the field opens the list (an editable combo normally opens only from
+  its arrow), except once something hand-typed is in it — a commit SHA stays
+  cursor-editable. The list opens on button *release*, so it stays up after a
+  normal click rather than only while the button is held.
+
+  An existing clone is overwritten with the selection: a dirty working tree is
+  itemised in a confirmation dialog first, and declining cancels the install.
+  The reset is `git clean -fd` (never `-x`), so gitignored build artefacts,
+  simulation `*.fits` output and `inst_pkgs/` survive. Branches become a real
+  local branch tracking `origin`; tags and commits give a detached HEAD.
+  Clearing a pinned field returns the clone to the remote's default branch —
+  including from the detached HEAD a previous pin left behind.
+
+### Fixed
+- **`git pull --ff-only` failures are no longer silently ignored.** The update
+  path ran the pull through a bare `subprocess.run` whose return code was never
+  checked, so a diverged branch, a dirty tree or a network error left the rest
+  of the install running against the wrong commit while reporting success. It
+  now raises with an actionable message. The same call also never passed
+  `env=_child_env()`, unlike every other subprocess in the module.
+- **The Install tab's settings were never saved.** `MainWindow` constructed
+  `InstallTab()` inline without keeping a reference, so `closeEvent` could not
+  reach it.
+- The installer now verifies `metisp/pymetis`, `metisp/pyrecipes` and the
+  simulations `pyproject.toml` exist after checkout. A ref predating the current
+  layout previously failed deep inside `pip install --editable`, or — worse —
+  silently produced a pipeline with zero recipes because `PYCPL_RECIPE_DIR`
+  pointed at a directory that did not exist.
+- A clone whose `origin` points somewhere other than the expected URL is now
+  reported in the log instead of being fetched from silently.
+- **Combo boxes had no visible dropdown arrow.** The theme styled
+  `QComboBox::drop-down`, and styling that subcontrol at all suppresses Qt's
+  native chevron. Harmless for the existing read-only combos (clicking anywhere
+  opens those), but it left the new editable ref combos with no mouse affordance
+  at all — the list was reachable only with the arrow keys. The rule is gone, so
+  every combo in the app shows its arrow again.
+
 ## 0.4.5
 
 ### Changed

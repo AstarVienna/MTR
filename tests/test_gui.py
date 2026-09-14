@@ -8,15 +8,22 @@ Covers:
   - _build_cmd_args argument construction (including auto-fetch flag)
   - InstallWorker._patch_edps_config regex patching (including association_preference)
   - InstallWorker._pip_deps_command argv (pycpl unpinned, --upgrade present)
+  - Git helpers: _validate_ref, _parse_ls_remote, _describe_head, _dirty_files
+  - InstallWorker._clone_or_update for pinned branches/tags/commits, the
+    blank-ref default-branch path, and _make_room's reset/clean gating
+  - InstallTab ref combos, QSettings round-trip, and the dirty-tree dialog
   - ArchiveTab construction
 
 All tests run with QT_QPA_PLATFORM=offscreen (set in conftest.py) so no
 display is required.
 """
 
+import subprocess
 import sys
 import pytest
 from pathlib import Path
+
+from metis_test_runner import gui
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -26,6 +33,38 @@ from pathlib import Path
 def _make_run_tab(qapp):
     from metis_test_runner.gui import RunTab
     return RunTab()
+
+
+def _argv_text(args):
+    """argv as a string with absolute paths dropped.
+
+    tmp_path names contain the very words the assertions look for (a test
+    called test_unshallow_… produces a dir with "unshallow" in it), so paths
+    must never take part in matching.
+    """
+    return " ".join(str(a) for a in args if not str(a).startswith("/"))
+
+
+def _cp(stdout="", returncode=0, stderr=""):
+    """A CompletedProcess standing in for one gui._git() call."""
+    return subprocess.CompletedProcess([], returncode, stdout, stderr)
+
+
+def _fake_git(responses, recorder=None):
+    """Replacement for gui._git driven by a {substring: CompletedProcess} map.
+
+    The first key that appears anywhere in the argv wins; anything unmatched
+    comes back as a successful empty result. Pass *recorder* to capture argv.
+    """
+    def fake(args, cwd=None, timeout=30):
+        if recorder is not None:
+            recorder.append(list(args))
+        joined = _argv_text(args)
+        for needle, result in responses.items():
+            if needle in joined:
+                return result
+        return _cp("")
+    return fake
 
 
 # ---------------------------------------------------------------------------
@@ -624,18 +663,18 @@ class TestCloneOrUpdateSubmodule:
 
         worker = self._make_worker(qapp)
         invoked = []
-        # Replace both _run (fetch) and subprocess.run (pull) so nothing hits
-        # the real git binary.
         monkeypatch.setattr(worker, "_run", lambda cmd, **kw: invoked.append(cmd))
-        from unittest.mock import patch as mock_patch, MagicMock
-        fake_pull = MagicMock(return_value=MagicMock(stdout="", stderr=""))
-        with mock_patch("metis_test_runner.gui.subprocess.run", fake_pull):
-            worker._clone_or_update("http://example.invalid/x.git", target)
+        monkeypatch.setattr(gui, "_git", _fake_git({
+            "symbolic-ref": _cp("main"),   # on a branch, so pull --ff-only applies
+            "pull": _cp(""),
+        }))
+        worker._clone_or_update("http://example.invalid/x.git", target)
 
-        # Took the fetch path (via _run), not the clone path.
-        assert invoked, "_clone_or_update should have called _run for fetch"
-        assert "fetch" in invoked[0]
-        # Did not raise the "not a git repo and is not empty" error.
+        # The point of the test: a .git FILE is recognised as a repo, so we
+        # update rather than clone.
+        assert invoked, "_clone_or_update should have issued git commands"
+        assert not any("clone" in c for c in invoked)
+        assert any("fetch" in c for c in invoked)
 
 
 # ---------------------------------------------------------------------------
@@ -1021,3 +1060,858 @@ class TestUninstallRemoveDataDir:
         # Should not raise even though nothing exists.
         self._make_worker(qapp)._remove_data_dir()
         assert not data.exists()
+
+
+# ---------------------------------------------------------------------------
+# _validate_ref
+# ---------------------------------------------------------------------------
+
+class TestValidateRef:
+    @pytest.mark.parametrize("raw", ["", "   ", None])
+    def test_blank_means_default_branch(self, raw):
+        assert gui._validate_ref(raw) == ""
+
+    def test_strips_pasted_whitespace(self):
+        # Copying a ref out of a terminal drags a newline along.
+        assert gui._validate_ref("  main\n") == "main"
+
+    @pytest.mark.parametrize("ref", [
+        "main", "feature/my-branch", "be/master_associations", "v0.4.2",
+        "2024-06-01", "release+1", "user@host",
+        "8a50c60d4a5417a17d784ab0588d2d85212543db", "8a50c60",
+    ])
+    def test_accepts_plausible_refs(self, ref):
+        assert gui._validate_ref(ref) == ref
+
+    @pytest.mark.parametrize("ref", [
+        "-x", "--upload-pack=echo", "a b", "a..b", "HEAD^", "x~1", "a:b",
+        "refs/heads/x.lock", "x/", "x.", "a\nb", "a?b", "a*b", "a[b", "a\\b",
+        "a{b", "x" * 300,
+    ])
+    def test_rejects_bad_refs(self, ref):
+        with pytest.raises(ValueError):
+            gui._validate_ref(ref)
+
+
+class TestLooksLikeAbbrevSha:
+    @pytest.mark.parametrize("ref", ["8a50c60", "abcd", "0" * 39])
+    def test_true_for_short_hex(self, ref):
+        assert gui._looks_like_abbrev_sha(ref)
+
+    @pytest.mark.parametrize("ref", ["0" * 40, "main", "v1.0", "abc", "deadbeefz"])
+    def test_false_otherwise(self, ref):
+        assert not gui._looks_like_abbrev_sha(ref)
+
+
+class TestSameRemote:
+    def test_ignores_dot_git_and_trailing_slash(self):
+        assert gui._same_remote("https://h/o/r.git", "https://h/o/r/")
+
+    def test_distinguishes_forks(self):
+        assert not gui._same_remote("https://h/me/r.git", "https://h/them/r.git")
+
+
+# ---------------------------------------------------------------------------
+# _parse_ls_remote
+# ---------------------------------------------------------------------------
+
+class TestParseLsRemote:
+    SAMPLE = (
+        "aaa\trefs/heads/zebra\n"
+        "bbb\trefs/heads/main\n"
+        "ccc\trefs/heads/AIT_Templates\n"
+        "ddd\trefs/tags/v2025.05.15\n"
+        "eee\trefs/tags/v2025.05.15^{}\n"
+        "fff\trefs/tags/v2024.11.15\n"
+        "ggg\trefs/pull/12/head\n"
+        "hhh\tHEAD\n"
+    )
+
+    def test_strips_prefixes(self):
+        out = gui._parse_ls_remote(self.SAMPLE)
+        assert "main" in out and "AIT_Templates" in out and "v2025.05.15" in out
+        assert not any(r.startswith("refs/") for r in out)
+
+    def test_drops_peeled_tag_duplicates(self):
+        assert gui._parse_ls_remote(self.SAMPLE).count("v2025.05.15") == 1
+
+    def test_ignores_non_branch_non_tag_refs(self):
+        out = gui._parse_ls_remote(self.SAMPLE)
+        assert "HEAD" not in out and not any("pull" in r for r in out)
+
+    def test_default_branch_hoisted_above_alphabetical_branches(self):
+        out = gui._parse_ls_remote(self.SAMPLE)
+        assert out[0] == "main"
+        assert out.index("main") < out.index("AIT_Templates")
+
+    def test_branches_sort_before_tags(self):
+        out = gui._parse_ls_remote(self.SAMPLE)
+        assert out.index("zebra") < out.index("v2025.05.15")
+
+    def test_name_that_is_both_branch_and_tag_appears_once(self):
+        out = gui._parse_ls_remote("aaa\trefs/heads/v1.0\nbbb\trefs/tags/v1.0\n")
+        assert out.count("v1.0") == 1
+
+    def test_empty_input(self):
+        assert gui._parse_ls_remote("") == []
+
+
+# ---------------------------------------------------------------------------
+# _describe_head
+# ---------------------------------------------------------------------------
+
+class TestDescribeHead:
+    def test_absent_clone_never_shells_out(self, tmp_path, monkeypatch):
+        called = []
+        monkeypatch.setattr(gui, "_git", _fake_git({}, recorder=called))
+        assert gui._describe_head(tmp_path / "nope") == "not cloned"
+        assert called == []
+
+    def _repo(self, tmp_path):
+        (tmp_path / ".git").mkdir()
+        return tmp_path
+
+    def test_on_a_branch(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(gui, "_git", _fake_git({
+            "rev-parse --short=8": _cp("d2d257c5\n"),
+            "symbolic-ref": _cp("main\n"),
+            "status": _cp(""),
+            "is-shallow-repository": _cp("false\n"),
+        }))
+        assert gui._describe_head(self._repo(tmp_path)) == "main @ d2d257c5"
+
+    def test_detached_at_a_tag(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(gui, "_git", _fake_git({
+            "rev-parse --short=8": _cp("8a50c604\n"),
+            "symbolic-ref": _cp("", 1),
+            "describe": _cp("v0.4.2\n"),
+            "status": _cp(""),
+            "is-shallow-repository": _cp("false\n"),
+        }))
+        assert gui._describe_head(self._repo(tmp_path)) == "v0.4.2 (tag) @ 8a50c604"
+
+    def test_detached_without_a_tag(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(gui, "_git", _fake_git({
+            "rev-parse --short=8": _cp("8a50c604\n"),
+            "symbolic-ref": _cp("", 1),
+            "describe": _cp("", 128),
+            "status": _cp(""),
+            "is-shallow-repository": _cp("false\n"),
+        }))
+        assert gui._describe_head(self._repo(tmp_path)) == "detached @ 8a50c604"
+
+    def test_dirty_and_shallow_markers(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(gui, "_git", _fake_git({
+            "rev-parse --short=8": _cp("d2d257c5\n"),
+            "symbolic-ref": _cp("main\n"),
+            "status": _cp(" M x.py\n"),
+            "is-shallow-repository": _cp("true\n"),
+        }))
+        out = gui._describe_head(self._repo(tmp_path))
+        assert out == "main @ d2d257c5 · modified · shallow"
+
+    def test_broken_repo(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(gui, "_git", _fake_git({
+            "rev-parse --short=8": _cp("", 128),
+        }))
+        assert gui._describe_head(self._repo(tmp_path)) == "not a git repository"
+
+
+# ---------------------------------------------------------------------------
+# _dirty_files
+# ---------------------------------------------------------------------------
+
+class TestDirtyFiles:
+    def test_absent_clone_is_not_dirty(self, tmp_path):
+        assert gui._dirty_files(tmp_path / "nope") == []
+
+    def test_clean_tree(self, tmp_path, monkeypatch):
+        (tmp_path / ".git").mkdir()
+        monkeypatch.setattr(gui, "_git", _fake_git({"status": _cp("")}))
+        assert gui._dirty_files(tmp_path) == []
+
+    def test_dirty_tree_returns_lines(self, tmp_path, monkeypatch):
+        (tmp_path / ".git").mkdir()
+        monkeypatch.setattr(gui, "_git",
+                            _fake_git({"status": _cp(" M a.py\n?? b.py\n")}))
+        assert gui._dirty_files(tmp_path) == [" M a.py", "?? b.py"]
+
+    def test_git_failure_raises_rather_than_assuming_clean(self, tmp_path, monkeypatch):
+        # Assuming "clean" here would silently destroy work.
+        (tmp_path / ".git").mkdir()
+        monkeypatch.setattr(gui, "_git",
+                            _fake_git({"status": _cp("", 128, "index corrupt")}))
+        with pytest.raises(RuntimeError, match="index corrupt"):
+            gui._dirty_files(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# InstallWorker._clone_or_update — pinned refs
+# ---------------------------------------------------------------------------
+
+URL = "http://example.invalid/x.git"
+SHA = "8a50c60d4a5417a17d784ab0588d2d85212543db"
+
+
+def _worker(qapp, **kw):
+    from metis_test_runner.gui import InstallWorker
+    return InstallWorker(**kw)
+
+
+def _spy(worker, monkeypatch):
+    """Record every argv passed to the fatal/streaming _run."""
+    invoked = []
+    monkeypatch.setattr(worker, "_run", lambda cmd, **kw: invoked.append(
+        [str(c) for c in cmd]))
+    return invoked
+
+
+def _repo(tmp_path, name="clone"):
+    target = tmp_path / name
+    (target / ".git").mkdir(parents=True)
+    return target
+
+
+def _flat(invoked):
+    return [_argv_text(c) for c in invoked]
+
+
+class TestCloneOrUpdateRef:
+    def test_absent_target_with_branch_inits_fetches_and_checks_out(
+            self, qapp, tmp_path, monkeypatch):
+        w = _worker(qapp)
+        invoked = _spy(w, monkeypatch)
+        monkeypatch.setattr(gui, "_git", _fake_git({
+            "fetch": _cp(""),                       # _try_fetch succeeds
+            "rev-parse FETCH_HEAD": _cp(SHA),
+            "rev-parse HEAD": _cp("other"),
+            "refs/remotes/origin/main": _cp(SHA),   # it is a branch
+        }))
+        w._clone_or_update(URL, tmp_path / "new", "main")
+
+        flat = _flat(invoked)
+        assert any(c.startswith("git init") for c in flat)
+        assert any("remote add origin" in c for c in flat)
+        assert any("checkout -f -B main FETCH_HEAD" in c for c in flat)
+        assert not any("clone" in c for c in flat)
+
+    def test_branch_fetch_is_shallow_and_option_safe(
+            self, qapp, tmp_path, monkeypatch):
+        seen = []
+        w = _worker(qapp)
+        _spy(w, monkeypatch)
+        monkeypatch.setattr(gui, "_git", _fake_git({
+            "rev-parse FETCH_HEAD": _cp(SHA),
+            "rev-parse HEAD": _cp("other"),
+            "refs/remotes/origin/main": _cp(SHA),
+        }, recorder=seen))
+        w._clone_or_update(URL, tmp_path / "new", "main")
+
+        fetches = [_argv_text(c) for c in seen if "fetch" in c]
+        assert fetches, "expected a fetch"
+        # --end-of-options must precede the remote so a dash-prefixed ref can
+        # never be read as an option.
+        assert "--depth 1 --end-of-options origin main" in fetches[0]
+
+    def test_tag_or_sha_checks_out_detached_not_a_branch(
+            self, qapp, tmp_path, monkeypatch):
+        w = _worker(qapp)
+        invoked = _spy(w, monkeypatch)
+        monkeypatch.setattr(gui, "_git", _fake_git({
+            "rev-parse FETCH_HEAD": _cp(SHA),
+            "rev-parse HEAD": _cp("other"),
+            "refs/remotes/origin/": _cp("", 1),     # not a branch
+        }))
+        w._clone_or_update(URL, _repo(tmp_path), "v0.4.2")
+
+        flat = _flat(invoked)
+        assert any("checkout -f --detach FETCH_HEAD" in c for c in flat)
+        assert not any(" -B " in c for c in flat)
+
+    def test_full_sha_needs_only_one_fetch_and_no_unshallow(
+            self, qapp, tmp_path, monkeypatch):
+        seen = []
+        w = _worker(qapp)
+        invoked = _spy(w, monkeypatch)
+        monkeypatch.setattr(gui, "_git", _fake_git({
+            "rev-parse FETCH_HEAD": _cp(SHA),
+            "rev-parse HEAD": _cp("other"),
+            "refs/remotes/origin/": _cp("", 1),
+        }, recorder=seen))
+        w._clone_or_update(URL, _repo(tmp_path), SHA)
+
+        assert len([c for c in seen if "fetch" in c]) == 1
+        assert not any("unshallow" in c for c in _flat(invoked))
+
+    def test_abbreviated_sha_skips_the_doomed_fetch_and_unshallows(
+            self, qapp, tmp_path, monkeypatch):
+        # GitHub cannot serve `fetch origin <short-sha>`, so the shallow fetch
+        # is skipped outright rather than attempted and failed.
+        seen = []
+        w = _worker(qapp)
+        invoked = _spy(w, monkeypatch)
+        monkeypatch.setattr(gui, "_git", _fake_git({
+            "is-shallow-repository": _cp("true\n"),
+            "8a50c60^{commit}": _cp(SHA),
+            "rev-parse HEAD": _cp("other"),
+            "refs/remotes/origin/": _cp("", 1),
+        }, recorder=seen))
+        w._clone_or_update(URL, _repo(tmp_path), "8a50c60")
+
+        assert not any("fetch" in c and "8a50c60" in _argv_text(c) for c in seen)
+        flat = _flat(invoked)
+        assert any("fetch --unshallow" in c for c in flat)
+        assert any(f"checkout -f --detach {SHA}" in c for c in flat)
+
+    def test_unshallow_is_skipped_on_a_complete_repo(
+            self, qapp, tmp_path, monkeypatch):
+        # `fetch --unshallow` errors out on a repo that is not shallow.
+        w = _worker(qapp)
+        invoked = _spy(w, monkeypatch)
+        monkeypatch.setattr(gui, "_git", _fake_git({
+            "is-shallow-repository": _cp("false\n"),
+            "8a50c60^{commit}": _cp(SHA),
+            "rev-parse HEAD": _cp("other"),
+            "refs/remotes/origin/": _cp("", 1),
+        }))
+        w._clone_or_update(URL, _repo(tmp_path), "8a50c60")
+        assert not any("unshallow" in c for c in _flat(invoked))
+
+    def test_unresolvable_ref_raises_and_never_touches_fetch_head(
+            self, qapp, tmp_path, monkeypatch):
+        # A failed fetch truncates FETCH_HEAD, so checking it out would pick up
+        # a stale commit from an earlier fetch.
+        w = _worker(qapp)
+        invoked = _spy(w, monkeypatch)
+        monkeypatch.setattr(gui, "_git", _fake_git({
+            "fetch": _cp("", 128, "couldn't find remote ref"),
+            "^{commit}": _cp("", 128),
+            "is-shallow-repository": _cp("false\n"),
+        }))
+        with pytest.raises(RuntimeError, match="not a branch, tag or commit"):
+            w._clone_or_update(URL, _repo(tmp_path), SHA)
+        assert not any("checkout" in c for c in _flat(invoked))
+
+    def test_mistyped_branch_fails_fast_without_a_full_history_fetch(
+            self, qapp, tmp_path, monkeypatch):
+        # Only a hex commit id can need the un-shallow fallback; a bad branch
+        # name must not cost a full clone before erroring.
+        w = _worker(qapp)
+        invoked = _spy(w, monkeypatch)
+        monkeypatch.setattr(gui, "_git", _fake_git({
+            "fetch": _cp("", 128, "couldn't find remote ref"),
+        }))
+        with pytest.raises(RuntimeError, match="not a branch or tag"):
+            w._clone_or_update(URL, _repo(tmp_path), "no-such-branch")
+        assert not any("unshallow" in c for c in _flat(invoked))
+
+    def test_already_at_target_leaves_the_tree_untouched(
+            self, qapp, tmp_path, monkeypatch):
+        w = _worker(qapp)
+        invoked = _spy(w, monkeypatch)
+        monkeypatch.setattr(gui, "_git", _fake_git({
+            "rev-parse FETCH_HEAD": _cp(SHA),
+            "rev-parse HEAD": _cp(SHA),
+            "refs/remotes/origin/main": _cp(SHA),
+            "symbolic-ref": _cp("main\n"),
+        }))
+        w._clone_or_update(URL, _repo(tmp_path), "main")
+        flat = _flat(invoked)
+        assert not any("checkout" in c for c in flat)
+        assert not any("clean" in c for c in flat)
+
+    def test_non_empty_non_repo_dir_refuses_before_git_init(
+            self, qapp, tmp_path, monkeypatch):
+        # The guard must sit ABOVE the ref dispatch: `git init` would happily
+        # initialise over a non-empty foreign directory.
+        target = tmp_path / "foreign"
+        target.mkdir()
+        (target / "important.txt").write_text("data\n")
+        w = _worker(qapp)
+        invoked = _spy(w, monkeypatch)
+        with pytest.raises(RuntimeError, match="not a git repo and is not empty"):
+            w._clone_or_update(URL, target, "main")
+        assert invoked == []
+
+    def test_invalid_ref_surfaces_as_a_worker_error(self, qapp, tmp_path, monkeypatch):
+        w = _worker(qapp)
+        invoked = _spy(w, monkeypatch)
+        with pytest.raises(RuntimeError, match="not a valid branch"):
+            w._clone_or_update(URL, _repo(tmp_path), "--upload-pack=echo")
+        assert invoked == []
+
+
+class TestCloneOrUpdateBlankRef:
+    def test_absent_target_still_takes_the_shallow_clone_fast_path(
+            self, qapp, tmp_path, monkeypatch):
+        w = _worker(qapp)
+        invoked = _spy(w, monkeypatch)
+        monkeypatch.setattr(gui, "_git", _fake_git({}))
+        w._clone_or_update(URL, tmp_path / "new")
+        flat = _flat(invoked)
+        assert any("clone --depth 1" in c for c in flat)
+        assert not any("git init" in c for c in flat)
+
+    def test_branch_checkout_fast_forwards_without_resetting(
+            self, qapp, tmp_path, monkeypatch):
+        w = _worker(qapp)
+        invoked = _spy(w, monkeypatch)
+        monkeypatch.setattr(gui, "_git", _fake_git({
+            "symbolic-ref": _cp("main\n"),
+            "pull": _cp("Already up to date.\n"),
+        }))
+        w._clone_or_update(URL, _repo(tmp_path))
+        flat = _flat(invoked)
+        assert any("fetch --all --prune" in c for c in flat)
+        assert not any("reset" in c for c in flat)
+        assert not any("clean" in c for c in flat)
+
+    def test_failed_pull_is_fatal_instead_of_silently_swallowed(
+            self, qapp, tmp_path, monkeypatch):
+        # Pre-existing bug: the old bare subprocess.run never checked the
+        # return code, so a diverged branch left the install running on the
+        # wrong commit.
+        w = _worker(qapp)
+        _spy(w, monkeypatch)
+        monkeypatch.setattr(gui, "_git", _fake_git({
+            "symbolic-ref": _cp("main\n"),
+            "pull": _cp("", 1, "Not possible to fast-forward"),
+        }))
+        with pytest.raises(RuntimeError, match="ff-only"):
+            w._clone_or_update(URL, _repo(tmp_path))
+
+    def test_failed_pull_with_force_resets_then_retries(
+            self, qapp, tmp_path, monkeypatch):
+        w = _worker(qapp)
+        invoked = _spy(w, monkeypatch)
+        monkeypatch.setattr(gui, "_git", _fake_git({
+            "symbolic-ref": _cp("main\n"),
+            "pull": _cp("", 1, "diverged"),
+            "status": _cp(" M x.py\n"),
+        }))
+        w._clone_or_update(URL, _repo(tmp_path), force=True)
+        flat = _flat(invoked)
+        assert any("reset --hard" in c for c in flat)
+        assert any("clean -fd" in c for c in flat)
+        assert not any("-fdx" in c for c in flat)
+        assert any("pull --ff-only" in c for c in flat)
+
+    def test_detached_head_returns_to_the_default_branch(
+            self, qapp, tmp_path, monkeypatch):
+        # Leftover from an earlier pinned install: `pull --ff-only` cannot work
+        # on a detached HEAD, and blank means "go back to normal".
+        w = _worker(qapp)
+        invoked = _spy(w, monkeypatch)
+        monkeypatch.setattr(gui, "_git", _fake_git({
+            "symbolic-ref": _cp("", 1),
+            "ls-remote --symref": _cp("ref: refs/heads/main\tHEAD\nabc\tHEAD\n"),
+            "rev-parse FETCH_HEAD": _cp(SHA),
+            "rev-parse HEAD": _cp("other"),
+            "refs/remotes/origin/main": _cp(SHA),
+        }))
+        w._clone_or_update(URL, _repo(tmp_path))
+        flat = _flat(invoked)
+        assert any("checkout -f -B main FETCH_HEAD" in c for c in flat)
+        assert not any("pull --ff-only" in c for c in flat)
+
+    def test_symref_failure_falls_back_to_head_without_raising(
+            self, qapp, tmp_path, monkeypatch):
+        w = _worker(qapp)
+        _spy(w, monkeypatch)
+        monkeypatch.setattr(gui, "_git", _fake_git({
+            "symbolic-ref": _cp("", 1),
+            "ls-remote --symref": _cp("", 128),
+            "rev-parse FETCH_HEAD": _cp(SHA),
+            "rev-parse HEAD": _cp("other"),
+            "refs/remotes/origin/": _cp("", 1),
+        }))
+        w._clone_or_update(URL, _repo(tmp_path))   # must not raise
+
+
+class TestMakeRoom:
+    def test_clean_tree_is_never_reset_even_with_force(
+            self, qapp, tmp_path, monkeypatch):
+        w = _worker(qapp)
+        invoked = _spy(w, monkeypatch)
+        monkeypatch.setattr(gui, "_git", _fake_git({"status": _cp("")}))
+        w._make_room(_repo(tmp_path), force=True)
+        assert invoked == []
+
+    def test_dirty_tree_without_confirmation_refuses(
+            self, qapp, tmp_path, monkeypatch):
+        # The worker re-checks rather than trusting the GUI's flag.
+        w = _worker(qapp)
+        _spy(w, monkeypatch)
+        monkeypatch.setattr(gui, "_git", _fake_git({"status": _cp(" M x.py\n")}))
+        with pytest.raises(RuntimeError, match="not confirmed"):
+            w._make_room(_repo(tmp_path), force=False)
+
+    def test_dirty_tree_with_confirmation_resets_and_cleans(
+            self, qapp, tmp_path, monkeypatch):
+        w = _worker(qapp)
+        invoked = _spy(w, monkeypatch)
+        monkeypatch.setattr(gui, "_git", _fake_git({"status": _cp("?? x.py\n")}))
+        w._make_room(_repo(tmp_path), force=True)
+        flat = _flat(invoked)
+        assert any("reset --hard" in c for c in flat)
+        assert any(c.endswith("clean -fd") for c in flat)
+        # -x would eat gitignored build output, *.fits products and inst_pkgs/.
+        assert not any("-fdx" in c for c in flat)
+
+
+# ---------------------------------------------------------------------------
+# InstallTab — ref selection UI
+# ---------------------------------------------------------------------------
+
+def _install_tab(qapp):
+    from metis_test_runner.gui import InstallTab
+    return InstallTab()
+
+
+class _FakeWorker:
+    """Stands in for InstallWorker so _start can be driven without a thread."""
+    constructed = []
+
+    def __init__(self, refs=None, force=None):
+        self.refs, self.force = refs, force
+        type(self).constructed.append(self)
+        self.log = self.done = None
+
+    def start(self):
+        pass
+
+
+def _stub_worker(monkeypatch):
+    _FakeWorker.constructed = []
+
+    class W(_FakeWorker):
+        def __init__(self, refs=None, force=None):
+            super().__init__(refs, force)
+            # _start connects to these before calling start().
+            self.log = _Sig()
+            self.done = _Sig()
+
+    monkeypatch.setattr(gui, "InstallWorker", W)
+    return _FakeWorker
+
+
+class _Sig:
+    def connect(self, *_a, **_k):
+        pass
+
+
+class TestInstallTabRefWidgets:
+    def test_both_repos_get_an_editable_combo(self, qapp):
+        tab = _install_tab(qapp)
+        assert set(tab.ref_combos) == {"pipeline_ref", "simulations_ref"}
+        for combo in tab.ref_combos.values():
+            assert combo.isEditable()
+
+    def test_enter_does_not_append_typed_text_to_the_dropdown(self, qapp):
+        from PyQt6.QtWidgets import QComboBox
+        tab = _install_tab(qapp)
+        for combo in tab.ref_combos.values():
+            assert combo.insertPolicy() == QComboBox.InsertPolicy.NoInsert
+
+    def test_defaults_to_blank_meaning_default_branch(self, qapp):
+        tab = _install_tab(qapp)
+        for combo in tab.ref_combos.values():
+            assert combo.currentText() == ""
+
+    def test_populate_preserves_text_the_user_typed(self, qapp):
+        # addItems() on an editable combo with currentIndex == -1 silently
+        # snaps the line edit to items[0].
+        tab = _install_tab(qapp)
+        combo = tab.ref_combos["pipeline_ref"]
+        combo.setCurrentText("my/topic-branch")
+        tab._populate(combo, ["main", "develop"])
+        assert combo.currentText() == "my/topic-branch"
+        assert [combo.itemText(i) for i in range(combo.count())] == ["main", "develop"]
+
+    def test_populate_leaves_an_untouched_combo_blank(self, qapp):
+        tab = _install_tab(qapp)
+        combo = tab.ref_combos["simulations_ref"]
+        tab._populate(combo, ["main", "develop"])
+        assert combo.currentText() == ""
+
+    def test_refs_round_trip_through_qsettings(self, qapp):
+        tab = _install_tab(qapp)
+        tab.ref_combos["pipeline_ref"].setCurrentText("feature/x")
+        tab.ref_combos["simulations_ref"].setCurrentText("v2025.05.15")
+        tab._save_settings()
+
+        fresh = _install_tab(qapp)
+        assert fresh.ref_combos["pipeline_ref"].currentText() == "feature/x"
+        assert fresh.ref_combos["simulations_ref"].currentText() == "v2025.05.15"
+        # leave the shared store clean for other tests
+        for c in fresh.ref_combos.values():
+            c.setCurrentText("")
+        fresh._save_settings()
+
+    def test_ref_failure_is_reported_inline_not_in_the_install_log(self, qapp):
+        tab = _install_tab(qapp)
+        tab._on_ref_failed("pipeline_ref", "could not resolve host")
+        assert "unavailable" in tab.ref_status["pipeline_ref"].text()
+        assert tab.log_view.toPlainText() == ""
+        assert "could not resolve host" in tab.ref_combos["pipeline_ref"].toolTip()
+
+
+class TestInstallTabStart:
+    def test_invalid_ref_blocks_the_install(self, qapp, monkeypatch):
+        from PyQt6.QtWidgets import QMessageBox
+        tab = _install_tab(qapp)
+        fake = _stub_worker(monkeypatch)
+        warned = []
+        monkeypatch.setattr(QMessageBox, "warning",
+                            lambda *a, **k: warned.append(a))
+        tab.ref_combos["pipeline_ref"].setCurrentText("--upload-pack=echo")
+        tab._start()
+        assert warned, "expected a warning dialog"
+        assert fake.constructed == []
+
+    def test_clean_trees_are_never_questioned(self, qapp, monkeypatch):
+        from PyQt6.QtWidgets import QMessageBox
+        tab = _install_tab(qapp)
+        fake = _stub_worker(monkeypatch)
+        asked = []
+        monkeypatch.setattr(QMessageBox, "question",
+                            lambda *a, **k: asked.append(a))
+        monkeypatch.setattr(gui, "_dirty_files", lambda t: [])
+        tab._start()
+        assert asked == []
+        assert len(fake.constructed) == 1
+        assert fake.constructed[0].force == set()
+
+    def test_declining_the_discard_dialog_aborts(self, qapp, monkeypatch):
+        from PyQt6.QtWidgets import QMessageBox
+        tab = _install_tab(qapp)
+        fake = _stub_worker(monkeypatch)
+        monkeypatch.setattr(gui, "_dirty_files", lambda t: [" M x.py"])
+        monkeypatch.setattr(QMessageBox, "question",
+                            lambda *a, **k: QMessageBox.StandardButton.No)
+        tab._start()
+        assert fake.constructed == []
+
+    def test_accepting_the_dialog_forces_only_that_repo(self, qapp, monkeypatch):
+        from PyQt6.QtWidgets import QMessageBox
+        tab = _install_tab(qapp)
+        fake = _stub_worker(monkeypatch)
+        # Only the pipeline clone is dirty; confirming it must NOT authorise
+        # discarding work in the simulations clone.
+        monkeypatch.setattr(
+            gui, "_dirty_files",
+            lambda t: [" M x.py"] if t == gui.TARGET_A else [])
+        monkeypatch.setattr(QMessageBox, "question",
+                            lambda *a, **k: QMessageBox.StandardButton.Yes)
+        tab._start()
+        assert len(fake.constructed) == 1
+        assert fake.constructed[0].force == {gui.TARGET_A}
+
+    def test_dirty_tree_is_checked_even_when_the_ref_is_unchanged(
+            self, qapp, monkeypatch):
+        # checkout -f discards tracked edits whether or not the ref moved, so
+        # the dialog must not be gated on a ref change.
+        from PyQt6.QtWidgets import QMessageBox
+        tab = _install_tab(qapp)
+        _stub_worker(monkeypatch)
+        asked = []
+        monkeypatch.setattr(gui, "_dirty_files", lambda t: [" M x.py"])
+        monkeypatch.setattr(
+            QMessageBox, "question",
+            lambda *a, **k: (asked.append(a), QMessageBox.StandardButton.Yes)[1])
+        tab._start()          # every combo left blank — no ref change at all
+        assert asked, "a dirty tree must be questioned even with a blank ref"
+
+    def test_unreadable_status_asks_rather_than_assuming_clean(
+            self, qapp, monkeypatch):
+        from PyQt6.QtWidgets import QMessageBox
+        tab = _install_tab(qapp)
+        fake = _stub_worker(monkeypatch)
+
+        def boom(_t):
+            raise RuntimeError("index corrupt")
+
+        monkeypatch.setattr(gui, "_dirty_files", boom)
+        monkeypatch.setattr(QMessageBox, "question",
+                            lambda *a, **k: QMessageBox.StandardButton.No)
+        tab._start()
+        assert fake.constructed == []
+
+    def test_selected_refs_reach_the_worker(self, qapp, monkeypatch):
+        from PyQt6.QtWidgets import QMessageBox
+        tab = _install_tab(qapp)
+        fake = _stub_worker(monkeypatch)
+        monkeypatch.setattr(gui, "_dirty_files", lambda t: [])
+        monkeypatch.setattr(QMessageBox, "question",
+                            lambda *a, **k: QMessageBox.StandardButton.Yes)
+        tab.ref_combos["pipeline_ref"].setCurrentText("  feature/x  ")
+        tab._start()
+        assert fake.constructed[0].refs[gui.TARGET_A] == "feature/x"
+        assert fake.constructed[0].refs[gui.TARGET_B] == ""
+        for c in tab.ref_combos.values():
+            c.setCurrentText("")
+        tab._save_settings()
+
+
+class TestRefWorker:
+    def test_status_is_emitted_before_the_network_call(self, qapp, monkeypatch):
+        seen = []
+        monkeypatch.setattr(gui, "_describe_head", lambda t: "main @ abc")
+        monkeypatch.setattr(gui, "_git",
+                            _fake_git({"ls-remote": _cp("aaa\trefs/heads/main\n")}))
+        w = gui.RefWorker("k", "http://x.invalid/r.git", Path("/nope"))
+        w.status.connect(lambda k, s: seen.append(("status", s)))
+        w.refs.connect(lambda k, r: seen.append(("refs", r)))
+        w.run()
+        assert seen[0] == ("status", "main @ abc")
+        assert seen[1] == ("refs", ["main"])
+
+    def test_ls_remote_failure_emits_failed_not_refs(self, qapp, monkeypatch):
+        seen = []
+        monkeypatch.setattr(gui, "_describe_head", lambda t: "not cloned")
+        monkeypatch.setattr(gui, "_git", _fake_git({
+            "ls-remote": _cp("", 128, "fatal: could not read Username"),
+        }))
+        w = gui.RefWorker("k", "http://x.invalid/r.git", Path("/nope"))
+        w.refs.connect(lambda k, r: seen.append("refs"))
+        w.failed.connect(lambda k, r: seen.append(("failed", r)))
+        w.run()
+        assert seen == [("failed", "fatal: could not read Username")]
+
+
+class TestSmokeTestGuard:
+    def test_smoke_test_suppresses_the_network_probe(self, qapp, monkeypatch):
+        # main() sets this; CI runs `mtr --smoke-test`, which shows the window
+        # (firing showEvent) and then quits immediately.
+        tab = _install_tab(qapp)
+        monkeypatch.setattr(gui, "SMOKE_TEST", True)
+        tab._refresh_refs()
+        assert tab._ref_workers == {}
+
+
+class TestMainWindowKeepsInstallTab:
+    def test_install_tab_handle_exists_for_close_event(self, qapp):
+        # MainWindow used to construct InstallTab inline, so closeEvent could
+        # not save its settings or stop its ref-list thread.
+        from metis_test_runner.gui import MainWindow, InstallTab
+        win = MainWindow()
+        assert isinstance(win._install_tab, InstallTab)
+        win.close()
+
+
+# ---------------------------------------------------------------------------
+# RefComboBox — mouse access to the dropdown
+# ---------------------------------------------------------------------------
+
+class TestRefComboBox:
+    def _click(self, qapp, combo):
+        """A REAL click: press *and* release.
+
+        Sending only the press hid a bug where the popup opened and the
+        unhandled release immediately closed it again, so the list survived
+        only while the button was held down.
+        """
+        from PyQt6.QtCore import QEvent, QPointF, Qt
+        from PyQt6.QtGui import QMouseEvent
+
+        def send(widget, typ):
+            qapp.sendEvent(widget, QMouseEvent(
+                typ, QPointF(10, 10), QPointF(10, 10),
+                Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier))
+
+        send(combo.lineEdit(), QEvent.Type.MouseButtonPress)
+        # A real release goes wherever the popup now is.
+        target = combo.view() if combo.view().isVisible() else combo.lineEdit()
+        send(target, QEvent.Type.MouseButtonRelease)
+        qapp.processEvents()
+
+    def _combo(self, qapp, text=""):
+        c = gui.RefComboBox()
+        c.addItems(["main", "AIT_Templates"])
+        c.setCurrentText(text)
+        c.show()
+        return c
+
+    def test_is_editable_so_a_sha_can_be_pasted(self, qapp):
+        assert self._combo(qapp).isEditable()
+
+    def test_enter_does_not_append_typed_text_to_the_list(self, qapp):
+        from PyQt6.QtWidgets import QComboBox
+        assert self._combo(qapp).insertPolicy() == QComboBox.InsertPolicy.NoInsert
+
+    def test_click_on_blank_field_opens_the_list(self, qapp):
+        # An editable combo normally only opens from the arrow, which left the
+        # branch list reachable by keyboard alone.
+        c = self._combo(qapp)
+        assert not c.view().isVisible()
+        self._click(qapp, c)
+        assert c.view().isVisible()
+        c.hidePopup()
+
+    def test_list_stays_open_after_the_button_is_released(self, qapp):
+        # Regression: the popup used to close on the release, so it survived
+        # only while the left button was held down.
+        c = self._combo(qapp)
+        self._click(qapp, c)
+        qapp.processEvents()
+        assert c.view().isVisible()
+        c.hidePopup()
+
+    def test_click_on_a_value_from_the_list_reopens_it(self, qapp):
+        c = self._combo(qapp, "AIT_Templates")
+        self._click(qapp, c)
+        assert c.view().isVisible()
+        c.hidePopup()
+
+    def test_click_on_hand_typed_text_keeps_it_editable(self, qapp):
+        # A pasted SHA must stay cursor-editable rather than being hijacked.
+        c = self._combo(qapp, "8a50c60d4a54")
+        self._click(qapp, c)
+        assert not c.view().isVisible()
+
+    def test_a_second_click_lands_on_the_list_not_the_text_field(self, qapp):
+        # Once the popup is up it grabs the mouse, so the next click dismisses
+        # it rather than being swallowed by the line edit and re-opening it.
+        # (Synthetic events can't faithfully drive item activation, so this
+        # asserts dismissal only; the keyboard path below covers selection.)
+        c = self._combo(qapp)
+        self._click(qapp, c)
+        assert c.view().isVisible()
+        self._click(qapp, c)
+        assert not c.view().isVisible()
+
+    def test_picking_from_the_open_list_sets_the_value(self, qapp):
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QKeyEvent
+        from PyQt6.QtCore import QEvent
+        c = self._combo(qapp)
+        self._click(qapp, c)
+        assert c.view().isVisible()
+        for key in (Qt.Key.Key_Down, Qt.Key.Key_Return):
+            qapp.sendEvent(c.view(), QKeyEvent(
+                QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier))
+        qapp.processEvents()
+        assert not c.view().isVisible()
+        assert c.currentText() in ("main", "AIT_Templates")
+
+    def test_empty_list_does_not_pop_an_empty_box(self, qapp):
+        c = gui.RefComboBox()
+        c.show()
+        self._click(qapp, c)
+        assert not c.view().isVisible()
+
+
+class TestComboArrowIsNotSuppressed:
+    def test_theme_does_not_style_the_drop_down_subcontrol(self, qapp):
+        # Styling QComboBox::drop-down at all suppresses Qt's native chevron,
+        # which is an editable combo's only mouse affordance for its list.
+        import re
+        from PyQt6.QtWidgets import QApplication
+        gui.apply_theme(QApplication.instance(), "dark")
+        # Strip /* … */ comments: the stylesheet explains this rule's absence
+        # by naming the subcontrol.
+        qss = re.sub(r"/\*.*?\*/", "", QApplication.instance().styleSheet(),
+                     flags=re.S)
+        assert "QComboBox::drop-down" not in qss
+        assert "QComboBox::down-arrow" not in qss

@@ -15,7 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QProcess, QProcessEnvironment, QSettings, QThread, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import Qt, QEvent, QProcess, QProcessEnvironment, QSettings, QThread, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices, QFont, QPalette, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
     QAbstractSpinBox, QApplication, QButtonGroup, QCheckBox, QComboBox,
@@ -48,6 +48,11 @@ REPO_B_URL  = "https://github.com/AstarVienna/METIS_Simulations.git"
 
 LABEL_W = 280   # fixed label column width in the Run options form
 
+# Set by main() under --smoke-test. The CI smoke test calls win.show(), which
+# fires InstallTab.showEvent and would otherwise hit the network (and leave a
+# QThread running into app.quit()).
+SMOKE_TEST = False
+
 
 # ---------------------------------------------------------------------------
 # Subprocess environment
@@ -70,6 +75,159 @@ def _installation_complete() -> bool:
     longer depends on a generated .env — only the pipeline clone is required.
     """
     return (TARGET_A / ".git").exists()
+
+
+# ---------------------------------------------------------------------------
+# Git helpers
+# ---------------------------------------------------------------------------
+#
+# Two ways to run git in this module:
+#   * ``_git`` — captures, never raises, usable from the GUI thread. For probes
+#     (is it dirty? what is HEAD? which refs does the remote have?) where a
+#     failure is information rather than an error.
+#   * ``InstallWorker._run`` — streams to the log and raises on non-zero. For
+#     the install steps themselves, where a failure must abort.
+
+# Deliberately stricter than git's own check-ref-format: a pragmatic allowlist
+# is easier to reason about than replicating git's rules, and it produces a far
+# better message than git's "fatal: couldn't find remote ref".
+_REF_OK = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._/+@-]{0,254}\Z")
+
+# Branches hoisted to the top of the ref dropdown, in this order.
+_DEFAULT_FIRST = ("main", "master", "develop", "dev")
+
+
+def _git(args: list[str], cwd: Path | None = None,
+         timeout: int = 30) -> subprocess.CompletedProcess:
+    """Run git, capture output, never raise.
+
+    A missing binary, a timeout, or any OSError comes back as returncode 127
+    with the reason in ``.stderr``, so callers only ever branch on returncode.
+    ``GIT_TERMINAL_PROMPT=0`` guarantees a private/renamed repo can never block
+    the caller on an interactive credential prompt.
+    """
+    env = _child_env()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        return subprocess.run(
+            ["git", *args],
+            cwd=str(cwd) if cwd else None,
+            capture_output=True, text=True, timeout=timeout, env=env,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return subprocess.CompletedProcess(args, 127, "", str(exc))
+
+
+def _validate_ref(ref: str | None) -> str:
+    """Return the cleaned ref; ``""`` means the remote's default branch.
+
+    Raises ``ValueError`` with a user-facing message on anything else. Argument
+    injection is already closed by ``--end-of-options`` at every call site and
+    by argv lists (never ``shell=True``); this exists to catch typos early and
+    to keep a leading ``-`` out of argv even if a future call site forgets the
+    flag.
+    """
+    ref = (ref or "").strip()
+    if not ref:
+        return ""
+    if (not _REF_OK.match(ref) or ".." in ref
+            or ref.endswith((".lock", "/", "."))):
+        raise ValueError(
+            f"{ref!r} is not a valid branch, tag or commit.\n\n"
+            "Use letters, digits and . _ / + @ - with no spaces — for example "
+            "'main', 'feature/my-branch', 'v0.4.2', or a full 40-character "
+            "commit SHA."
+        )
+    return ref
+
+
+def _looks_like_abbrev_sha(ref: str) -> bool:
+    """True for a short hex string.
+
+    GitHub serves ``fetch origin <sha>`` only for *full* 40-character SHAs, so
+    an abbreviated one is a guaranteed round-trip failure — better to skip
+    straight to the full-history fallback than pay for it.
+    """
+    return bool(re.fullmatch(r"[0-9a-fA-F]{4,39}", ref))
+
+
+def _same_remote(a: str, b: str) -> bool:
+    """Compare remote URLs ignoring a trailing slash and the .git suffix."""
+    def norm(u: str) -> str:
+        return u.strip().rstrip("/").removesuffix(".git")
+    return norm(a) == norm(b)
+
+
+def _parse_ls_remote(text: str) -> list[str]:
+    """Ref names from ``git ls-remote --heads --tags`` output.
+
+    Strips the ``refs/heads/`` / ``refs/tags/`` prefixes, drops the peeled
+    ``^{}`` duplicates annotated tags emit, hoists the usual default branches,
+    and dedupes globally (a repo can have a branch and a tag of the same name).
+    """
+    heads: list[str] = []
+    tags: list[str] = []
+    for line in text.splitlines():
+        _sha, _tab, ref = line.partition("\t")
+        ref = ref.strip()
+        if not ref or ref.endswith("^{}"):
+            continue
+        if ref.startswith("refs/heads/"):
+            heads.append(ref[len("refs/heads/"):])
+        elif ref.startswith("refs/tags/"):
+            tags.append(ref[len("refs/tags/"):])
+    hoisted = [b for b in _DEFAULT_FIRST if b in heads]
+    rest = sorted((b for b in heads if b not in hoisted), key=str.lower)
+    # Reverse-lexicographic is a good-enough "newest first" for vN.N.N tags.
+    ordered = hoisted + rest + sorted(set(tags), key=str.lower, reverse=True)
+    return list(dict.fromkeys(ordered))
+
+
+def _dirty_files(target: Path) -> list[str]:
+    """``git status --porcelain`` lines for *target*; [] when clean/not a repo.
+
+    Raises ``RuntimeError`` when git cannot answer (corrupt index, NFS stall)
+    so the caller can ask the user rather than assuming a clean tree.
+    """
+    if not (target / ".git").exists():
+        return []
+    cp = _git(["-C", str(target), "status", "--porcelain"], timeout=15)
+    if cp.returncode != 0:
+        raise RuntimeError(cp.stderr.strip() or "git status failed")
+    return cp.stdout.splitlines()
+
+
+def _describe_head(target: Path) -> str:
+    """Short human description of what a clone is checked out at.
+
+    e.g. ``main @ d2d257c5 · shallow``, ``v0.4.2 (tag) @ 8a50c604 · modified``,
+    ``detached @ 8a50c604``, ``not cloned``.
+    """
+    if not (target / ".git").exists():
+        return "not cloned"
+    sha = _git(["-C", str(target), "rev-parse", "--short=8", "HEAD"])
+    if sha.returncode != 0:
+        return "not a git repository"
+
+    name = _git(["-C", str(target), "symbolic-ref", "--quiet", "--short", "HEAD"])
+    if name.returncode == 0:
+        label = name.stdout.strip()
+    else:
+        tag = _git(["-C", str(target), "describe", "--tags", "--exact-match",
+                    "HEAD"])
+        label = f"{tag.stdout.strip()} (tag)" if tag.returncode == 0 else "detached"
+
+    try:
+        dirty = " · modified" if _dirty_files(target) else ""
+    except RuntimeError:
+        dirty = " · status unknown"
+    # Worth surfacing: a shallow clone is why an abbreviated SHA needs a slow
+    # full-history fetch.
+    shallow = ""
+    if _git(["-C", str(target), "rev-parse",
+             "--is-shallow-repository"]).stdout.strip() == "true":
+        shallow = " · shallow"
+    return f"{label} @ {sha.stdout.strip()}{dirty}{shallow}"
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +460,10 @@ def apply_theme(app: QApplication, name: str) -> None:
             color: {log_gray};
             font-size: 10px;
         }}
+        QLabel[hint="note"] {{
+            color: {log_gray};
+            font-size: 14px;
+        }}
         QComboBox {{
             border: 1px solid {accent_dim};
             border-radius: 6px;
@@ -313,10 +475,9 @@ def apply_theme(app: QApplication, name: str) -> None:
         QComboBox:focus {{
             border-color: {hl};
         }}
-        QComboBox::drop-down {{
-            border: none;
-            width: 20px;
-        }}
+        /* Deliberately NOT styling QComboBox::drop-down: touching that
+           subcontrol suppresses Qt's native chevron, which is the only mouse
+           affordance an *editable* combo has for opening its list. */
         QComboBox QAbstractItemView {{
             border: 1px solid {accent_dim};
             background-color: {alt};
@@ -490,13 +651,31 @@ class InstallWorker(QThread):
 
     # ── public ──────────────────────────────────────────────────────────────
 
+    def __init__(self, refs: dict[Path, str] | None = None,
+                 force: set[Path] | None = None) -> None:
+        """*refs* maps a clone target to a branch/tag/commit ("" = default).
+
+        *force* is the set of targets whose local modifications the user has
+        explicitly agreed to discard.  A **set**, not a single flag: confirming
+        a reset of one clone must never authorise destroying the other.
+        """
+        super().__init__()
+        self._refs = refs or {}
+        self._force = force or set()
+
     def run(self) -> None:
         try:
             self._step(f"Cloning / updating METIS_Pipeline  →  {TARGET_A}")
-            self._clone_or_update(REPO_A_URL, TARGET_A)
+            self._clone_or_update(REPO_A_URL, TARGET_A,
+                                  self._refs.get(TARGET_A, ""),
+                                  TARGET_A in self._force)
 
             self._step(f"Cloning / updating METIS_Simulations  →  {TARGET_B}")
-            self._clone_or_update(REPO_B_URL, TARGET_B)
+            self._clone_or_update(REPO_B_URL, TARGET_B,
+                                  self._refs.get(TARGET_B, ""),
+                                  TARGET_B in self._force)
+
+            self._check_layout()
 
             self._ensure_pip()
 
@@ -591,29 +770,267 @@ class InstallWorker(QThread):
                 f"Command exited {proc.returncode}: {' '.join(str(c) for c in cmd)}"
             )
 
-    def _clone_or_update(self, url: str, target: Path) -> None:
+    def _clone_or_update(self, url: str, target: Path,
+                         ref: str = "", force: bool = False) -> None:
+        """Put *target* on *ref* ("" = the remote's default branch).
+
+        *force* permits discarding uncommitted local changes; the GUI collects
+        that confirmation per-repo before the worker starts, and this method
+        re-checks rather than trusting it, so it stays safe to call directly.
+        """
+        try:
+            ref = _validate_ref(ref)
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+
         # .git can be a directory (normal clone) OR a file pointing at
-        # .git/modules/<name>/ (submodule checkout); both are valid git repos.
-        if (target / ".git").exists():
-            self._run(["git", "-C", str(target), "fetch", "--all", "--prune"])
-            result = subprocess.run(
-                ["git", "-C", str(target), "pull", "--ff-only"],
-                capture_output=True, text=True,
+        # .git/modules/<name>/ (submodule or worktree checkout); both are
+        # valid git repos.
+        is_repo = (target / ".git").exists()
+
+        # Hoisted above the ref dispatch: the pinned path runs `git init`,
+        # which would otherwise happily initialise over a non-empty foreign
+        # directory. If the dir is empty (a common leftover from an aborted
+        # install) we can safely use it. Otherwise refuse — silently skipping
+        # would leave the rest of the install referencing a bad checkout.
+        if not is_repo and target.is_dir() and any(target.iterdir()):
+            raise RuntimeError(
+                f"{target} exists but is not a git repo and is not empty. "
+                f"Remove or rename it and re-run the install."
             )
-            self.log.emit(result.stdout + result.stderr, "")
-        elif target.is_dir():
-            # Directory exists but is not a git repo. If it's empty (a common
-            # leftover from an aborted previous install) we can safely clone
-            # into it. Otherwise refuse — silently skipping would leave the
-            # rest of the install referencing a non-existent checkout.
-            if any(target.iterdir()):
-                raise RuntimeError(
-                    f"{target} exists but is not a git repo and is not empty. "
-                    f"Remove or rename it and re-run the install."
-                )
-            self._run(["git", "clone", "--depth", "1", url, str(target)])
+
+        if ref:
+            self._checkout_ref(url, target, ref, force)
+        elif is_repo:
+            self._update_default_branch(url, target, force)
         else:
             self._run(["git", "clone", "--depth", "1", url, str(target)])
+
+        self._log_head(target)
+
+    # ── git plumbing ─────────────────────────────────────────────────────────
+
+    def _checkout_ref(self, url: str, target: Path, ref: str,
+                      force: bool) -> None:
+        """Move *target* onto *ref*, cloning from scratch if need be."""
+        if not (target / ".git").exists():
+            # `init` + `remote add` + `fetch <ref>` reaches an arbitrary commit,
+            # which `git clone --branch` cannot; it also collapses the "no
+            # clone yet" and "clone exists" cases into one path.
+            self._run(["git", "init", str(target)])
+            self._run(["git", "-C", str(target), "remote", "add", "origin", url])
+        else:
+            self._check_origin(target, url)
+
+        # An abbreviated SHA cannot be fetched by name, so don't pay for a
+        # round trip that is guaranteed to fail.
+        ok = (not _looks_like_abbrev_sha(ref)
+              and self._try_fetch(target, ref, depth=1))
+
+        if ok:
+            # FETCH_HEAD is only meaningful after a *successful* fetch (a failed
+            # one truncates it), so the checkout happens here and nowhere else.
+            want = _git(["-C", str(target), "rev-parse", "FETCH_HEAD"]).stdout.strip()
+            if self._already_at(target, ref, want):
+                return
+            self._make_room(target, force)
+            if self._has_remote_branch(target, ref):
+                # A branch fetch also creates refs/remotes/origin/<ref>, so this
+                # tells branch from tag/commit with no extra network call.
+                self._run(["git", "-C", str(target), "checkout", "-f", "-B",
+                           ref, "FETCH_HEAD"])
+                _git(["-C", str(target), "branch", "--set-upstream-to",
+                      f"origin/{ref}", ref])
+            else:
+                self._run(["git", "-C", str(target), "checkout", "-f",
+                           "--detach", "FETCH_HEAD"])
+            return
+
+        # Fallback: an abbreviated SHA, or a commit that is not at any ref tip.
+        # Only a full-history fetch can resolve those locally — and only a hex
+        # commit id ever needs one, so a mistyped branch name fails immediately
+        # instead of downloading the whole history first.
+        if not re.fullmatch(r"[0-9a-fA-F]{4,40}", ref):
+            raise RuntimeError(
+                f"'{ref}' is not a branch or tag in {url}. Check the spelling, "
+                f"or use the ↻ button to reload the ref list."
+            )
+        self.log.emit(
+            f"'{ref}' cannot be fetched directly — falling back to a full "
+            f"history fetch (slow; paste the full 40-character SHA to avoid "
+            f"this).\n",
+            "yellow",
+        )
+        self._deepen(target)
+        self._run(["git", "-C", str(target), "fetch", "--tags", "--force",
+                   "origin"], timeout=900)
+        self._checkout_local(target, url, ref, force)
+
+    def _update_default_branch(self, url: str, target: Path,
+                               force: bool) -> None:
+        """Blank ref: fast-forward the checked-out branch, as MTR always has."""
+        self._run(["git", "-C", str(target), "fetch", "--all", "--prune"])
+
+        branch = self._current_branch(target)
+        if branch is None:
+            # Detached HEAD left behind by an earlier pinned install. There is
+            # no upstream to fast-forward, and blank means "back to normal".
+            default = self._remote_default_branch(url) or "HEAD"
+            self.log.emit(
+                f"Clone is on a detached HEAD; returning to the remote's "
+                f"default branch ({default}).\n",
+                "yellow",
+            )
+            self._checkout_ref(url, target, default, force)
+            return
+
+        cp = _git(["-C", str(target), "pull", "--ff-only"])
+        self.log.emit(cp.stdout + cp.stderr, "")
+        if cp.returncode == 0:
+            return
+        if not force:
+            raise RuntimeError(
+                f"'git pull --ff-only' failed in {target} (see above). If you "
+                f"have local commits, push or drop them; if you have local "
+                f"edits, re-run the install and confirm the reset when asked."
+            )
+        self._make_room(target, force)
+        self._run(["git", "-C", str(target), "pull", "--ff-only"])
+
+    def _make_room(self, target: Path, force: bool) -> None:
+        """Discard local modifications so a checkout can move HEAD."""
+        if not (target / ".git").exists() or not _dirty_files(target):
+            return
+        if not force:
+            raise RuntimeError(
+                f"{target} has uncommitted changes and the reset was not "
+                f"confirmed. Re-run the install and confirm when asked."
+            )
+        self._run(["git", "-C", str(target), "reset", "--hard"])
+        # No -x: gitignored build artefacts, simulation *.fits output and
+        # inst_pkgs/ are user data and must survive. Single -f also makes git
+        # refuse to recurse into a nested repository.
+        self._run(["git", "-C", str(target), "clean", "-fd"])
+
+    def _try_fetch(self, target: Path, ref: str, depth: int = 1) -> bool:
+        """Fetch exactly *ref*; return False instead of raising on failure."""
+        args = ["-C", str(target), "fetch"]
+        if depth:
+            args += ["--depth", str(depth)]
+        args += ["--end-of-options", "origin", ref]
+        self.log.emit(f"$ git {' '.join(args)}\n", "")
+        cp = _git(args, timeout=600)
+        self.log.emit(cp.stdout + cp.stderr, "")
+        return cp.returncode == 0
+
+    def _deepen(self, target: Path) -> None:
+        """Un-shallow *target*, but only if it actually is shallow."""
+        # `fetch --unshallow` errors out on an already-complete repo, and a
+        # freshly `git init`ed one is not shallow either.
+        if _git(["-C", str(target), "rev-parse",
+                 "--is-shallow-repository"]).stdout.strip() == "true":
+            self._run(["git", "-C", str(target), "fetch", "--unshallow",
+                       "origin"], timeout=900)
+
+    def _has_remote_branch(self, target: Path, ref: str) -> bool:
+        return _git(["-C", str(target), "rev-parse", "--verify", "--quiet",
+                     f"refs/remotes/origin/{ref}"]).returncode == 0
+
+    def _already_at(self, target: Path, ref: str, want: str) -> bool:
+        """True when the checkout already matches, so nothing need be touched."""
+        if not want:
+            return False
+        head = _git(["-C", str(target), "rev-parse", "HEAD"]).stdout.strip()
+        if head != want:
+            return False
+        branch = self._current_branch(target)
+        if self._has_remote_branch(target, ref) and branch != ref:
+            return False
+        self.log.emit(
+            f"Already at {want[:8]}; working tree left untouched.\n", "")
+        return True
+
+    def _checkout_local(self, target: Path, url: str, ref: str,
+                        force: bool) -> None:
+        """Check out a ref that is already present in the local object store."""
+        # ^{commit} peels annotated tags and rejects a ref naming a tree/blob.
+        cp = _git(["-C", str(target), "rev-parse", "--verify", "--quiet",
+                   "--end-of-options", f"{ref}^{{commit}}"])
+        if cp.returncode != 0:
+            raise RuntimeError(
+                f"'{ref}' is not a branch, tag or commit in {url}. Check the "
+                f"spelling, or use the ↻ button to reload the ref list."
+            )
+        want = cp.stdout.strip()
+        if self._already_at(target, ref, want):
+            return
+        self._make_room(target, force)
+        if self._has_remote_branch(target, ref):
+            self._run(["git", "-C", str(target), "checkout", "-f", "-B", ref,
+                       f"origin/{ref}"])
+        else:
+            self._run(["git", "-C", str(target), "checkout", "-f", "--detach",
+                       want])
+
+    def _check_origin(self, target: Path, url: str) -> None:
+        """Warn — never fail — when the clone points somewhere unexpected.
+
+        Developers on these repos legitimately point the clone at their own
+        fork, which is the whole reason this feature exists, so a mismatch is
+        reported and honoured rather than "corrected".
+        """
+        cp = _git(["-C", str(target), "remote", "get-url", "origin"])
+        if cp.returncode != 0:
+            self._run(["git", "-C", str(target), "remote", "add", "origin", url])
+            return
+        have = cp.stdout.strip()
+        if not _same_remote(have, url):
+            self.log.emit(
+                f"⚠ {target.name}: origin is {have}, not {url}. Fetching the "
+                f"requested ref from that remote instead.\n",
+                "yellow",
+            )
+
+    def _current_branch(self, target: Path) -> str | None:
+        """Checked-out branch name, or None when HEAD is detached."""
+        cp = _git(["-C", str(target), "symbolic-ref", "--quiet", "--short",
+                   "HEAD"])
+        return cp.stdout.strip() if cp.returncode == 0 else None
+
+    def _remote_default_branch(self, url: str) -> str | None:
+        cp = _git(["ls-remote", "--symref", "--end-of-options", url, "HEAD"],
+                  timeout=20)
+        for line in cp.stdout.splitlines():
+            if line.startswith("ref: refs/heads/"):
+                return line[len("ref: refs/heads/"):].split("\t")[0].strip()
+        return None
+
+    def _log_head(self, target: Path) -> None:
+        """Log exactly which commit landed, so it can be quoted in a bug report."""
+        if not (target / ".git").exists():
+            return
+        self.log.emit(f"→ {target.name}: {_describe_head(target)}\n", "green")
+        cp = _git(["-C", str(target), "log", "-1", "--format=%H  %cs  %s"])
+        if cp.returncode == 0:
+            self.log.emit(f"   {cp.stdout.strip()}\n", "")
+
+    def _check_layout(self) -> None:
+        """Fail early when the selected refs predate the current repo layout.
+
+        Without this, an old ref sails through checkout and then either dies
+        inside `pip install --editable` with an opaque backend traceback, or —
+        worse — silently yields a pipeline with zero recipes because
+        PYCPL_RECIPE_DIR points at a directory that does not exist.
+        """
+        for needed in (TARGET_A / "metisp" / "pymetis" / "pyproject.toml",
+                       TARGET_A / "metisp" / "pyrecipes",
+                       TARGET_B / "pyproject.toml"):
+            if not needed.exists():
+                raise RuntimeError(
+                    f"{needed} does not exist at the selected ref. That ref "
+                    f"probably predates the current repository layout — pick "
+                    f"a newer one."
+                )
 
     def _backup_edps_config(self) -> None:
         """If an existing application.properties exists, back it up."""
@@ -870,15 +1287,117 @@ def _resolve_run_metis_command() -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Ref combo box
+# ---------------------------------------------------------------------------
+
+class RefComboBox(QComboBox):
+    """Editable combo that also opens its list when the text field is clicked.
+
+    A plain editable QComboBox only opens its popup from the arrow button — a
+    click in the text area just places the cursor — which makes the list feel
+    unreachable by mouse, unlike every non-editable combo in the app.
+
+    So a click opens the list whenever the field holds nothing custom: blank
+    (the default) or a value that came from the list itself.  Once something
+    hand-typed is in there — a commit SHA — clicks place the cursor instead, so
+    it stays editable.  The native arrow always opens the list either way.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setEditable(True)
+        # Enter must not permanently append a typed SHA to the dropdown.
+        self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.lineEdit().installEventFilter(self)
+        if self.completer() is not None:
+            self.completer().setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            self.completer().setFilterMode(Qt.MatchFlag.MatchContains)
+
+    def _holds_custom_text(self) -> bool:
+        text = self.currentText().strip()
+        return bool(text) and self.findText(text) < 0
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt override)
+        if (obj is self.lineEdit() and self.count()
+                and not self._holds_custom_text()):
+            # Open on RELEASE, not press. Showing the popup from the press
+            # handler leaves the matching release to land on the freshly-shown
+            # list, which reads it as "released over an item" and closes again
+            # immediately — the popup would only survive while the button was
+            # held down. Swallowing both events keeps it open on a normal click.
+            if event.type() == QEvent.Type.MouseButtonPress:
+                return True
+            if event.type() == QEvent.Type.MouseButtonRelease:
+                if not self.view().isVisible():
+                    self.showPopup()
+                return True
+        return super().eventFilter(obj, event)
+
+
+# ---------------------------------------------------------------------------
+# Ref discovery (background thread)
+# ---------------------------------------------------------------------------
+
+class RefWorker(QThread):
+    """Resolve one repo's local HEAD and its remote branch/tag list.
+
+    The local part is instant and always succeeds; the ``ls-remote`` is a
+    network call that is allowed to fail — the ref combo stays usable as a
+    plain text field when offline.
+    """
+
+    status = pyqtSignal(str, str)    # (key, "main @ d2d257c5")  — local, instant
+    refs   = pyqtSignal(str, list)   # (key, ["main", "v0.4.2", …])
+    failed = pyqtSignal(str, str)    # (key, reason) — status line only, never modal
+
+    def __init__(self, key: str, url: str, target: Path) -> None:
+        super().__init__()
+        self._key, self._url, self._target = key, url, target
+
+    def run(self) -> None:
+        self.status.emit(self._key, _describe_head(self._target))
+        cp = _git(["ls-remote", "--heads", "--tags", "--end-of-options",
+                   self._url], timeout=20)
+        if cp.returncode != 0:
+            reason = (cp.stderr.strip().splitlines()
+                      or ["git ls-remote failed"])[-1]
+            self.failed.emit(self._key, reason)
+            return
+        self.refs.emit(self._key, _parse_ls_remote(cp.stdout))
+
+
+# ---------------------------------------------------------------------------
 # Install tab
 # ---------------------------------------------------------------------------
 
 class InstallTab(QWidget):
 
+    # (settings key, label, repo URL, clone target)
+    REPOS = (
+        ("pipeline_ref", "METIS_Pipeline", REPO_A_URL, TARGET_A),
+        ("simulations_ref", "METIS_Simulations", REPO_B_URL, TARGET_B),
+    )
+
     def __init__(self) -> None:
         super().__init__()
         self._worker: InstallWorker | UninstallWorker | None = None
+        self._settings = QSettings("METIS", "TestRunner")
+        # Held so Python doesn't garbage-collect a running QThread mid-flight.
+        self._ref_workers: dict[str, RefWorker] = {}
+        self._refs_loaded: set[str] = set()
+        self._last_action = ""
         self._build_ui()
+        self._load_settings()
+
+    def showEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        super().showEvent(event)
+        # Unlike ArchiveTab.showEvent this is a NETWORK probe, so it runs once
+        # per session rather than on every tab switch. Deferred via a timer
+        # because MainWindow.__init__ selects this tab during construction when
+        # nothing is installed — we must not delay the first paint.
+        QTimer.singleShot(0, lambda: self._refresh_refs(only_missing=True))
+
+    # ── UI construction ─────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -903,11 +1422,14 @@ class InstallTab(QWidget):
             "scopesim, scopesim_templates) into MTR's own pipx/venv</li>"
             "<li>Initialise and configure EDPS on port 4444</li>"
             "</ol>"
-            "Re-running is safe — existing repositories will be updated, not re-cloned."
+            "Leave the version fields blank and re-running is safe — existing "
+            "repositories are fast-forwarded, not re-cloned."
         )
         desc.setWordWrap(True)
         desc.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(desc)
+
+        layout.addWidget(self._build_version_group())
 
         btn_row = QHBoxLayout()
 
@@ -933,14 +1455,207 @@ class InstallTab(QWidget):
         self.log_view.setFont(QFont("Monospace", 9))
         layout.addWidget(self.log_view, stretch=1)
 
+    def _build_version_group(self) -> QGroupBox:
+        grp = QGroupBox("Repository version (advanced)")
+        lay = QVBoxLayout(grp)
+
+        hint = QLabel(
+            "Leave blank to track each repository's default branch. Developers "
+            "can pick a branch or tag from the list, or paste a full "
+            "40-character commit SHA. An existing clone is <b>overwritten</b> "
+            "with the selection."
+        )
+        hint.setWordWrap(True)
+        hint.setTextFormat(Qt.TextFormat.RichText)
+        hint.setProperty("hint", "note")
+        lay.addWidget(hint)
+
+        self.ref_combos: dict[str, RefComboBox] = {}
+        self.ref_status: dict[str, QLabel] = {}
+        self.ref_buttons: dict[str, QPushButton] = {}
+
+        for key, label, _url, _target in self.REPOS:
+            combo = RefComboBox()
+            combo.lineEdit().setPlaceholderText("default branch")
+            self.ref_combos[key] = combo
+
+            btn = QPushButton("↻")
+            btn.setProperty("role", "info")
+            btn.setToolTip("Reload branches and tags")
+            btn.setMaximumWidth(40)
+            btn.clicked.connect(lambda _checked=False, k=key: self._reload(k))
+            self.ref_buttons[key] = btn
+
+            # Kept short: _labeled pins the label column at LABEL_W, and
+            # "(branch / tag / commit)" overflows it. The hint above says it.
+            lay.addWidget(_labeled(f"{label} version:", combo, btn))
+
+            status = QLabel("currently: …")
+            status.setProperty("hint", "true")
+            status.setIndent(LABEL_W)
+            self.ref_status[key] = status
+            lay.addWidget(status)
+
+        return grp
+
+    # ── ref discovery ────────────────────────────────────────────────────────
+
+    def _refresh_refs(self, only_missing: bool = False) -> None:
+        if SMOKE_TEST or not shutil.which("git"):
+            return
+        for key, _label, url, target in self.REPOS:
+            if only_missing and key in self._refs_loaded:
+                continue
+            if key in self._ref_workers:
+                continue
+            self._refs_loaded.add(key)
+            self.ref_buttons[key].setEnabled(False)
+            w = RefWorker(key, url, target)
+            w.status.connect(self._on_ref_status)
+            w.refs.connect(self._on_refs)
+            w.failed.connect(self._on_ref_failed)
+            w.finished.connect(lambda k=key: self._ref_worker_done(k))
+            self._ref_workers[key] = w
+            w.start()
+
+    def _reload(self, key: str) -> None:
+        self._refs_loaded.discard(key)
+        self._refresh_refs(only_missing=True)
+
+    def _ref_worker_done(self, key: str) -> None:
+        self._ref_workers.pop(key, None)
+        self.ref_buttons[key].setEnabled(True)
+
+    def _on_ref_status(self, key: str, text: str) -> None:
+        self.ref_status[key].setText(f"currently: {text}")
+
+    def _on_refs(self, key: str, items: list) -> None:
+        self._populate(self.ref_combos[key], items)
+
+    def _on_ref_failed(self, key: str, reason: str) -> None:
+        # Never modal, and never in log_view — that widget is the install
+        # transcript, and pre-install noise there is confusing.
+        lbl = self.ref_status[key]
+        lbl.setText(f"{lbl.text()}   (ref list unavailable — offline?)")
+        self.ref_combos[key].setToolTip(reason)
+
+    @staticmethod
+    def _populate(combo: QComboBox, items: list) -> None:
+        """Refill the dropdown without disturbing what the user has typed."""
+        edit = combo.lineEdit()
+        typed, focused = combo.currentText(), edit.hasFocus()
+        pos = edit.cursorPosition()
+        # addItems() on an editable combo with currentIndex == -1 silently
+        # snaps the line edit to items[0], so the text must be restored.
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItems([str(i) for i in items])
+        combo.setCurrentText(typed)
+        combo.blockSignals(False)
+        if focused:
+            edit.setCursorPosition(min(pos, len(typed)))
+
+    def _refresh_status_labels(self) -> None:
+        for key, _label, _url, target in self.REPOS:
+            self.ref_status[key].setText(f"currently: {_describe_head(target)}")
+
+    # ── settings ─────────────────────────────────────────────────────────────
+
+    def _load_settings(self) -> None:
+        for key, _label, _url, _target in self.REPOS:
+            self.ref_combos[key].setCurrentText(
+                self._settings.value(f"install/{key}", "", type=str))
+
+    def _save_settings(self) -> None:
+        for key, _label, _url, _target in self.REPOS:
+            self._settings.setValue(f"install/{key}",
+                                    self.ref_combos[key].currentText().strip())
+
+    def stop_ref_workers(self) -> None:
+        """Let a pending ls-remote finish before the window goes away."""
+        for w in list(self._ref_workers.values()):
+            w.quit()
+            w.wait(2000)
+
+    # ── actions ──────────────────────────────────────────────────────────────
+
     def _start(self) -> None:
+        try:
+            refs = {target: _validate_ref(self.ref_combos[key].currentText())
+                    for key, _label, _url, target in self.REPOS}
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid ref", str(exc))
+            return
+
+        force = self._confirm_discard()
+        if force is None:
+            return
+
+        self._save_settings()
+        self._last_action = "install"
         self.log_view.clear()
         self.install_btn.setEnabled(False)
         self.uninstall_btn.setEnabled(False)
-        self._worker = InstallWorker()
+        self._worker = InstallWorker(refs=refs, force=force)
         self._worker.log.connect(lambda text, color: log_append(self.log_view, text, color))
         self._worker.done.connect(self._on_done)
         self._worker.start()
+
+    def _confirm_discard(self) -> set | None:
+        """Targets whose local changes may be discarded, or None to abort.
+
+        Checked for every dirty clone unconditionally — `checkout -f` discards
+        tracked edits whether or not the selected ref actually changed, so
+        gating this on a changed ref would destroy work silently.
+        """
+        force: set[Path] = set()
+        for key, label, _url, target in self.REPOS:
+            try:
+                entries = _dirty_files(target)
+            except RuntimeError as exc:
+                # Assuming "clean" here risks silent data loss, so ask.
+                if QMessageBox.question(
+                    self, "Could not check for local changes",
+                    f"Could not determine whether {label} ({target}) has local "
+                    f"changes:\n\n{exc}\n\nContinue anyway?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                ) != QMessageBox.StandardButton.Yes:
+                    return None
+                continue
+            if not entries:
+                continue
+            if QMessageBox.question(
+                self, "Discard local changes?",
+                self._discard_text(label, target, entries),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            ) != QMessageBox.StandardButton.Yes:
+                return None
+            force.add(target)
+        return force
+
+    @staticmethod
+    def _discard_text(label: str, target: Path, entries: list) -> str:
+        modified = [e for e in entries if not e.startswith("?")]
+        untracked = [e for e in entries if e.startswith("?")]
+        parts = [f"{label} ({target}) has uncommitted changes.\n"]
+        for title, group in (("Will be reverted:", modified),
+                             ("Will be deleted:", untracked)):
+            if not group:
+                continue
+            parts.append(title)
+            parts.extend(f"  {e}" for e in group[:20])
+            if len(group) > 20:
+                parts.append(f"  … and {len(group) - 20} more")
+            parts.append("")
+        parts.append(
+            "Ignored build artefacts (__pycache__, build/, *.fits, inst_pkgs/) "
+            "are kept.\n"
+            "These changes are discarded only if the checkout has to move.\n\n"
+            "Continue?"
+        )
+        return "\n".join(parts)
 
     def _uninstall(self) -> None:
         reply = QMessageBox.question(
@@ -956,6 +1671,7 @@ class InstallTab(QWidget):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
+        self._last_action = "uninstall"
         self.log_view.clear()
         self.install_btn.setEnabled(False)
         self.uninstall_btn.setEnabled(False)
@@ -967,6 +1683,14 @@ class InstallTab(QWidget):
     def _on_done(self, success: bool) -> None:
         self.install_btn.setEnabled(True)
         self.uninstall_btn.setEnabled(True)
+        if self._last_action == "uninstall" and success:
+            # The clones are gone; leaving the pins behind would silently
+            # re-pin the next install to a long-forgotten ref.
+            for key, _label, _url, _target in self.REPOS:
+                self.ref_combos[key].setCurrentText("")
+                self._settings.remove(f"install/{key}")
+        # HEAD just moved (or the clones vanished), so the labels are stale.
+        self._refresh_status_labels()
 
 
 # ---------------------------------------------------------------------------
@@ -2586,8 +3310,9 @@ class MainWindow(QMainWindow):
         tabs.tabBar().setUsesScrollButtons(False)
         self._run_tab = RunTab()
         self._archive_tab = ArchiveTab()
+        self._install_tab = InstallTab()
         tabs.addTab(self._run_tab, "Run")
-        tabs.addTab(InstallTab(), "Install")
+        tabs.addTab(self._install_tab, "Install")
         tabs.addTab(self._archive_tab, "Archive")
         if not _installation_complete():
             tabs.setCurrentIndex(1)  # Install tab
@@ -2609,7 +3334,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self._run_tab._save_settings()
+        self._install_tab._save_settings()
         self._archive_tab._save_settings()
+        self._install_tab.stop_ref_workers()
         super().closeEvent(event)
 
 
@@ -2618,8 +3345,10 @@ class MainWindow(QMainWindow):
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    global SMOKE_TEST
     pink = "--pink" in sys.argv
     smoke_test = "--smoke-test" in sys.argv or os.environ.get("SMOKE_TEST")
+    SMOKE_TEST = bool(smoke_test)
     argv = [a for a in sys.argv if a not in ("--pink", "--smoke-test")]
     app = QApplication(argv)
     app.setApplicationName("METIS Test Runner")
