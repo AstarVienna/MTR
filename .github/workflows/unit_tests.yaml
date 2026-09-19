@@ -2,22 +2,67 @@ name: Unit Tests
 
 on:
   push:
+    branches: [main]
   pull_request:
+  # The Install tab resolves ESO-mirror packages at runtime and 0.4.5
+  # deliberately unpinned pycpl, so upstream can break us without a commit
+  # here. A weekly run surfaces that before a user does.
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+  # Called by publish.yml so a release is gated on a green suite.
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint
+        run: ruff check --output-format=github .
+
+      - name: Check formatting of the diff
+        run: ruff format --diff . || true   # advisory until the tree is formatted
+
+  test:
+    name: Tests (${{ matrix.os }}, py${{ matrix.python-version }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        # pyproject declares >=3.12,<3.14 and ships a 3.13 classifier, so 3.13
+        # must actually be exercised.
+        python-version: ["3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
@@ -27,15 +72,96 @@ jobs:
             libgl1 libegl1 libglib2.0-0 libxkbcommon0 \
             libfontconfig1 libfreetype6 libdbus-1-3
 
+      # astropy is declared in the dev extra, so no ad-hoc install here.
       - name: Install MTR with dev extras
-        run: pip install -e .[dev] astropy
+        run: pip install -e .[dev]
 
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: pytest tests/ -v
+        run: pytest tests/ -v --cov=metis_test_runner --cov-report=term-missing --cov-report=xml
 
-      - name: Smoke-test mtr console script
+      - name: Upload coverage
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: error
+
+      - name: Smoke-test the console scripts
         env:
           QT_QPA_PLATFORM: offscreen
-        run: mtr --smoke-test
+        run: |
+          mtr --smoke-test
+          # Regression: `mtr-cli` with no args used to raise UnboundLocalError
+          # instead of printing usage. Exit 2 is the contract.
+          mtr-cli --help
+          mtr-cli --version
+          mtr-cli --examples-dir
+          if mtr-cli; then
+            echo "::error::bare mtr-cli should have failed with a usage error"
+            exit 1
+          fi
+          mtr-exec --help
+          mtr-shell --help
+
+  package:
+    name: Build & verify distribution
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install build tooling
+        run: pip install build twine
+
+      - name: Build
+        run: python -m build
+
+      - name: Check metadata
+        run: twine check dist/*
+
+      - name: Assert the bundled examples are in the wheel
+        # hatchling honours VCS ignore patterns and .gitignore has unanchored
+        # rules, so this has silently dropped files before.
+        run: |
+          python - <<'PY'
+          import glob, sys, zipfile
+          wheel = glob.glob("dist/*.whl")[0]
+          names = zipfile.ZipFile(wheel).namelist()
+          expected = [
+              "metis_test_runner/examples/LMS_RAD_06.yaml",
+              "metis_test_runner/examples/small_test.yaml",
+              "metis_test_runner/examples/small_test_img_lm.csv",
+              "metis_test_runner/examples/small_test_img_lm.yaml",
+              "metis_test_runner/examples/small_test_img_n.csv",
+              "metis_test_runner/examples/small_test_img_n.yaml",
+              "metis_test_runner/py.typed",
+          ]
+          missing = [n for n in expected if n not in names]
+          if missing:
+              sys.exit(f"missing from the wheel: {missing}")
+          print(f"{wheel}: all expected data files present")
+          PY
+
+      - name: Install the built wheel and check it imports
+        # CI otherwise only ever tests `pip install -e .`, never the artifact
+        # every user actually installs.
+        run: |
+          python -m venv /tmp/wheeltest
+          /tmp/wheeltest/bin/pip install --no-deps "$(ls dist/*.whl)"
+          /tmp/wheeltest/bin/python -c "import metis_test_runner as m; print(m.__version__)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7

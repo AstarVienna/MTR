@@ -7,7 +7,8 @@ name = "metis-test-runner"
 version = "0.4.5"
 description = "GUI and CLI wrapper for end-to-end ESO METIS pipeline testing"
 readme = "README.md"
-license = { text = "BSD-3-Clause" }
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
 requires-python = ">=3.12,<3.14"
 authors = [{ name = "AstarVienna" }]
 keywords = ["astronomy", "ESO", "METIS", "ELT", "pipeline", "scopesim"]
@@ -15,18 +16,30 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: X11 Applications :: Qt",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: BSD License",
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Software Development :: Testing",
+    "Typing :: Typed",
     "Topic :: Scientific/Engineering :: Astronomy",
 ]
 dependencies = [
-    # Pinned: newer PyQt6-Qt6 wheels (>=6.7) segfault on some Wayland setups.
+    # PINNED DELIBERATELY — do not relax without testing on Wayland.
+    # PyQt6-Qt6 wheels >= 6.7 segfault at startup on some Wayland setups.
+    # Both halves are pinned together because PyQt6 and PyQt6-Qt6 are
+    # version-locked to each other.
+    #
+    # Before changing this, verify on a Wayland session (not XWayland):
+    #     QT_QPA_PLATFORM=wayland mtr --smoke-test
+    # and record here which versions/compositors were tested.
+    #
+    # Known cost of the pin: 6.6.0 predates Python 3.13, so 3.13 users may get
+    # no matching wheel even though the project claims 3.13 support.
     "PyQt6==6.6.0",
     "PyQt6-Qt6==6.6.0",
-    "PyYAML",
+    "PyYAML>=6.0",
     "platformdirs>=4.0",
     "python-dotenv>=1.0",
     # OS-keyring storage for archive credentials (pulls SecretStorage/jeepney
@@ -35,11 +48,23 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "build", "twine"]
+# astropy is imported by archive.py at runtime; without it the archive
+# features degrade but the FITS-classification path is unavailable.
+archive = ["astropy"]
+dev = [
+    "pytest",
+    "pytest-cov",
+    # Required to collect tests/test_archive.py. Previously installed ad hoc
+    # by CI only, so a clean `pip install -e .[dev] && pytest` failed.
+    "astropy",
+    "ruff",
+    "build",
+    "twine",
+]
 
 [project.scripts]
 mtr       = "metis_test_runner.gui:main"
-mtr-cli   = "metis_test_runner.run_metis:main"
+mtr-cli   = "metis_test_runner.run_metis:cli"
 mtr-exec  = "metis_test_runner.direct:exec_main"
 mtr-shell = "metis_test_runner.direct:shell_main"
 
@@ -53,11 +78,16 @@ Changelog = "https://github.com/AstarVienna/MTR/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/metis_test_runner"]
+# Explicit: hatchling honours VCS ignore patterns, and .gitignore carries
+# unanchored rules (*.fits, *.log). Without this, adding a companion fixture
+# to examples/ would silently drop it from the wheel.
+artifacts = ["src/metis_test_runner/examples/*"]
 
 [tool.hatch.build.targets.sdist]
 include = [
     "src/metis_test_runner",
     "tests",
+    ".github",
     "README.md",
     "CHANGELOG.md",
     "LICENSE",
@@ -65,3 +95,43 @@ include = [
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+xfail_strict = true
+
+[tool.ruff]
+target-version = "py312"
+# The existing style already runs past 100 (gui.py's Qt import line is 118).
+line-length = 110
+extend-exclude = ["IMPROVEMENTS.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = [
+    "E501",   # line length is enforced by the formatter, not the linter
+    "SIM105", # contextlib.suppress is not always clearer than try/except/pass
+    # commonwise reads these environment variables by their lowercase names,
+    # so uppercasing them would break the archive client.
+    "SIM112",
+
+    # --- Pre-existing style debt -------------------------------------------
+    # None of these are defects; they are enabled-but-unaddressed rules across
+    # a 6k-line codebase. They are ignored so the lint job is a meaningful
+    # gate on *new* problems rather than a permanently red check. Drop an
+    # entry and clean up its sites as a standalone change.
+    "RUF012", # mutable class defaults (Qt widgets / lookup tables)
+    "RUF005", # list concatenation instead of unpacking
+    "E741",   # ambiguous variable names (l/I/O)
+    "E702",   # multiple statements on one line
+    "E731",   # lambda assignment
+    "B007",   # unused loop control variable
+    "SIM102", # collapsible if
+    "SIM108", # ternary instead of if/else
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests deliberately exec generated scripts and re-import modules.
+"tests/*" = ["B011", "SIM117"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["metis_test_runner"]

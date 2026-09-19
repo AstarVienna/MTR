@@ -4,9 +4,81 @@ on:
   push:
     tags: ["v*.*.*"]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  build:
+  # A tag push used to publish even if the test suite was red on that commit.
+  test:
+    name: Tests
+    uses: ./.github/workflows/unit_tests.yaml
+    permissions:
+      contents: read
+
+  verify:
+    name: Verify tag matches the package version
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Tag, pyproject and CHANGELOG must agree
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os, re, pathlib, sys, tomllib
+
+          tag = os.environ["TAG"].lstrip("v")
+          pyproject = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
+          version = pyproject["project"]["version"]
+
+          errors = []
+          if version != tag:
+              errors.append(
+                  f"tag v{tag} != pyproject.toml version {version}"
+              )
+
+          changelog = pathlib.Path("CHANGELOG.md").read_text()
+          if not re.search(rf"^##\s*\[?{re.escape(tag)}\]?", changelog, re.M):
+              errors.append(f"CHANGELOG.md has no '## {tag}' section")
+
+          if errors:
+              # This message is the only place the release procedure is
+              # written down, so spell out the fix rather than just the fault.
+              sys.exit(
+                  "Release consistency check failed:\n  - "
+                  + "\n  - ".join(errors)
+                  + f"""
+
+          To cut release {tag}:
+            1. Rename the top CHANGELOG.md section to '## {tag}'.
+            2. Set version = "{tag}" in pyproject.toml.
+               (Do NOT edit __init__.py — __version__ is read from the
+                installed package metadata.)
+            3. Commit, then: git tag v{tag} && git push && git push --tag v{tag}
+
+          To retag after fixing: git tag -d v{tag} && git push --delete origin v{tag}
+          """
+              )
+          print(f"Tag, pyproject and CHANGELOG all agree on {tag}")
+          PY
+
+  build:
+    name: Build
+    needs: [test, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -15,22 +87,34 @@ jobs:
           python-version: "3.12"
 
       - name: Install build tooling
-        run: pip install build
+        run: pip install build twine
 
       - name: Build sdist and wheel
         run: python -m build
+
+      - name: Check metadata
+        run: twine check dist/*
 
       - uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
+          if-no-files-found: error
 
   publish:
+    name: Publish
     needs: build
     runs-on: ubuntu-latest
-    #environment:
-    #  name: pypi
-    #  url: https://pypi.org/p/metis-test-runner
+    timeout-minutes: 10
+    # NOTE: no `environment:` here on purpose. It was removed in c8e1a8a
+    # because the PyPI Trusted Publisher for this project is configured
+    # WITHOUT an environment, and a mismatch makes the OIDC exchange fail.
+    # To enable required reviewers on releases: first add the environment name
+    # to the Trusted Publisher on PyPI, then uncomment the three lines below.
+    #
+    # environment:
+    #   name: pypi
+    #   url: https://pypi.org/p/metis-test-runner
     permissions:
       id-token: write           # OIDC trusted publishing; no API token required
     steps:
@@ -40,3 +124,5 @@ jobs:
           path: dist/
 
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          attestations: true

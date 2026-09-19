@@ -1,0 +1,8 @@
+# Normalise line endings so a checkout on any platform matches CI.
+* text=auto eol=lf
+
+# Keep GitHub's release tarballs to just the installable project.
+/.github        export-ignore
+/.gitattributes export-ignore
+/.gitignore     export-ignore
+/IMPROVEMENTS.md export-ignore
