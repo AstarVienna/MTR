@@ -1,8 +1,167 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 — 2026-09-19
+
+### Fixed
+- **`mtr-cli` with no arguments crashed.** The "input files are required" check
+  referenced the argparse parser from inside `main()`, where that name is not
+  bound, so the most common first-run mistake produced an `UnboundLocalError`
+  traceback instead of a usage message and exit 2. The check now lives in
+  `parse_args()` where the parser is in scope. It went unnoticed because
+  `main()` had no test coverage at all; it does now.
+- **`--calib obs1.yaml` no longer eats the input file.** Both `--calib` and
+  `--static` used `nargs="?"`, so a following positional was consumed as the
+  option's value — including in the README's own example, which failed with
+  `invalid int value: 'obs1.yaml'`. Both flags now take their value
+  explicitly, and `--no-calib` / `--no-static` are the shorthand for `0`. A
+  stray input file in that position gets an actionable error rather than an
+  integer-parsing complaint. `--calib N` keeps its integer: it is forwarded to
+  METIS_Simulations as `doCalib`, which sets `nObs` per calibration config.
+  `--static` is documented as the `{0,1}` switch it always was — MTR only ever
+  tested it for truthiness.
+- **Re-installing no longer destroys the backup of your EDPS config.** On the
+  second install the file in place is MTR's own, so backing it up again
+  overwrote the pristine original — which Uninstall would then "restore". The
+  first backup is now kept.
+- **Uninstall refuses to delete implausible directories.** `METIS_DATA_DIR` was
+  passed to `shutil.rmtree` with no validation, so a typo (or
+  `METIS_DATA_DIR=$HOME`) could remove a home directory. Partial failures are
+  now reported instead of being silently ignored.
+- **The archive database password no longer reaches child processes.** It is
+  injected into `os.environ` for commonwise's benefit, and every pipeline
+  subprocess — `edps`, `pyesorex`, ScopeSim, and the interactive `mtr-shell` —
+  inherited it. `env.resolve_runtime_env()` now strips it for every runner.
+- **OmegaCEN pip credentials are percent-encoded.** A space in a password split
+  `PIP_EXTRA_INDEX_URL` into two bogus indexes, and an `@` re-split the URL
+  authority so pip would contact a host named by the password, carrying the
+  rest of the credential. Credentials still never appear in `argv`.
+- **`--auto-fetch-calibrations` works for science-only input, and stops
+  claiming false success.** `has_science` was accepted by
+  `identify_missing_calibrations` and never read, so an input set of only
+  science raws — the case the feature exists for — fetched nothing and
+  reported "All required calibrations already present". The caller also passed
+  YAML-derived tags that are empty for CSV-only and stale under `--no-sim`; it
+  now resolves them from the FITS actually on disk, and distinguishes "checked,
+  nothing missing" from "could not check".
+- **Install/uninstall timeouts now work.** The worker drained the subprocess's
+  stdout to EOF *before* calling `wait(timeout=…)`, so the timeout could never
+  fire: a hung pip download or a `git fetch` against a dead mirror hung the
+  worker forever. A watchdog now enforces the deadline and kills the whole
+  process group, so pip's and git's own children go too.
+- **Stop no longer orphans the EDPS server.** The Run tab sent `SIGKILL`
+  immediately, skipping `run_metis`'s cleanup; it now sends `SIGTERM`, waits,
+  and only then kills. A user-initiated stop is reported as stopped rather than
+  as a failure exit code.
+- **Closing the window during a job is safe.** Only the ref workers were
+  stopped, so quitting mid-install destroyed a tab out from under a live
+  `QThread`. All workers are now tracked, the window asks before quitting on a
+  running job, and the pipeline process is stopped.
+- **A second archive action can no longer abort the first.** The Archive tab
+  kept one worker slot and only disabled the button for the action in flight,
+  so e.g. "Save & Test" during a MetisWISE install dropped the last reference
+  to a running thread.
+- **The Run tab recovers if the process fails to start.** `FailedToStart` never
+  reaches `finished`, so Run stayed disabled and Stop enabled until restart.
+- **The GUI respects the selected runner when building the environment.** It
+  always resolved the `default` runner's environment, contradicting `env.py`,
+  which deliberately returns the bare parent environment for
+  `native`/`docker`/`podman`.
+- **Ctrl-C no longer leaves EDPS patched and running.** The
+  `association_preference` override and the daemon are now owned by a context
+  manager entered before anything global is touched; the restore runs before
+  the stop, and a hanging stop can no longer skip it or mask the real error.
+  `mtr-cli` exits 130 on interrupt instead of printing a traceback.
+- **Downloads are atomic.** Files were copied directly onto the final name, so
+  an interrupted copy left a truncated `.fits` that the pipeline's FITS scan
+  would accept as a valid master. Downloads now land on a temp name, are
+  size-checked, and are renamed into place. Archive-supplied filenames can no
+  longer escape the destination directory.
+- **`~/.awe/Environment.cfg` is written atomically and always `0600`.** Only
+  the creation path chmod-ed, so updating a pre-existing world-readable legacy
+  file left the password readable by every local user. Values containing
+  newlines are rejected — one could inject configuration lines and, for
+  example, downgrade the archive transport to cleartext.
+- **EDPS config patching handles backslashes.** The replacement text was passed
+  to `re.subn` as a string, which interprets `\g<…>` and escapes, so a data
+  directory containing a backslash produced a corrupted config.
+- **Corrupt FITS files are reported instead of silently skipped**, so a
+  truncated download no longer looks identical to a frame without DPR keywords.
+- **Workers log a traceback for unexpected errors** rather than only
+  `str(exc)`, which rendered a `KeyError` as `✗ Failed: 'foo'`.
 
 ### Added
+- **Download and upload progress is shown.** Both workers already emitted a
+  `progress` signal and nothing was ever connected to it.
+- **`mtr-cli --examples-dir` and `--copy-examples DIR`.** The bundled examples
+  ship inside the package, so after a `pipx install` the README's
+  `mtr-cli examples/LMS_RAD_06.yaml` could not work — there is no `examples/`
+  in the working directory.
+- **`mtr-cli --version`**, and the EDPS command line is now echoed before the
+  pipeline runs — it was the hardest part of a run to reproduce by hand and the
+  one thing never printed.
+- `SECURITY.md`, documenting how the two kinds of credential are handled and
+  which invariants must hold when adding a new subprocess call.
+- **Screenshots of all three tabs** (`docs/images/`), referenced by absolute URL
+  so they render on GitHub and PyPI alike.
+- Ruff configuration, a lint job, a `dependabot.yml`, `.editorconfig` and
+  `.gitattributes`.
+
+### Changed
+- **`--prefer-masters` now says when it cannot do anything, and stays
+  CLI-only.** The Install tab already pins
+  `association_preference=master_per_quality_level`, so on a standard install
+  the flag rewrites the value it already has — a complete no-op. For
+  `--runner docker`/`podman` it is worse: it patches
+  `~/.edps/application.properties` on the *host* while EDPS reads the
+  container's own configuration. It now warns in both cases, and reports the
+  real before/after when it does change something. The flag remains useful only
+  where EDPS was configured outside MTR (typically `--runner native`), which is
+  why it is deliberately *not* surfaced on the Run tab: that tab is
+  overwhelmingly driven with the `default` runner, where it does nothing.
+- **`__version__` is derived from the installed package metadata.** It was
+  hardcoded and had been stale at `0.3.1` for four releases. `pyproject.toml`
+  is now the single source of truth.
+- **`astropy` is declared in the `dev` extra.** It is a real test dependency —
+  `tests/test_archive.py` cannot even be imported without it — but was only
+  installed ad hoc by CI, so a clean `pip install -e .[dev] && pytest` failed.
+- **CI covers Python 3.13**, which the project advertises but never tested; adds
+  a lint job, coverage, a packaging job that verifies the wheel actually
+  contains the bundled examples and installs it, concurrency cancellation, pip
+  caching, `permissions: contents: read` and job timeouts. All four console
+  scripts are smoke-tested, including that bare `mtr-cli` fails cleanly.
+- **Publishing is gated on the test suite** and on a check that the tag, the
+  `pyproject.toml` version and the CHANGELOG heading agree. A tag push
+  previously published even if tests were red. (`v0.4.1` was released in the
+  changelog but never tagged, so it never reached PyPI.)
+- `pyproject.toml`: SPDX license metadata, a `PyYAML>=6.0` floor, `py.typed`,
+  explicit wheel `artifacts` for the examples, and an expanded `dev` extra. The
+  `PyQt6==6.6.0` pin is kept, now with the reasoning, how to re-test it, and its
+  known cost for Python 3.13 recorded next to it.
+- `.gitignore` covers the test, lint and coverage caches.
+- **The README leads with a Quickstart and folds the reference material into
+  collapsible sections.** It had grown to 461 lines with no quickstart: a new
+  user read ~85 lines of install variants and Qt system libraries, then 93 lines
+  of prose describing a UI they could simply be shown, before learning what to
+  actually do. Now ~148 visible lines, with system dependencies, runner modes,
+  the input-format spec, the `mtr-cli` option table and the worked examples
+  behind `<details>`. Nothing was deleted.
+- **The README no longer documents a control that does not exist.** The Run tab
+  walkthrough still described picking a workflow from a *Workflow* dropdown,
+  removed in 0.4.0 along with `--workflow`.
+- **Example paths in the README are reachable.** They pointed at a relative
+  `examples/` directory that does not exist after a `pipx install`, and the two
+  Markdown links to it 404'd on both GitHub and PyPI.
+
+### Removed
+- **`container/`.** The image's `CMD` referenced a `launch.sh` deleted four
+  releases ago, and the image never installed MTR at all — its launcher was a
+  `uv sync` against a `src/gui.py` that the PyPI restructure moved. Its original
+  purpose (a local archive pod) disappeared when the archive moved to MetisWISE.
+  Nothing documented it beyond a repository-layout line, and it is unrelated to
+  the `docker`/`podman` *runner* modes, which target a pipeline container you
+  build yourself from `METIS_Pipeline/toolbox/`.
+
+### Added — Install tab
 - **Pin a branch, tag or commit per repository in the Install tab.** A new
   *Repository version (advanced)* group gives `METIS_Pipeline` and
   `METIS_Simulations` an editable dropdown, populated in the background from
@@ -25,7 +184,7 @@
   Clearing a pinned field returns the clone to the remote's default branch —
   including from the detached HEAD a previous pin left behind.
 
-### Fixed
+### Fixed — Install tab
 - **`git pull --ff-only` failures are no longer silently ignored.** The update
   path ran the pull through a bare `subprocess.run` whose return code was never
   checked, so a diverged branch, a dirty tree or a network error left the rest
