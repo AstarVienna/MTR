@@ -11,19 +11,55 @@ Three-tab graphical front-end:
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import threading
+import traceback
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QEvent, QProcess, QProcessEnvironment, QSettings, QThread, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import (
+    QEvent,
+    QProcess,
+    QProcessEnvironment,
+    QSettings,
+    Qt,
+    QThread,
+    QTimer,
+    QUrl,
+    pyqtSignal,
+)
 from PyQt6.QtGui import QColor, QDesktopServices, QFont, QPalette, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
-    QAbstractSpinBox, QApplication, QButtonGroup, QCheckBox, QComboBox,
-    QDialog, QDialogButtonBox, QFileDialog, QGroupBox, QHBoxLayout,
-    QHeaderView, QLabel, QLineEdit, QListWidget, QMainWindow, QMessageBox,
-    QProgressBar, QPushButton, QRadioButton, QSpinBox, QSplitter,
-    QStackedWidget, QTabBar, QTableWidget, QTableWidgetItem, QTabWidget,
-    QTextEdit, QVBoxLayout, QWidget,
+    QAbstractSpinBox,
+    QApplication,
+    QButtonGroup,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QGroupBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QMainWindow,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QRadioButton,
+    QSpinBox,
+    QSplitter,
+    QStackedWidget,
+    QTabBar,
+    QTableWidget,
+    QTableWidgetItem,
+    QTabWidget,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
 )
 
 from . import paths
@@ -58,14 +94,19 @@ SMOKE_TEST = False
 # Subprocess environment
 # ---------------------------------------------------------------------------
 
-def _child_env() -> dict[str, str]:
+def _child_env(runner: str = "default") -> dict[str, str]:
     """Build the environment for subprocesses spawned by the GUI.
 
     Thin wrapper over the shared env-resolution seam so the GUI launcher, the
     orchestrated run, and the direct mtr-exec / mtr-shell commands all resolve
     the same environment (derived from paths.py, with an optional .env override).
+
+    *runner* must be the runner the user selected: env.py deliberately returns
+    the bare parent environment for native/docker/podman, where the tools are
+    on PATH or inside a container rather than in MTR's venv. Hardcoding
+    "default" here injected MTR's venv paths into every runner.
     """
-    return resolve_runtime_env("default")
+    return resolve_runtime_env(runner)
 
 
 def _installation_complete() -> bool:
@@ -75,6 +116,25 @@ def _installation_complete() -> bool:
     longer depends on a generated .env — only the pipeline clone is required.
     """
     return (TARGET_A / ".git").exists()
+
+
+def _assert_safe_to_remove(target: Path) -> None:
+    """Refuse to recursively delete anything that isn't plausibly a data dir.
+
+    ``REPO_ROOT`` is ``METIS_DATA_DIR`` verbatim (see paths.py), so a typo or a
+    stray ``METIS_DATA_DIR=$HOME`` would otherwise point Uninstall's rmtree at
+    the user's home directory.
+    """
+    resolved = target.resolve()
+    if resolved.is_symlink() or not resolved.is_dir():
+        raise RuntimeError(f"Refusing to remove {resolved}: not a real directory")
+    forbidden = {Path("/"), Path.home().resolve(), Path.cwd().resolve()}
+    forbidden |= set(Path.home().resolve().parents)
+    if resolved in forbidden or len(resolved.parts) < 3:
+        raise RuntimeError(
+            f"Refusing to remove {resolved}: this does not look like an MTR "
+            "data directory. Check METIS_DATA_DIR."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -612,6 +672,153 @@ def _dir_picker(edit: QLineEdit, parent: QWidget) -> QPushButton:
     return btn
 
 
+def _log_exception(log_signal, label: str, exc: BaseException) -> None:
+    """Report *exc* to the GUI log, with a traceback for unexpected errors.
+
+    Workers used to log only ``str(exc)``, so a KeyError deep in a helper
+    surfaced as ``✗ Failed: 'foo'`` with nothing to debug from. RuntimeError is
+    how this code reports *expected* failures with a written-for-humans
+    message, so those stay short.
+    """
+    log_signal.emit(f"\n✗ {label}: {exc}\n", "red")
+    if not isinstance(exc, RuntimeError):
+        log_signal.emit(traceback.format_exc(), "red")
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI colour/cursor escapes from subprocess output."""
+    return _ANSI_RE.sub("", text)
+
+
+def stream_subprocess(
+    cmd: list,
+    *,
+    on_line,
+    cwd: Path | None = None,
+    stdin_text: str | None = None,
+    timeout: int = 300,
+    env: dict[str, str] | None = None,
+) -> None:
+    """Run *cmd*, stream its output to *on_line*, and enforce *timeout*.
+
+    Raises ``RuntimeError`` on a non-zero exit and ``TimeoutError`` if the
+    deadline expires.
+
+    The timeout is enforced by a watchdog rather than ``proc.wait(timeout=…)``:
+    draining ``proc.stdout`` blocks until EOF, so by the time ``wait`` is
+    reached the process has always already exited and the timeout could never
+    fire. A hung pip download or a ``git fetch`` against a dead mirror used to
+    hang the worker thread forever, with no cancel path.
+
+    The child gets its own session so the watchdog can kill the whole process
+    group — pip and git spawn their own children, which a bare ``proc.kill()``
+    would orphan.
+    """
+    on_line(f"$ {' '.join(str(c) for c in cmd)}\n", "")
+    timed_out = threading.Event()
+
+    with subprocess.Popen(
+        [str(c) for c in cmd],
+        cwd=str(cwd) if cwd else None,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
+        text=True,
+        env=env if env is not None else _child_env(),
+        start_new_session=True,
+    ) as proc:
+        def _fire() -> None:
+            timed_out.set()
+            _kill_process_group(proc)
+
+        watchdog = threading.Timer(timeout, _fire)
+        watchdog.start()
+        try:
+            if stdin_text is not None:
+                try:
+                    proc.stdin.write(stdin_text)
+                    proc.stdin.flush()
+                except BrokenPipeError:
+                    pass
+                finally:
+                    try:
+                        proc.stdin.close()
+                    except BrokenPipeError:
+                        pass
+            for line in proc.stdout:
+                on_line(strip_ansi(line), "")
+            proc.wait()
+        finally:
+            watchdog.cancel()
+            if proc.poll() is None:          # loop exited early (e.g. an error)
+                _kill_process_group(proc)
+
+    if timed_out.is_set():
+        raise TimeoutError(
+            f"Command timed out after {timeout}s: {' '.join(str(c) for c in cmd)}"
+        )
+    if proc.returncode not in (0, None):
+        raise RuntimeError(
+            f"Command exited {proc.returncode}: {' '.join(str(c) for c in cmd)}"
+        )
+
+
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    """Kill *proc* and any children it spawned; never raises."""
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
+class WorkerHost:
+    """Mixin for tabs that start QThread workers.
+
+    Tracks every live worker so that (a) a second action cannot drop the last
+    reference to a running QThread — which aborts with "QThread: Destroyed
+    while thread is still running" — and (b) the window can wait for them on
+    close instead of tearing the tab out from under them.
+    """
+
+    #: How long to wait for a worker to notice an interruption request.
+    WORKER_STOP_MS = 5_000
+
+    @property
+    def _workers(self) -> set:
+        # Created lazily so subclasses need no __init__ cooperation.
+        if not hasattr(self, "_worker_set"):
+            self._worker_set: set = set()
+        return self._worker_set
+
+    def track_worker(self, worker: QThread) -> QThread:
+        """Register *worker* and drop it again once it finishes."""
+        self._workers.add(worker)
+        worker.finished.connect(lambda w=worker: self._workers.discard(w))
+        worker.finished.connect(worker.deleteLater)
+        return worker
+
+    def live_workers(self) -> list:
+        return [w for w in self._workers if w.isRunning()]
+
+    def busy(self) -> bool:
+        return bool(self.live_workers())
+
+    def stop_workers(self) -> None:
+        """Ask every live worker to stop, then wait briefly for each."""
+        for worker in list(self._workers):
+            if not worker.isRunning():
+                continue
+            worker.requestInterruption()
+            worker.quit()
+            worker.wait(self.WORKER_STOP_MS)
+
+
 # ---------------------------------------------------------------------------
 # Install worker (background thread)
 # ---------------------------------------------------------------------------
@@ -728,7 +935,7 @@ class InstallWorker(QThread):
             self.log.emit("\n✓ Installation complete.\n", "green")
             self.done.emit(True)
         except Exception as exc:
-            self.log.emit(f"\n✗ Failed: {exc}\n", "red")
+            _log_exception(self.log, "Failed", exc)
             self.done.emit(False)
 
     # ── private helpers ──────────────────────────────────────────────────────
@@ -745,30 +952,10 @@ class InstallWorker(QThread):
 
     def _run(self, cmd: list, cwd: Path | None = None,
              stdin_text: str | None = None, timeout: int = 300) -> None:
-        self.log.emit(f"$ {' '.join(str(c) for c in cmd)}\n", "")
-        proc = subprocess.Popen(
-            [str(c) for c in cmd],
-            cwd=str(cwd) if cwd else None,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
-            text=True,
-            env=_child_env(),
+        stream_subprocess(
+            cmd, on_line=self.log.emit, cwd=cwd,
+            stdin_text=stdin_text, timeout=timeout,
         )
-        if stdin_text is not None:
-            try:
-                proc.stdin.write(stdin_text)
-                proc.stdin.flush()
-                proc.stdin.close()
-            except BrokenPipeError:
-                pass
-        for line in proc.stdout:
-            self.log.emit(re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line), "")
-        proc.wait(timeout=timeout)
-        if proc.returncode not in (0, None):
-            raise RuntimeError(
-                f"Command exited {proc.returncode}: {' '.join(str(c) for c in cmd)}"
-            )
 
     def _clone_or_update(self, url: str, target: Path,
                          ref: str = "", force: bool = False) -> None:
@@ -1033,10 +1220,25 @@ class InstallWorker(QThread):
                 )
 
     def _backup_edps_config(self) -> None:
-        """If an existing application.properties exists, back it up."""
+        """Back up an existing application.properties, once.
+
+        Only the *first* backup is the user's own file: on a re-install the
+        file in place is MTR's own, so overwriting the backup with it would
+        destroy the original for good (and Uninstall would then "restore"
+        MTR's config as if it were theirs).
+        """
         props = Path.home() / ".edps" / "application.properties"
-        if props.exists():
-            backup = props.with_name("application.properties_backup")
+        if not props.exists():
+            return
+        backup = props.with_name("application.properties_backup")
+        if backup.exists():
+            props.unlink()
+            self.log.emit(
+                f"{backup} already exists — keeping the original backup "
+                "and discarding the current config\n",
+                "yellow",
+            )
+        else:
             props.rename(backup)
             self.log.emit(
                 f"Existing {props} found — backed up to {backup}\n",
@@ -1055,9 +1257,16 @@ class InstallWorker(QThread):
         try:
             self._run(base, cwd=REPO_ROOT, stdin_text="\n", timeout=60)
         finally:
-            subprocess.run(base + ["-s"], cwd=str(REPO_ROOT),
-                           capture_output=True, timeout=15,
-                           env=_child_env())
+            # Guarded: if edps is missing, the try raises FileNotFoundError and
+            # an unguarded stop here would raise a *second* one that replaces
+            # it — the user would see the stop command's error, not the cause.
+            try:
+                subprocess.run(base + ["-s"], cwd=str(REPO_ROOT),
+                               capture_output=True, timeout=15,
+                               env=_child_env())
+            except Exception as exc:
+                self.log.emit(f"(could not stop the EDPS server: {exc})\n",
+                              "yellow")
 
     def _patch_edps_config(self) -> None:
         props = Path.home() / ".edps" / "application.properties"
@@ -1092,13 +1301,19 @@ class InstallWorker(QThread):
             "truncate": (r"^truncate=.*", "truncate=True"),
         }
         for key, (pattern, replacement) in patches.items():
-            text, count = re.subn(pattern, replacement, text, flags=re.MULTILINE)
+            # A *function* replacement, because re.subn interprets backslashes
+            # and \g<...> in a string replacement: a data dir containing a
+            # backslash would corrupt the config or raise re.error. The paths
+            # here come from METIS_DATA_DIR, which is arbitrary user input.
+            text, count = re.subn(
+                pattern, lambda _m, r=replacement: r, text, flags=re.MULTILINE,
+            )
             if count == 0:
                 raise RuntimeError(
                     f"{props} has no '{key}=' line to patch — EDPS config "
                     f"format may have changed; re-run EDPS initialisation."
                 )
-        props.write_text(text)
+        paths.write_text_atomic(props, text)
         self.log.emit(f"Patched {props}\n", "")
 
 
@@ -1134,6 +1349,7 @@ class UninstallWorker(QThread):
 
     def run(self) -> None:
         from . import credentials as credstore
+
         # _METISWISE_RUNTIME_DEPS is the single source of truth for what the
         # Archive tab installs; reuse it so the two lists never drift apart.
         from .archive import _METISWISE_RUNTIME_DEPS
@@ -1211,22 +1427,7 @@ class UninstallWorker(QThread):
             self._run(boot)
 
     def _run(self, cmd: list, timeout: int = 300) -> None:
-        self.log.emit(f"$ {' '.join(str(c) for c in cmd)}\n", "")
-        proc = subprocess.Popen(
-            [str(c) for c in cmd],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL,
-            text=True,
-            env=_child_env(),
-        )
-        for line in proc.stdout:
-            self.log.emit(re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line), "")
-        proc.wait(timeout=timeout)
-        if proc.returncode not in (0, None):
-            raise RuntimeError(
-                f"Command exited {proc.returncode}: {' '.join(str(c) for c in cmd)}"
-            )
+        stream_subprocess(cmd, on_line=self.log.emit, timeout=timeout)
 
     def _remove_data_dir(self) -> None:
         """Delete the whole user data dir, plus an externally-relocated
@@ -1237,11 +1438,29 @@ class UninstallWorker(QThread):
         if TARGET_B != REPO_ROOT and REPO_ROOT not in TARGET_B.parents:
             targets.append(TARGET_B)
         for target in targets:
-            if target.exists():
-                shutil.rmtree(target)
-                self.log.emit(f"Removed {target}\n", "")
-            else:
+            if not target.exists():
                 self.log.emit(f"{target} does not exist — nothing to remove.\n", "")
+                continue
+            try:
+                _assert_safe_to_remove(target)
+            except RuntimeError as exc:
+                self.log.emit(f"✗ {exc}\n", "red")
+                continue
+            failures: list[str] = []
+            shutil.rmtree(
+                target,
+                onexc=lambda _f, path, exc, _acc=failures: _acc.append(
+                    f"{path}: {exc}"),
+            )
+            if failures:
+                self.log.emit(
+                    f"✗ Could not fully remove {target} "
+                    f"({len(failures)} item(s) left):\n", "red",
+                )
+                for line in failures[:10]:
+                    self.log.emit(f"    {line}\n", "red")
+            else:
+                self.log.emit(f"Removed {target}\n", "")
 
     def _cleanup_edps(self) -> None:
         """If the install backed up a pre-existing config, restore it; otherwise
@@ -1317,7 +1536,7 @@ class RefComboBox(QComboBox):
         text = self.currentText().strip()
         return bool(text) and self.findText(text) < 0
 
-    def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt override)
+    def eventFilter(self, obj, event) -> bool:
         if (obj is self.lineEdit() and self.count()
                 and not self._holds_custom_text()):
             # Open on RELEASE, not press. Showing the popup from the press
@@ -1370,7 +1589,7 @@ class RefWorker(QThread):
 # Install tab
 # ---------------------------------------------------------------------------
 
-class InstallTab(QWidget):
+class InstallTab(WorkerHost, QWidget):
 
     # (settings key, label, repo URL, clone target)
     REPOS = (
@@ -1389,7 +1608,7 @@ class InstallTab(QWidget):
         self._build_ui()
         self._load_settings()
 
-    def showEvent(self, event) -> None:  # noqa: N802 (Qt override)
+    def showEvent(self, event) -> None:
         super().showEvent(event)
         # Unlike ArchiveTab.showEvent this is a NETWORK probe, so it runs once
         # per session rather than on every tab switch. Deferred via a timer
@@ -1596,7 +1815,7 @@ class InstallTab(QWidget):
         self.log_view.clear()
         self.install_btn.setEnabled(False)
         self.uninstall_btn.setEnabled(False)
-        self._worker = InstallWorker(refs=refs, force=force)
+        self._worker = self.track_worker(InstallWorker(refs=refs, force=force))
         self._worker.log.connect(lambda text, color: log_append(self.log_view, text, color))
         self._worker.done.connect(self._on_done)
         self._worker.start()
@@ -1675,7 +1894,7 @@ class InstallTab(QWidget):
         self.log_view.clear()
         self.install_btn.setEnabled(False)
         self.uninstall_btn.setEnabled(False)
-        self._worker = UninstallWorker()
+        self._worker = self.track_worker(UninstallWorker())
         self._worker.log.connect(lambda text, color: log_append(self.log_view, text, color))
         self._worker.done.connect(self._on_done)
         self._worker.start()
@@ -1775,7 +1994,7 @@ class MetisWISEInstallWorker(QThread):
             self.log.emit("\n✓ MetisWISE installed successfully.\n", "green")
             self.done.emit(True)
         except Exception as exc:
-            self.log.emit(f"\n✗ Failed: {exc}\n", "red")
+            _log_exception(self.log, "Failed", exc)
             self.done.emit(False)
 
 
@@ -1838,7 +2057,7 @@ class TestConnectionWorker(QThread):
             )
         except Exception as exc:
             # Nothing persisted on failure — keyring and legacy file untouched.
-            self.log.emit(f"\n✗ Connection failed: {exc}\n", "red")
+            _log_exception(self.log, "Connection failed", exc)
             self.done.emit(False)
             return
 
@@ -1885,7 +2104,7 @@ class QueryWorker(QThread):
             self.log.emit(f"Found {len(items)} item(s).\n", "green")
             self.done.emit(True)
         except Exception as exc:
-            self.log.emit(f"\n✗ Query failed: {exc}\n", "red")
+            _log_exception(self.log, "Query failed", exc)
             self.done.emit(False)
 
 
@@ -1919,7 +2138,7 @@ class DownloadWorker(QThread):
             )
             self.done.emit(True)
         except Exception as exc:
-            self.log.emit(f"\n✗ Download failed: {exc}\n", "red")
+            _log_exception(self.log, "Download failed", exc)
             self.done.emit(False)
 
 
@@ -1952,7 +2171,7 @@ class UploadWorker(QThread):
             )
             self.done.emit(True)
         except Exception as exc:
-            self.log.emit(f"\n✗ Upload failed: {exc}\n", "red")
+            _log_exception(self.log, "Upload failed", exc)
             self.done.emit(False)
 
 
@@ -1960,7 +2179,7 @@ class UploadWorker(QThread):
 # Archive tab
 # ---------------------------------------------------------------------------
 
-class ArchiveTab(QWidget):
+class ArchiveTab(WorkerHost, QWidget):
     """Archive tab: install MetisWISE + configure remote archive, then
     query / download / upload files.
 
@@ -1991,7 +2210,7 @@ class ArchiveTab(QWidget):
         self._load_settings()
         self._refresh_install_status()
 
-    def showEvent(self, event) -> None:  # noqa: N802 (Qt override)
+    def showEvent(self, event) -> None:
         # Re-check whether MetisWISE is still installed every time the tab
         # becomes visible — re-running the Install tab can remove it (its pip
         # reinstall of the pipeline deps doesn't include MetisWISE), and the
@@ -2019,6 +2238,14 @@ class ArchiveTab(QWidget):
         splitter.setStretchFactor(1, 1)
         splitter.setChildrenCollapsible(False)
         outer.addWidget(splitter)
+
+        # Download/upload workers have always emitted `progress`; nothing was
+        # ever connected to it, so multi-GB transfers showed no feedback at all.
+        self._progress = QProgressBar()
+        self._progress.setTextVisible(True)
+        self._progress.setFormat("%v / %m files")
+        self._progress.hide()
+        outer.addWidget(self._progress)
 
         self._stack.addWidget(self._build_page_install())
         self._stack.addWidget(self._build_page_query())
@@ -2156,6 +2383,7 @@ class ArchiveTab(QWidget):
         self._catg_combo.setMinimumWidth(200)
         self._catg_combo.addItem("(all)")
         from itertools import chain as _chain
+
         from .archive import TASK_PRODUCTS
         all_produces = set(_chain.from_iterable(p.produces for p in TASK_PRODUCTS.values()))
         for catg in sorted(all_produces):
@@ -2319,20 +2547,56 @@ class ArchiveTab(QWidget):
 
     # ── MetisWISE install ──────────────────────────────────────────────────
 
+    def _begin_progress(self, total: int) -> None:
+        self._progress.setRange(0, total)
+        self._progress.setValue(0)
+        self._progress.show()
+
+    def _on_progress(self, done: int, total: int) -> None:
+        self._progress.setRange(0, total)
+        self._progress.setValue(done)
+
+    def _end_progress(self) -> None:
+        self._progress.hide()
+
+    def _reject_if_busy(self) -> bool:
+        """True (and warns) if an archive worker is already running.
+
+        The tab keeps one ``self._worker`` slot, so starting a second action
+        used to rebind it and drop the last reference to a *running* QThread.
+        Only the button for the action in flight was disabled, so e.g. "Save &
+        Test" during a MetisWISE install aborted the process.
+        """
+        if not self.busy():
+            return False
+        QMessageBox.information(
+            self, "Archive busy",
+            "Another archive operation is still running. "
+            "Please wait for it to finish.",
+        )
+        return True
+
     def _on_install_metiswise(self) -> None:
-        creds = self._cred_edit.text().strip()
-        if creds and ":" not in creds:
-            QMessageBox.warning(
-                self, "Malformed credentials",
-                "OmegaCEN credentials must be username:password "
-                "(or leave the field blank to use the keyring entry).",
-            )
+        if self._reject_if_busy():
             return
+        # NB: not .strip() — a credential with leading/trailing whitespace is
+        # rejected below rather than silently altered.
+        creds = self._cred_edit.text()
+        if creds:
+            from .archive import encode_pip_credentials
+            try:
+                encode_pip_credentials(creds)
+            except ValueError as exc:
+                QMessageBox.warning(
+                    self, "Malformed credentials",
+                    f"{exc}\n\nLeave the field blank to use the keyring entry.",
+                )
+                return
         self._log.clear()
         self._install_btn.setEnabled(False)
         # Blank field → the worker resolves the keyring entry on its own
         # thread, so a keyring-unlock prompt never blocks the GUI.
-        self._worker = MetisWISEInstallWorker(creds or None)
+        self._worker = self.track_worker(MetisWISEInstallWorker(creds or None))
         self._worker.log.connect(lambda t, c: log_append(self._log, t, c))
         self._worker.needs_input.connect(
             lambda msg: QMessageBox.warning(self, "Missing credentials", msg),
@@ -2347,6 +2611,8 @@ class ArchiveTab(QWidget):
     # ── Save & Test Connection ─────────────────────────────────────────────
 
     def _on_save_and_test(self) -> None:
+        if self._reject_if_busy():
+            return
         from .archive import metiswise_available
         if not metiswise_available():
             QMessageBox.warning(
@@ -2361,7 +2627,7 @@ class ArchiveTab(QWidget):
         self._save_test_btn.setEnabled(False)
         self._cfg_status.setText("Testing…")
         self._cfg_status.setStyleSheet("color: gray;")
-        self._worker = TestConnectionWorker(fields)
+        self._worker = self.track_worker(TestConnectionWorker(fields))
         self._worker.log.connect(lambda t, c: log_append(self._log, t, c))
         self._worker.needs_input.connect(
             lambda msg: QMessageBox.warning(self, "Missing fields", msg),
@@ -2384,6 +2650,8 @@ class ArchiveTab(QWidget):
     # ── Download ────────────────────────────────────────────────────────────
 
     def _on_refresh_archive(self) -> None:
+        if self._reject_if_busy():
+            return
         self._archive_list.clear()
         self._refresh_btn.setEnabled(False)
         catg_text = self._catg_combo.currentText().strip()
@@ -2392,7 +2660,7 @@ class ArchiveTab(QWidget):
             log_append(self._log, f"Querying archive for {category}…\n", "cyan")
         else:
             log_append(self._log, "Querying archive (all items)…\n", "cyan")
-        self._worker = QueryWorker(category=category)
+        self._worker = self.track_worker(QueryWorker(category=category))
         self._worker.log.connect(lambda t, c: log_append(self._log, t, c))
         self._worker.results.connect(self._on_query_results)
         self._worker.done.connect(lambda _ok: self._refresh_btn.setEnabled(True))
@@ -2417,6 +2685,8 @@ class ArchiveTab(QWidget):
             self._archive_list.addItem(label)
 
     def _on_download(self) -> None:
+        if self._reject_if_busy():
+            return
         selected = self._archive_list.selectedItems()
         if not selected:
             QMessageBox.warning(self, "No selection", "Select files to download.")
@@ -2428,8 +2698,11 @@ class ArchiveTab(QWidget):
             return
         filenames = [item.text().split("  [")[0] for item in selected]
         self._download_btn.setEnabled(False)
-        self._worker = DownloadWorker(filenames, Path(dest))
+        self._worker = self.track_worker(DownloadWorker(filenames, Path(dest)))
         self._worker.log.connect(lambda t, c: log_append(self._log, t, c))
+        self._begin_progress(len(filenames))
+        self._worker.progress.connect(self._on_progress)
+        self._worker.done.connect(lambda _ok: self._end_progress())
         self._worker.done.connect(lambda _ok: self._download_btn.setEnabled(True))
         self._worker.start()
 
@@ -2505,6 +2778,7 @@ class ArchiveTab(QWidget):
 
     def _candidate_class_names(self) -> list[str]:
         from itertools import chain as _chain
+
         from .archive import TASK_PRODUCTS
         from .run_metis import DPR_TO_TAG
         produces = _chain.from_iterable(p.produces for p in TASK_PRODUCTS.values())
@@ -2549,6 +2823,8 @@ class ArchiveTab(QWidget):
             item.setForeground(QPalette().color(QPalette.ColorRole.Text))
 
     def _on_upload(self) -> None:
+        if self._reject_if_busy():
+            return
         total_rows = self._stage_table.rowCount()
         if total_rows == 0:
             QMessageBox.warning(
@@ -2588,8 +2864,11 @@ class ArchiveTab(QWidget):
             f"Uploading {len(entries)} file(s) to archive…\n",
             "cyan",
         )
-        self._worker = UploadWorker(entries)
+        self._worker = self.track_worker(UploadWorker(entries))
         self._worker.log.connect(lambda t, c: log_append(self._log, t, c))
+        self._begin_progress(len(entries))
+        self._worker.progress.connect(self._on_progress)
+        self._worker.done.connect(lambda _ok: self._end_progress())
         self._worker.done.connect(
             lambda _ok: self._upload_btn.setEnabled(True),
         )
@@ -2632,11 +2911,16 @@ class ArchiveTab(QWidget):
 # Run tab
 # ---------------------------------------------------------------------------
 
-class RunTab(QWidget):
+class RunTab(WorkerHost, QWidget):
+    #: How long to let run_metis clean up (stop EDPS, restore config) after
+    #: SIGTERM before resorting to SIGKILL.
+    STOP_GRACE_MS = 10_000
+
 
     def __init__(self) -> None:
         super().__init__()
         self._process: QProcess | None = None
+        self._stopping = False
         self._settings = QSettings("METIS", "TestRunner")
         self._build_ui()
         self._load_settings()
@@ -3077,11 +3361,15 @@ class RunTab(QWidget):
             args += ["--simulations-dir", self.sim_dir_edit.text().strip()]
         if self.inst_edit.text().strip():
             args += ["--inst-pkgs", self.inst_edit.text().strip()]
-        if self.auto_fetch_cb.isChecked():
-            args.append("--auto-fetch-calibrations")
-        # Dry-run translate; run_metis handles this early and ignores the
-        # sim/pipeline flags above (those controls are disabled in the GUI).
-        if self.csv_to_yaml_cb.isChecked():
+        # Only applies when a pipeline stage actually runs. Emitting it from a
+        # control that _update_csv_to_yaml_state has greyed out would assert a
+        # value the user cannot see or change.
+        if not self.csv_to_yaml_cb.isChecked():
+            if self.auto_fetch_cb.isChecked():
+                args.append("--auto-fetch-calibrations")
+        else:
+            # Dry-run translate; run_metis handles this early and ignores the
+            # sim/pipeline flags above.
             args.append("--csv-to-yaml")
 
         for i in range(self.input_list.count()):
@@ -3099,18 +3387,26 @@ class RunTab(QWidget):
 
         self._save_settings()
         self.log_view.clear()
+        self._stopping = False
 
         args = self._build_cmd_args()
 
+        # A new QProcess per run, parented to the tab: without this the old
+        # ones accumulate for the lifetime of the window.
+        if self._process is not None:
+            self._process.deleteLater()
         self._process = QProcess(self)
         self._process.setWorkingDirectory(str(REPO_ROOT))
         self._process.readyReadStandardOutput.connect(self._on_stdout)
         self._process.readyReadStandardError.connect(self._on_stderr)
         self._process.finished.connect(self._on_finished)
+        self._process.errorOccurred.connect(self._on_process_error)
 
-        # Pass the parent + .env merged environment to run_metis.py.
+        # Resolve the environment for the runner the user actually picked:
+        # env.py deliberately returns the bare parent environment for
+        # native/docker/podman, where the tools live outside MTR's venv.
         qenv = QProcessEnvironment()
-        for k, v in _child_env().items():
+        for k, v in _child_env(self.runner_combo.currentText()).items():
             qenv.insert(k, v)
         self._process.setProcessEnvironment(qenv)
 
@@ -3121,13 +3417,61 @@ class RunTab(QWidget):
         self.run_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
 
-    def _stop(self) -> None:
-        if self._process and self._process.state() != QProcess.ProcessState.NotRunning:
+    def stop_process(self) -> None:
+        """Stop a running pipeline on window close, without prompting."""
+        if self._process is None:
+            return
+        if self._process.state() == QProcess.ProcessState.NotRunning:
+            return
+        self._process.terminate()
+        if not self._process.waitForFinished(self.STOP_GRACE_MS):
             self._process.kill()
+            self._process.waitForFinished(2000)
+
+    def _on_process_error(self, error) -> None:
+        """Recover the buttons when the process never starts.
+
+        Without this, a FailedToStart never reaches `finished`, so Run stayed
+        disabled and Stop enabled forever — the tab was dead until restart.
+        """
+        if error != QProcess.ProcessError.FailedToStart:
+            return
+        log_append(
+            self.log_view,
+            f"\n✗ Could not start the run: {self._process.errorString()}\n",
+            "red",
+        )
+        self.run_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+
+    def _stop(self) -> None:
+        """Ask the run to stop, then insist.
+
+        SIGKILL alone (the old behaviour) skipped run_metis's own cleanup, so
+        the EDPS server stayed up on its port, ~/.edps/application.properties
+        stayed patched by --prefer-masters, and the temp sim script leaked.
+        SIGTERM lets that `finally` run; the kill is the fallback.
+        """
+        if not self._process:
+            return
+        if self._process.state() == QProcess.ProcessState.NotRunning:
+            return
+        self._stopping = True
+        log_append(self.log_view, "\nStopping — waiting for cleanup…\n", "yellow")
+        self._process.terminate()
+        if not self._process.waitForFinished(self.STOP_GRACE_MS):
+            log_append(
+                self.log_view,
+                "Cleanup did not finish in time; killing the process.\n"
+                "Check for a stray EDPS server if the next run misbehaves.\n",
+                "red",
+            )
+            self._process.kill()
+            self._process.waitForFinished(2000)
 
     @staticmethod
     def _strip_ansi(text: str) -> str:
-        return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
+        return strip_ansi(text)
 
     def _on_stdout(self) -> None:
         data = self._process.readAllStandardOutput().data().decode(errors="replace")
@@ -3137,13 +3481,20 @@ class RunTab(QWidget):
         data = self._process.readAllStandardError().data().decode(errors="replace")
         log_append(self.log_view, self._strip_ansi(data), "orange")
 
-    def _on_finished(self, exit_code: int, _status) -> None:
+    def _on_finished(self, exit_code: int, status) -> None:
         self.run_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
-        if exit_code == 0:
+        if self._stopping:
+            # A user-initiated Stop is not a failure; reporting it as an exit
+            # code made it indistinguishable from a real one.
+            log_append(self.log_view, "\n■ Stopped.\n", "yellow")
+        elif status == QProcess.ExitStatus.CrashExit:
+            log_append(self.log_view, "\n✗ The run crashed.\n", "red")
+        elif exit_code == 0:
             log_append(self.log_view, "\n✓ Done.\n", "green")
         else:
             log_append(self.log_view, f"\n✗ Exited with code {exit_code}.\n", "red")
+        self._stopping = False
 
     # ── Open output folder ───────────────────────────────────────────────────
 
@@ -3332,11 +3683,44 @@ class MainWindow(QMainWindow):
         apply_theme(QApplication.instance(), self._current_theme)
         self._update_theme_btn_label()
 
+    def _busy_jobs(self) -> list[str]:
+        """Names of jobs still running, for the close confirmation."""
+        jobs = []
+        proc = getattr(self._run_tab, "_process", None)
+        if proc is not None and proc.state() != QProcess.ProcessState.NotRunning:
+            jobs.append("a pipeline run")
+        for tab, label in ((self._install_tab, "an install/uninstall"),
+                           (self._archive_tab, "an archive operation")):
+            for worker in tab.live_workers():
+                jobs.append(label)
+                break
+        return jobs
+
     def closeEvent(self, event) -> None:
+        # Destroying a tab while one of its QThreads is still running aborts
+        # with "QThread: Destroyed while thread is still running", and the
+        # worker's queued log signal targets a QTextEdit that is going away.
+        busy = self._busy_jobs()
+        if busy and not SMOKE_TEST:
+            reply = QMessageBox.question(
+                self, "Job still running",
+                "There is still " + " and ".join(busy) + " in progress.\n\n"
+                "Quit anyway? The job will be stopped.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+
         self._run_tab._save_settings()
         self._install_tab._save_settings()
         self._archive_tab._save_settings()
+
+        self._run_tab.stop_process()
         self._install_tab.stop_ref_workers()
+        for tab in (self._install_tab, self._archive_tab):
+            tab.stop_workers()
         super().closeEvent(event)
 
 

@@ -20,8 +20,10 @@ display is required.
 
 import subprocess
 import sys
-import pytest
+import time
 from pathlib import Path
+
+import pytest
 
 from metis_test_runner import gui
 
@@ -74,6 +76,7 @@ def _fake_git(responses, recorder=None):
 class TestAppendLog:
     def test_plain_text_appended(self, qapp):
         from PyQt6.QtWidgets import QTextEdit
+
         from metis_test_runner.gui import log_append
         w = QTextEdit()
         log_append(w, "hello world")
@@ -81,6 +84,7 @@ class TestAppendLog:
 
     def test_multiple_appends_accumulate(self, qapp):
         from PyQt6.QtWidgets import QTextEdit
+
         from metis_test_runner.gui import log_append
         w = QTextEdit()
         log_append(w, "line one\n")
@@ -91,6 +95,7 @@ class TestAppendLog:
 
     def test_coloured_text_appended(self, qapp):
         from PyQt6.QtWidgets import QTextEdit
+
         from metis_test_runner.gui import log_append
         w = QTextEdit()
         log_append(w, "error message", "red")
@@ -98,6 +103,7 @@ class TestAppendLog:
 
     def test_empty_colour_treated_as_no_colour(self, qapp):
         from PyQt6.QtWidgets import QTextEdit
+
         from metis_test_runner.gui import log_append
         w = QTextEdit()
         log_append(w, "neutral", "")   # empty string — no crash, text still added
@@ -117,6 +123,7 @@ class TestWindowConstruction:
 
     def test_window_has_three_tabs(self, qapp):
         from PyQt6.QtWidgets import QTabWidget
+
         from metis_test_runner.gui import MainWindow
         win = MainWindow()
         tabs = win.findChild(QTabWidget)
@@ -126,6 +133,7 @@ class TestWindowConstruction:
 
     def test_tab_labels(self, qapp):
         from PyQt6.QtWidgets import QTabWidget
+
         from metis_test_runner.gui import MainWindow
         win = MainWindow()
         tabs = win.findChild(QTabWidget)
@@ -587,14 +595,29 @@ class TestBackupEdpsConfig:
         edps = tmp_path / ".edps"
         assert not edps.exists()
 
-    def test_overwrites_previous_backup(self, qapp, tmp_path, monkeypatch):
+    def test_preserves_previous_backup(self, qapp, tmp_path, monkeypatch):
+        """A re-install must not clobber the user's original config.
+
+        On the second install the file in place is MTR's own, so overwriting
+        the backup with it would lose the user's original permanently.
+        """
         monkeypatch.setenv("HOME", str(tmp_path))
-        props = self._seed(tmp_path, "port=9999\n")
+        props = self._seed(tmp_path, "port=9999\n")          # MTR's own config
         old_backup = props.with_name("application.properties_backup")
-        old_backup.write_text("port=1111\n")
+        old_backup.write_text("port=1111\n")                 # the user's original
         self._make_worker(qapp)._backup_edps_config()
         assert not props.exists()
-        assert old_backup.read_text() == "port=9999\n"
+        assert old_backup.read_text() == "port=1111\n"
+
+    def test_repeated_backups_keep_the_first(self, qapp, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        props = self._seed(tmp_path, "port=1111\n")
+        worker = self._make_worker(qapp)
+        backup = props.with_name("application.properties_backup")
+        for content in ("port=2222\n", "port=3333\n"):
+            worker._backup_edps_config()
+            props.write_text(content)                        # MTR rewrites it
+        assert backup.read_text() == "port=1111\n"
 
 
 # ---------------------------------------------------------------------------
@@ -742,6 +765,7 @@ class TestArchiveTab:
 
     def test_archive_tab_has_stacked_widget(self, qapp):
         from PyQt6.QtWidgets import QStackedWidget
+
         from metis_test_runner.gui import ArchiveTab
         tab = ArchiveTab()
         stack = tab.findChild(QStackedWidget)
@@ -852,7 +876,8 @@ class TestArchiveTabUploadPage:
     def test_on_upload_dispatches_worker_when_all_resolved(
         self, qapp, tmp_path, monkeypatch,
     ):
-        from unittest.mock import patch as mock_patch, MagicMock
+        from unittest.mock import MagicMock
+        from unittest.mock import patch as mock_patch
         tab = self._make_tab(qapp, monkeypatch,
                              classify=lambda _p: "LM_FLAT_LAMP_RAW")
         fits = tmp_path / "ok.fits"
@@ -865,10 +890,18 @@ class TestArchiveTabUploadPage:
                 captured["entries"] = entries
                 self.log = MagicMock()
                 self.done = MagicMock()
+                self.finished = MagicMock()
+                self.progress = MagicMock()
                 self.log.connect = MagicMock()
                 self.done.connect = MagicMock()
+                self.finished.connect = MagicMock()
+                self.progress.connect = MagicMock()
             def start(self):
                 captured["started"] = True
+            def isRunning(self):
+                return False
+            def deleteLater(self):
+                pass
 
         with mock_patch("metis_test_runner.gui.UploadWorker", StubWorker):
             tab._on_upload()
@@ -900,6 +933,7 @@ class TestUploadWorker:
 
     def test_all_succeed(self, qapp, tmp_path):
         from unittest.mock import patch as mock_patch
+
         from metis_test_runner.gui import UploadWorker
         entries = [
             (tmp_path / "a.fits", "LM_FLAT_LAMP_RAW"),
@@ -916,6 +950,7 @@ class TestUploadWorker:
 
     def test_partial_failure_still_reports_success_signal(self, qapp, tmp_path):
         from unittest.mock import patch as mock_patch
+
         from metis_test_runner.gui import UploadWorker
         entries = [
             (tmp_path / "a.fits", "X"),
@@ -932,6 +967,7 @@ class TestUploadWorker:
 
     def test_exception_emits_false_done(self, qapp, tmp_path):
         from unittest.mock import patch as mock_patch
+
         from metis_test_runner.gui import UploadWorker
         worker = UploadWorker([(tmp_path / "a.fits", "X")])
         emitted = self._connect(worker)
@@ -944,6 +980,7 @@ class TestUploadWorker:
 
     def test_progress_emits_per_file(self, qapp, tmp_path):
         from unittest.mock import patch as mock_patch
+
         from metis_test_runner.gui import UploadWorker
         entries = [(tmp_path / f"{n}.fits", "X") for n in ("a", "b", "c")]
         worker = UploadWorker(entries)
@@ -1060,6 +1097,42 @@ class TestUninstallRemoveDataDir:
         # Should not raise even though nothing exists.
         self._make_worker(qapp)._remove_data_dir()
         assert not data.exists()
+
+    def test_refuses_to_remove_home(self, qapp, tmp_path, monkeypatch):
+        """METIS_DATA_DIR=$HOME must not turn Uninstall into `rm -rf ~`."""
+        from metis_test_runner import gui
+        home = tmp_path / "home"
+        (home / "precious").mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setattr(gui, "REPO_ROOT", home)
+        monkeypatch.setattr(gui, "TARGET_B", home / "METIS_Simulations")
+        self._make_worker(qapp)._remove_data_dir()
+        assert (home / "precious").exists()
+
+    def test_refuses_to_remove_root(self, qapp, monkeypatch):
+        from metis_test_runner import gui
+        monkeypatch.setattr(gui, "REPO_ROOT", Path("/"))
+        monkeypatch.setattr(gui, "TARGET_B", Path("/"))
+        self._make_worker(qapp)._remove_data_dir()
+        assert Path("/").exists()
+
+    def test_refuses_shallow_paths(self, qapp, monkeypatch):
+        from metis_test_runner import gui
+        monkeypatch.setattr(gui, "REPO_ROOT", Path("/tmp"))
+        monkeypatch.setattr(gui, "TARGET_B", Path("/tmp"))
+        self._make_worker(qapp)._remove_data_dir()
+        assert Path("/tmp").exists()
+
+    def test_refuses_a_symlinked_data_dir(self, qapp, tmp_path, monkeypatch):
+        from metis_test_runner import gui
+        real = tmp_path / "real"
+        (real / "keep").mkdir(parents=True)
+        link = tmp_path / "link"
+        link.symlink_to(real, target_is_directory=True)
+        monkeypatch.setattr(gui, "REPO_ROOT", link)
+        monkeypatch.setattr(gui, "TARGET_B", link)
+        self._make_worker(qapp)._remove_data_dir()
+        assert (real / "keep").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -1576,8 +1649,16 @@ class _FakeWorker:
         self.refs, self.force = refs, force
         type(self).constructed.append(self)
         self.log = self.done = None
+        # WorkerHost.track_worker uses these; real QThreads have them.
+        self.finished = _Sig()
 
     def start(self):
+        pass
+
+    def isRunning(self):
+        return False
+
+    def deleteLater(self):
         pass
 
 
@@ -1793,7 +1874,7 @@ class TestMainWindowKeepsInstallTab:
     def test_install_tab_handle_exists_for_close_event(self, qapp):
         # MainWindow used to construct InstallTab inline, so closeEvent could
         # not save its settings or stop its ref-list thread.
-        from metis_test_runner.gui import MainWindow, InstallTab
+        from metis_test_runner.gui import InstallTab, MainWindow
         win = MainWindow()
         assert isinstance(win._install_tab, InstallTab)
         win.close()
@@ -1882,9 +1963,8 @@ class TestRefComboBox:
         assert not c.view().isVisible()
 
     def test_picking_from_the_open_list_sets_the_value(self, qapp):
-        from PyQt6.QtCore import Qt
+        from PyQt6.QtCore import QEvent, Qt
         from PyQt6.QtGui import QKeyEvent
-        from PyQt6.QtCore import QEvent
         c = self._combo(qapp)
         self._click(qapp, c)
         assert c.view().isVisible()
@@ -1907,6 +1987,7 @@ class TestComboArrowIsNotSuppressed:
         # Styling QComboBox::drop-down at all suppresses Qt's native chevron,
         # which is an editable combo's only mouse affordance for its list.
         import re
+
         from PyQt6.QtWidgets import QApplication
         gui.apply_theme(QApplication.instance(), "dark")
         # Strip /* … */ comments: the stylesheet explains this rule's absence
@@ -1915,3 +1996,256 @@ class TestComboArrowIsNotSuppressed:
                      flags=re.S)
         assert "QComboBox::drop-down" not in qss
         assert "QComboBox::down-arrow" not in qss
+
+
+# ---------------------------------------------------------------------------
+# stream_subprocess — real subprocesses, real deadlines
+# ---------------------------------------------------------------------------
+
+class TestStreamSubprocess:
+    """These run actual processes: the bug being guarded is that the old
+    implementation drained stdout to EOF *before* calling wait(timeout=...),
+    so the timeout could never fire and a hung child hung the worker forever.
+    """
+
+    def _lines(self):
+        out = []
+        return out, lambda text, colour="": out.append(text)
+
+    def test_streams_stdout(self):
+        out, on_line = self._lines()
+        gui.stream_subprocess(
+            [sys.executable, "-c", "print('hello')"], on_line=on_line,
+        )
+        assert any("hello" in line for line in out)
+
+    def test_echoes_the_command_first(self):
+        out, on_line = self._lines()
+        gui.stream_subprocess([sys.executable, "-c", "pass"], on_line=on_line)
+        assert out[0].startswith("$ ")
+
+    def test_nonzero_exit_raises(self):
+        _, on_line = self._lines()
+        with pytest.raises(RuntimeError, match="exited 3"):
+            gui.stream_subprocess(
+                [sys.executable, "-c", "raise SystemExit(3)"], on_line=on_line,
+            )
+
+    def test_stdin_text_is_delivered(self):
+        out, on_line = self._lines()
+        gui.stream_subprocess(
+            [sys.executable, "-c", "import sys; print(sys.stdin.read().strip())"],
+            on_line=on_line, stdin_text="from-stdin",
+        )
+        assert any("from-stdin" in line for line in out)
+
+    def test_cwd_is_honoured(self, tmp_path):
+        out, on_line = self._lines()
+        gui.stream_subprocess(
+            [sys.executable, "-c", "import os; print(os.getcwd())"],
+            on_line=on_line, cwd=tmp_path,
+        )
+        assert any(str(tmp_path) in line for line in out)
+
+    def test_ansi_escapes_are_stripped(self):
+        out, on_line = self._lines()
+        gui.stream_subprocess(
+            [sys.executable, "-c", r"print('\x1b[31mred\x1b[0m')"],
+            on_line=on_line,
+        )
+        assert any("red" in line and "\x1b" not in line for line in out)
+
+    def test_timeout_actually_fires_on_a_hung_child(self):
+        """The regression test: a child that never exits must not hang us."""
+        _, on_line = self._lines()
+        start = time.monotonic()
+        with pytest.raises(TimeoutError, match="timed out"):
+            gui.stream_subprocess(
+                [sys.executable, "-c", "import time; time.sleep(60)"],
+                on_line=on_line, timeout=1,
+            )
+        assert time.monotonic() - start < 20, "watchdog did not interrupt the wait"
+
+    def test_timeout_kills_grandchildren_too(self):
+        """pip and git spawn children; killing only the direct child orphans them."""
+        _, on_line = self._lines()
+        code = (
+            "import subprocess, sys, time; "
+            "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+            "time.sleep(60)"
+        )
+        start = time.monotonic()
+        with pytest.raises(TimeoutError):
+            gui.stream_subprocess(
+                [sys.executable, "-c", code], on_line=on_line, timeout=1,
+            )
+        assert time.monotonic() - start < 20
+
+    def test_fast_command_is_not_killed_by_the_watchdog(self):
+        out, on_line = self._lines()
+        gui.stream_subprocess(
+            [sys.executable, "-c", "print('quick')"], on_line=on_line, timeout=30,
+        )
+        assert any("quick" in line for line in out)
+
+
+# ---------------------------------------------------------------------------
+# WorkerHost — real QThreads (nothing else in this suite starts one)
+# ---------------------------------------------------------------------------
+
+class _SleepyWorker(gui.QThread):
+    """A worker that runs until interrupted, so lifetime can be observed."""
+
+    def run(self):
+        while not self.isInterruptionRequested():
+            self.msleep(10)
+
+
+class _Host(gui.WorkerHost):
+    WORKER_STOP_MS = 3_000
+
+
+class TestWorkerHost:
+    def test_tracks_a_running_worker(self, qapp):
+        host, worker = _Host(), _SleepyWorker()
+        host.track_worker(worker)
+        worker.start()
+        try:
+            assert worker in host.live_workers()
+            assert host.busy()
+        finally:
+            host.stop_workers()
+
+    def test_stop_workers_joins_them(self, qapp):
+        host, worker = _Host(), _SleepyWorker()
+        host.track_worker(worker)
+        worker.start()
+        host.stop_workers()
+        assert not worker.isRunning()
+        assert not host.busy()
+
+    def test_finished_worker_is_untracked(self, qapp):
+        host, worker = _Host(), _SleepyWorker()
+        host.track_worker(worker)
+        worker.start()
+        host.stop_workers()
+        worker.wait(3000)
+        qapp.processEvents()          # let the queued finished handler run
+        assert not host.busy()
+
+    def test_tracking_survives_a_second_worker(self, qapp):
+        """Two live workers must both be tracked — the old single-slot design
+        dropped the first one's last reference and aborted the process."""
+        host = _Host()
+        a, b = _SleepyWorker(), _SleepyWorker()
+        host.track_worker(a)
+        host.track_worker(b)
+        a.start()
+        b.start()
+        try:
+            assert len(host.live_workers()) == 2
+        finally:
+            host.stop_workers()
+        assert not a.isRunning() and not b.isRunning()
+
+    def test_idle_host_is_not_busy(self, qapp):
+        assert not _Host().busy()
+
+
+class TestArchiveTabBusyGuard:
+    """A second archive action must be refused, not allowed to clobber the
+    running worker's slot."""
+
+    def _tab(self, qapp, monkeypatch):
+        monkeypatch.setattr(gui, "_installation_complete", lambda: True)
+        monkeypatch.setattr(
+            "metis_test_runner.archive.metiswise_available", lambda: True,
+        )
+        monkeypatch.setattr(
+            "metis_test_runner.archive.read_env_cfg", lambda: {},
+        )
+        return gui.ArchiveTab()
+
+    def test_second_action_is_refused_while_busy(self, qapp, monkeypatch):
+        from PyQt6.QtWidgets import QMessageBox
+        tab = self._tab(qapp, monkeypatch)
+        worker = _SleepyWorker()
+        tab.track_worker(worker)
+        worker.start()
+        infos = []
+        monkeypatch.setattr(QMessageBox, "information",
+                            lambda *a, **k: infos.append(a))
+        try:
+            assert tab._reject_if_busy() is True
+            assert infos, "expected a 'busy' dialog"
+        finally:
+            tab.stop_workers()
+
+    def test_action_allowed_when_idle(self, qapp, monkeypatch):
+        tab = self._tab(qapp, monkeypatch)
+        assert tab._reject_if_busy() is False
+
+
+# ---------------------------------------------------------------------------
+# GUI argv <-> CLI parser contract
+# ---------------------------------------------------------------------------
+
+class TestGuiArgsParseAsCli:
+    """The GUI hand-builds an argv list that run_metis's argparse must accept.
+
+    Nothing type-checks that coupling, so a renamed flag would pass every
+    string-membership test and only fail at runtime. This closes the loop —
+    it is how --prefer-masters stayed GUI-unreachable unnoticed.
+    """
+
+    def _tab(self, qapp):
+        tab = _make_run_tab(qapp)
+        tab.input_list.addItem("a.yaml")
+        return tab
+
+    def test_default_args_round_trip(self, qapp):
+        from metis_test_runner.run_metis import parse_args
+        parsed = parse_args(self._tab(qapp)._build_cmd_args())
+        assert parsed.input_files == ["a.yaml"]
+
+    def test_every_toggle_combination_round_trips(self, qapp):
+        from metis_test_runner.run_metis import parse_args
+        tab = self._tab(qapp)
+        for cb in (tab.calib_cb, tab.static_cb, tab.auto_fetch_cb):
+            for state in (True, False):
+                cb.setChecked(state)
+                parse_args(tab._build_cmd_args())   # must not SystemExit
+
+    def test_prefer_masters_is_not_exposed_in_the_gui(self, qapp):
+        """Deliberately CLI-only: the Install tab already pins
+        association_preference, so the flag is a no-op for the `default`
+        runner the Run tab is overwhelmingly used with."""
+        tab = self._tab(qapp)
+        assert not hasattr(tab, "prefer_masters_cb")
+        assert "--prefer-masters" not in tab._build_cmd_args()
+
+    def test_csv_to_yaml_suppresses_pipeline_only_flags(self, qapp):
+        tab = self._tab(qapp)
+        tab.auto_fetch_cb.setChecked(True)
+        tab.csv_to_yaml_cb.setChecked(True)
+        args = tab._build_cmd_args()
+        assert "--csv-to-yaml" in args
+        assert "--auto-fetch-calibrations" not in args
+
+    def test_runner_and_container_round_trip(self, qapp):
+        from metis_test_runner.run_metis import parse_args
+        tab = self._tab(qapp)
+        tab.runner_combo.setCurrentText("docker")
+        tab.container_edit.setText("metis-pipeline")
+        parsed = parse_args(tab._build_cmd_args())
+        assert parsed.runner == "docker"
+        assert parsed.container == "metis-pipeline"
+
+    def test_pipeline_only_mode_round_trips(self, qapp):
+        from metis_test_runner.run_metis import parse_args
+        tab = self._tab(qapp)
+        tab.rb_pipe_only.setChecked(True)
+        tab.pipeline_input_list.addItem("/data/fits")
+        parsed = parse_args(tab._build_cmd_args())
+        assert parsed.no_sim is True
+        assert parsed.pipeline_input == ["/data/fits"]

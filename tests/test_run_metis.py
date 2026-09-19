@@ -9,11 +9,16 @@ Run with:
     python -m pytest test_run_metis.py
 """
 
+import argparse
+import subprocess
+import sys
 import textwrap
-import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
+import pytest
+
+from metis_test_runner import run_metis as rm
 from metis_test_runner.run_metis import (
     DPR_TO_TAG,
     MODE_TO_WORKFLOW,
@@ -32,14 +37,12 @@ from metis_test_runner.run_metis import (
     infer_edps_targets_for_workflows,
     infer_workflow,
     known_workflows,
+    main,
     parse_args,
     read_edps_port,
     scan_fits_inputs,
     scan_yaml_inputs,
 )
-
-import argparse
-
 
 # ---------------------------------------------------------------------------
 # read_edps_port
@@ -134,7 +137,7 @@ class TestInferWorkflow:
                 tech: "IMAGE,LM"
                 catg: "SCIENCE"
         """)
-        wf, has_sci, tags = infer_workflow([f])
+        wf, has_sci, _tags = infer_workflow([f])
         assert wf == "metis.metis_lm_img_wkf"
         assert has_sci
 
@@ -1611,3 +1614,254 @@ class TestCsvLinesFlag:
     def test_malformed_rejected(self):
         with pytest.raises(SystemExit):
             parse_args(["--csv-lines", "nope", "foo.csv"])
+
+
+# ---------------------------------------------------------------------------
+# Argument validation / main() entry contract
+# ---------------------------------------------------------------------------
+
+class TestRequiredInputs:
+    """Bare `mtr-cli` must give a usage error, not a traceback."""
+
+    def test_no_args_exits_2(self, capsys):
+        with pytest.raises(SystemExit) as exc:
+            parse_args([])
+        assert exc.value.code == 2
+        assert "required unless --no-sim" in capsys.readouterr().err
+
+    def test_no_sim_needs_no_inputs(self):
+        assert parse_args(["--no-sim"]).input_files == []
+
+    def test_main_with_no_args_exits_2(self):
+        # Regression: main() used to reference the argparse parser `p`, which
+        # is local to parse_args, and died with UnboundLocalError instead.
+        with pytest.raises(SystemExit) as exc:
+            main([])
+        assert exc.value.code == 2
+
+    def test_main_rejects_no_sim_plus_no_pipeline(self):
+        with pytest.raises(SystemExit) as exc:
+            main(["--no-sim", "--no-pipeline"])
+        assert exc.value.code != 0
+
+    def test_main_requires_container_for_docker(self, tmp_path):
+        yaml = tmp_path / "a.yaml"
+        yaml.write_text("{}\n")
+        with pytest.raises(SystemExit) as exc:
+            main(["--runner", "docker", str(yaml)])
+        assert "--container" in str(exc.value)
+
+
+class TestCalibStaticFlags:
+    """--calib is a real frame count; --static is a 0/1 switch."""
+
+    def test_defaults(self):
+        args = parse_args(["a.yaml"])
+        assert args.calib == 1
+        assert args.static == 1
+
+    def test_calib_accepts_a_count(self):
+        assert parse_args(["--calib", "2", "a.yaml"]).calib == 2
+
+    def test_calib_zero_disables(self):
+        assert parse_args(["--calib", "0", "a.yaml"]).calib == 0
+
+    def test_no_calib_is_shorthand_for_zero(self):
+        assert parse_args(["--no-calib", "a.yaml"]).calib == 0
+
+    def test_no_static_is_shorthand_for_zero(self):
+        assert parse_args(["--no-static", "a.yaml"]).static == 0
+
+    def test_static_rejects_values_other_than_0_or_1(self):
+        with pytest.raises(SystemExit):
+            parse_args(["--static", "2", "a.yaml"])
+
+    def test_bare_calib_no_longer_swallows_the_input_file(self, capsys):
+        # Regression: --calib had nargs="?", so the documented invocation
+        # `--calib obs1.yaml` consumed the positional as the flag's value.
+        with pytest.raises(SystemExit) as exc:
+            parse_args(["--calib", "obs1.yaml", "obs2.yaml"])
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert "obs1.yaml" in err and "--no-calib" in err
+
+    @pytest.mark.parametrize("flag", ["--calib", "--static"])
+    def test_stray_input_file_gets_an_actionable_message(self, flag, capsys):
+        with pytest.raises(SystemExit):
+            parse_args([flag, "seq.csv", "a.yaml"])
+        assert "expected a number" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# edps_session — global state must never outlive the run
+# ---------------------------------------------------------------------------
+
+class TestEdpsSession:
+    """Both the EDPS daemon and the association_preference line in the user's
+    ~/.edps/application.properties are process-global. Neither may survive a
+    failure or a Ctrl-C."""
+
+    def _spy(self, monkeypatch, *, stop_raises=None):
+        calls = {"set": [], "stopped": 0}
+
+        def fake_set(value):
+            calls["set"].append(value)
+            return "ORIGINAL" if len(calls["set"]) == 1 else None
+
+        def fake_run(cmd, **kw):
+            if "-s" in cmd:
+                calls["stopped"] += 1
+                if stop_raises:
+                    raise stop_raises
+            return MagicMock(returncode=0)
+
+        monkeypatch.setattr(rm, "_set_association_preference", fake_set)
+        monkeypatch.setattr(rm.subprocess, "run", fake_run)
+        return calls
+
+    def test_stops_the_server_on_success(self, monkeypatch):
+        calls = self._spy(monkeypatch)
+        with rm.edps_session(["edps"], None, None):
+            pass
+        assert calls["stopped"] == 1
+
+    def test_stops_the_server_on_failure(self, monkeypatch):
+        calls = self._spy(monkeypatch)
+        with pytest.raises(RuntimeError):
+            with rm.edps_session(["edps"], None, None):
+                raise RuntimeError("pipeline blew up")
+        assert calls["stopped"] == 1
+
+    def test_restores_config_on_keyboard_interrupt(self, monkeypatch):
+        """Ctrl-C used to leave the user's EDPS config patched for good."""
+        calls = self._spy(monkeypatch)
+        with pytest.raises(KeyboardInterrupt):
+            with rm.edps_session(["edps"], None, None, prefer_masters=True):
+                raise KeyboardInterrupt
+        assert calls["set"] == ["master_per_quality_level", "ORIGINAL"]
+        assert calls["stopped"] == 1
+
+    def test_restores_config_on_sys_exit_during_warmup(self, monkeypatch):
+        calls = self._spy(monkeypatch)
+        with pytest.raises(SystemExit):
+            with rm.edps_session(["edps"], None, None, prefer_masters=True):
+                sys.exit("server failed to start")
+        assert calls["set"] == ["master_per_quality_level", "ORIGINAL"]
+
+    def test_restore_runs_even_if_the_stop_hangs(self, monkeypatch):
+        """A TimeoutExpired from the stop used to propagate out of the
+        finally, skipping the restore and masking the real error."""
+        calls = self._spy(
+            monkeypatch,
+            stop_raises=subprocess.TimeoutExpired(cmd="edps -s", timeout=15),
+        )
+        with rm.edps_session(["edps"], None, None, prefer_masters=True):
+            pass
+        assert calls["set"] == ["master_per_quality_level", "ORIGINAL"]
+
+    def test_no_config_change_without_prefer_masters(self, monkeypatch):
+        calls = self._spy(monkeypatch)
+        with rm.edps_session(["edps"], None, None):
+            pass
+        assert calls["set"] == []
+
+    def test_warns_when_the_config_has_no_preference_line(self, monkeypatch, capsys):
+        monkeypatch.setattr(rm, "_set_association_preference", lambda v: None)
+        monkeypatch.setattr(rm.subprocess, "run",
+                            lambda *a, **k: MagicMock(returncode=0))
+        with rm.edps_session(["edps"], None, None, prefer_masters=True):
+            pass
+        assert "had no effect" in capsys.readouterr().out
+
+
+class TestCliInterrupt:
+    def test_ctrl_c_exits_130_not_a_traceback(self, monkeypatch):
+        monkeypatch.setattr(rm, "main", lambda: (_ for _ in ()).throw(KeyboardInterrupt))
+        with pytest.raises(SystemExit) as exc:
+            rm.cli()
+        assert exc.value.code == 130
+
+
+class TestCorruptFitsAreReported:
+    """A truncated download and a frame with no DPR keywords used to be
+    indistinguishable — both were silently skipped."""
+
+    def test_unreadable_files_are_counted_on_stderr(self, tmp_path, capsys):
+        (tmp_path / "broken.fits").write_bytes(b"not a FITS file at all")
+        tags, wfs = rm.scan_fits_inputs(tmp_path)
+        assert tags == set() and wfs == set()
+        err = capsys.readouterr().err
+        assert "could not be read" in err
+        assert "broken.fits" in err
+
+    def test_silent_when_everything_reads(self, tmp_path, capsys):
+        rm.scan_fits_inputs(tmp_path)          # empty dir
+        assert "could not be read" not in capsys.readouterr().err
+
+    def test_valid_files_still_scanned_alongside_broken_ones(self, tmp_path, capsys):
+        afits = pytest.importorskip("astropy.io.fits")
+        hdu = afits.PrimaryHDU()
+        hdu.header["HIERARCH ESO DPR CATG"] = "CALIB"
+        hdu.header["HIERARCH ESO DPR TYPE"] = "DARK"
+        hdu.header["HIERARCH ESO DPR TECH"] = "IFU"
+        hdu.writeto(tmp_path / "good.fits")
+        (tmp_path / "broken.fits").write_bytes(b"garbage")
+        tags, _ = rm.scan_fits_inputs(tmp_path)
+        assert tags, "the readable file should still contribute its tag"
+        assert "broken.fits" in capsys.readouterr().err
+
+
+class TestPreferMastersIsHonest:
+    """--prefer-masters only bites when EDPS was configured outside MTR.
+
+    The Install tab pins association_preference=master_per_quality_level, so on
+    a standard install the flag is a no-op; for container runners it would
+    patch the host's config while EDPS reads the container's. Both cases must
+    say so rather than appear to work.
+    """
+
+    def _props(self, tmp_path, monkeypatch, body):
+        props = tmp_path / "application.properties"
+        props.write_text(body)
+        monkeypatch.setattr(rm, "_edps_properties_path", lambda: props)
+        return props
+
+    @pytest.mark.parametrize("runner", ["docker", "podman"])
+    def test_container_runners_are_warned_and_skipped(self, runner, tmp_path,
+                                                      monkeypatch, capsys):
+        props = self._props(tmp_path, monkeypatch,
+                            "association_preference=best_quality\n")
+        assert rm._apply_prefer_masters(runner) is None
+        assert props.read_text() == "association_preference=best_quality\n"
+        out = capsys.readouterr().out
+        assert "ignored" in out and "container" in out
+
+    def test_already_set_says_it_changes_nothing(self, tmp_path, monkeypatch, capsys):
+        self._props(tmp_path, monkeypatch,
+                    "association_preference=master_per_quality_level\n")
+        rm._apply_prefer_masters("default")
+        assert "changes nothing" in capsys.readouterr().out
+
+    def test_missing_line_is_reported(self, tmp_path, monkeypatch, capsys):
+        self._props(tmp_path, monkeypatch, "port=4444\n")
+        assert rm._apply_prefer_masters("default") is None
+        assert "had no effect" in capsys.readouterr().out
+
+    def test_real_override_is_applied_and_announced(self, tmp_path, monkeypatch, capsys):
+        props = self._props(tmp_path, monkeypatch,
+                            "association_preference=best_quality\n")
+        original = rm._apply_prefer_masters("native")
+        assert original == "best_quality"
+        assert "master_per_quality_level" in props.read_text()
+        assert "Overriding association_preference" in capsys.readouterr().out
+        rm._restore_association_preference(original)
+        assert props.read_text() == "association_preference=best_quality\n"
+
+    def test_session_passes_the_runner_through(self, tmp_path, monkeypatch, capsys):
+        self._props(tmp_path, monkeypatch, "association_preference=best_quality\n")
+        monkeypatch.setattr(rm.subprocess, "run",
+                            lambda *a, **k: MagicMock(returncode=0))
+        with rm.edps_session(["edps"], None, None,
+                             prefer_masters=True, runner="docker"):
+            pass
+        assert "ignored" in capsys.readouterr().out

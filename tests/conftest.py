@@ -17,7 +17,7 @@ _qsettings_tmp = tempfile.mkdtemp(prefix="metis-qsettings-")
 os.environ["XDG_CONFIG_HOME"] = _qsettings_tmp
 os.environ["XDG_DATA_HOME"] = _qsettings_tmp
 
-import pytest
+import pytest  # noqa: E402 (must follow the env setup above)
 
 
 @pytest.fixture(scope="session")

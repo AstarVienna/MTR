@@ -19,11 +19,13 @@ import re
 import shutil
 import sys
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from urllib.parse import quote
 
 from . import credentials, paths
+from .env import ENV_CFG_FIELDS as _ENV_CFG_FIELDS
 from .indexes import ESO_INDEX, PYCPL_INDEX
 
 # ---------------------------------------------------------------------------
@@ -82,6 +84,25 @@ _METISWISE_RUNTIME_DEPS: tuple[str, ...] = (
 )
 
 
+def encode_pip_credentials(raw: str) -> str:
+    """Return ``user:password`` percent-encoded for use in a URL authority.
+
+    Interpolating the raw string is unsafe: a space splits
+    ``PIP_EXTRA_INDEX_URL`` into two indexes, and an ``@`` re-splits the
+    authority so pip would connect to a host taken from the password — with
+    the rest of the credential in the userinfo. Both are reachable with an
+    ordinary awkward password, so validate the shape and escape both halves.
+    """
+    if any(c.isspace() for c in raw):
+        raise ValueError("Credentials must not contain spaces or newlines.")
+    user, sep, password = raw.partition(":")
+    if not sep or not user or not password:
+        raise ValueError(
+            "Credentials must be in the form 'username:password'."
+        )
+    return f"{quote(user, safe='')}:{quote(password, safe='')}"
+
+
 def install_metiswise_command(
     pip_credentials: str,
 ) -> tuple[list[list[str]], dict[str, str]]:
@@ -126,7 +147,7 @@ def install_metiswise_command(
         "PIP_EXTRA_INDEX_URL": " ".join((
             ESO_INDEX,
             PYCPL_INDEX,
-            f"https://{pip_credentials}@pip.entropynaut.com/packages/",
+            f"https://{encode_pip_credentials(pip_credentials)}@pip.entropynaut.com/packages/",
         )),
     }
     deps_cmd = [
@@ -301,13 +322,9 @@ def _ensure_credentials_applied() -> None:
         apply_db_credentials(fields)
 
 
-ENV_CFG_FIELDS: tuple[str, ...] = (
-    "database_user",
-    "database_password",
-    "project",
-    "database_tablespacename",
-    "database_name",
-)
+# Canonical definition lives in env.py, which must filter these out of every
+# subprocess environment; re-exported here for existing callers.
+ENV_CFG_FIELDS = _ENV_CFG_FIELDS
 
 
 def env_cfg_path() -> Path:
@@ -377,14 +394,28 @@ def write_env_cfg(
         "database_tablespacename": database_tablespacename,
         "database_name": database_name,
     }
+    # A value containing a newline would inject arbitrary config lines into
+    # [global] — e.g. a pasted password ending in "\ndata_protocol : http"
+    # would silently downgrade commonwise's transport to cleartext.
+    for key, value in values.items():
+        if "\n" in value or "\r" in value:
+            raise ValueError(
+                f"{key} must not contain a newline (it would inject "
+                "additional configuration lines)."
+            )
 
     cfg = env_cfg_path()
     cfg.parent.mkdir(mode=0o700, exist_ok=True)
+    # mkdir(mode=) is masked by umask and does nothing for an existing dir,
+    # so fix up the permissions explicitly.
+    try:
+        os.chmod(cfg.parent, 0o700)
+    except OSError:
+        pass
 
     if not cfg.exists():
         lines = ["[global]"] + [f"{k} : {v}" for k, v in values.items()]
-        cfg.write_text("\n".join(lines) + "\n")
-        os.chmod(cfg, 0o600)
+        paths.write_text_atomic(cfg, "\n".join(lines) + "\n", mode=0o600)
         return cfg
 
     text = cfg.read_text()
@@ -411,7 +442,7 @@ def write_env_cfg(
         lines.append("[global]")
         for k, v in values.items():
             lines.append(f"{k} : {v}")
-        cfg.write_text("\n".join(lines) + "\n")
+        paths.write_text_atomic(cfg, "\n".join(lines) + "\n", mode=0o600)
         return cfg
 
     # Patch keys that exist inside [global]; remember which ones we handled.
@@ -435,7 +466,7 @@ def write_env_cfg(
         insertion = [f"{k} : {values[k]}" for k in missing]
         lines = lines[:global_end] + insertion + lines[global_end:]
 
-    cfg.write_text("\n".join(lines) + "\n")
+    paths.write_text_atomic(cfg, "\n".join(lines) + "\n", mode=0o600)
     return cfg
 
 
@@ -489,7 +520,7 @@ def scrub_env_cfg() -> Path | None:
 
     if not removed:
         return None
-    cfg.write_text("\n".join(kept) + "\n")
+    paths.write_text_atomic(cfg, "\n".join(kept) + "\n", mode=0o600)
     return cfg
 
 
@@ -605,11 +636,33 @@ def download_file(
             return None
 
         dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / filename
+        # Never let an archive-supplied name escape dest_dir.
+        safe_name = Path(filename).name
+        if not safe_name or safe_name in (".", ".."):
+            if on_log:
+                on_log(f"Refusing unsafe archive filename: {filename!r}")
+            return None
+        dest = dest_dir / safe_name
         # MetisWISE may retrieve directly into *dest_dir* (e.g. cwd),
-        # in which case copy2() would error with "same file".
+        # in which case copying would error with "same file".
         if src.resolve() != dest.resolve():
-            shutil.copy2(str(src), str(dest))
+            # Copy to a sibling temp file and rename, so an interrupted or
+            # failed copy cannot leave a truncated *.fits at the final name —
+            # the pipeline's FITS scan would classify that as a valid master.
+            tmp = dest.with_name(f".{dest.name}.part")
+            try:
+                shutil.copy2(str(src), str(tmp))
+                expected = src.stat().st_size
+                got = tmp.stat().st_size
+                if got != expected:
+                    raise OSError(
+                        f"size mismatch after copy: got {got} bytes, "
+                        f"expected {expected}"
+                    )
+                os.replace(tmp, dest)
+            except BaseException:
+                tmp.unlink(missing_ok=True)
+                raise
         if on_log:
             on_log(f"Downloaded {filename} → {dest}")
         return dest
@@ -639,8 +692,8 @@ def _build_pro_dataitem(path: Path):
     from astropy.io import fits
     from metiswise.main.pro import (
         Pro,
-        get_provenance_from_header,
         get_optional_dataitem_from_filename,
+        get_provenance_from_header,
     )
 
     with fits.open(str(path)) as hdus:
@@ -878,6 +931,12 @@ def identify_missing_calibrations(
     deepest_present_idx = -1
     for idx, (task_name, tag, meta) in enumerate(chain):
         if meta == "science":
+            # A science frame needs the *whole* calibration chain upstream of
+            # it. Without this, an input set of only science raws covers no
+            # calibration task, deepest_present_idx stays -1, and we report
+            # "nothing missing" for the very case auto-fetch exists to serve.
+            if has_science and _task_covered(task_name, tag, data_tags):
+                deepest_present_idx = max(deepest_present_idx, idx)
             continue
         if _task_covered(task_name, tag, data_tags):
             deepest_present_idx = idx

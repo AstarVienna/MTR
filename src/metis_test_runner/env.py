@@ -22,6 +22,25 @@ from pathlib import Path
 
 from . import paths
 
+# Credential names commonwise reads out of the environment. Defined here rather
+# than in archive.py because this module is the single seam every subprocess
+# environment flows through, and it must never hand them to a child: `edps`,
+# `pyesorex`, ScopeSim and especially the interactive `mtr-shell` have no
+# business seeing the archive password. archive.py re-exports this as
+# ENV_CFG_FIELDS. (env.py imports only paths, so this introduces no cycle.)
+ENV_CFG_FIELDS: tuple[str, ...] = (
+    "database_user",
+    "database_password",
+    "project",
+    "database_tablespacename",
+    "database_name",
+)
+
+# apply_db_credentials() also injects this to suppress commonwise's getpass().
+SECRET_ENV_KEYS: frozenset[str] = frozenset(ENV_CFG_FIELDS) | {
+    "ask_administrator_password",
+}
+
 
 def ensurepip_command_if_needed(python_exe: str = sys.executable) -> list[str] | None:
     """Return an ``ensurepip`` bootstrap command when *python_exe* has no pip.
@@ -51,8 +70,12 @@ def resolve_runtime_env(runner: str = "default") -> dict[str, str]:
     ``edps`` / ``pyesorex`` resolve to the venv copies), and layers an optional
     Install-tab ``.env`` on top.  For other runners, returns the parent
     environment (plus ``PYTHONUNBUFFERED``) unchanged.
+
+    Archive credentials are stripped for every runner: ``apply_db_credentials``
+    injects them into ``os.environ`` for commonwise's benefit, and without this
+    filter they would be inherited by every pipeline subprocess.
     """
-    env = os.environ.copy()
+    env = {k: v for k, v in os.environ.items() if k not in SECRET_ENV_KEYS}
     env["PYTHONUNBUFFERED"] = "1"
 
     if runner != "default":
@@ -74,11 +97,13 @@ def resolve_runtime_env(runner: str = "default") -> dict[str, str]:
     env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
 
     # Optional override: an Install-tab .env wins over the derived defaults.
+    # Secret keys are filtered here too, so a hand-edited .env cannot put back
+    # what the strip above removed.
     env_file = paths.env_file()
     if env_file.exists():
         from dotenv import dotenv_values
         env.update({k: v for k, v in dotenv_values(env_file).items()
-                    if v is not None})
+                    if v is not None and k not in SECRET_ENV_KEYS})
 
     return env
 

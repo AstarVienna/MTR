@@ -39,17 +39,20 @@ with -m science.
 """
 
 import argparse
+import contextlib
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
-import yaml
 from collections import Counter
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
-from . import paths
+import yaml
+
+from . import __version__, paths
 from .env import resolve_runtime_env
 
 # Recognised input file extensions
@@ -231,9 +234,14 @@ DPR_TO_TAG = {
 }
 
 
+def _edps_properties_path() -> Path:
+    """Location of the EDPS configuration MTR reads and patches."""
+    return Path.home() / ".edps" / "application.properties"
+
+
 def read_edps_port(default: int = 5000) -> int:
     """Read the EDPS server port from ~/.edps/application.properties."""
-    props = Path.home() / ".edps" / "application.properties"
+    props = _edps_properties_path()
     if props.exists():
         for line in props.read_text().splitlines():
             line = line.strip()
@@ -320,6 +328,7 @@ def scan_fits_inputs(fits_dir):
     except ImportError:
         return data_tags, sub_workflows
 
+    unreadable: list[str] = []
     for f in Path(fits_dir).rglob("*.fits"):
         try:
             with afits.open(f, memmap=True) as hdul:
@@ -328,7 +337,11 @@ def scan_fits_inputs(fits_dir):
                 typ = hdr.get("HIERARCH ESO DPR TYPE", "").strip()
                 tech = hdr.get("HIERARCH ESO DPR TECH", "").strip()
                 pro_catg = hdr.get("HIERARCH ESO PRO CATG", "").strip()
-        except Exception:
+        except Exception as exc:
+            # A corrupt or unreadable frame is not the same as an
+            # unrecognised one; silently skipping both meant a truncated
+            # download looked exactly like a file with no DPR keywords.
+            unreadable.append(f"{f.name}: {exc}")
             continue
 
         if catg:
@@ -342,6 +355,14 @@ def scan_fits_inputs(fits_dir):
             wf = TECH_TO_WORKFLOW.get(_normalize_tech(tech))
             if wf:
                 sub_workflows.add(wf)
+
+    if unreadable:
+        print(f"  Warning: {len(unreadable)} FITS file(s) could not be read "
+              f"and were ignored:", file=sys.stderr)
+        for line in unreadable[:10]:
+            print(f"    {line}", file=sys.stderr)
+        if len(unreadable) > 10:
+            print(f"    … and {len(unreadable) - 10} more", file=sys.stderr)
 
     return data_tags, sub_workflows
 
@@ -475,8 +496,10 @@ def infer_workflow_from_fits(fits_dir):
     """
     try:
         from astropy.io import fits as afits
-    except ImportError:
-        raise ValueError("astropy is required to infer workflow from FITS headers.")
+    except ImportError as exc:
+        raise ValueError(
+            "astropy is required to infer workflow from FITS headers."
+        ) from exc
 
     techs = []
     for f in Path(fits_dir).rglob("*.fits"):
@@ -818,8 +841,10 @@ def _run_simulation(runner, container, sim_code, sims_cwd):
 
     _check_default_env(runner)
 
-    tmp = tempfile.NamedTemporaryFile(mode="w", suffix="_run_sim.py",
-                                     delete=False)
+    # delete=False is deliberate: the file must outlive this block so the
+    # subprocess can execute it; the finally below removes it.
+    tmp = tempfile.NamedTemporaryFile(  # noqa: SIM115
+        mode="w", suffix="_run_sim.py", delete=False)
     tmp.write(sim_code)
     tmp.close()
     try:
@@ -856,7 +881,7 @@ def _set_association_preference(value: str) -> str | None:
     Returns the original value so it can be restored, or ``None`` if the
     file doesn't exist (no patching needed).
     """
-    props = Path.home() / ".edps" / "application.properties"
+    props = _edps_properties_path()
     if not props.exists():
         return None
     text = props.read_text()
@@ -878,6 +903,76 @@ def _restore_association_preference(original: str | None) -> None:
         _set_association_preference(original)
 
 
+_PREFER_MASTERS_VALUE = "master_per_quality_level"
+
+
+def _apply_prefer_masters(runner: str) -> str | None:
+    """Apply ``--prefer-masters``, and say plainly when it cannot do anything.
+
+    The flag only bites when the EDPS configuration was *not* written by MTR's
+    Install tab, which already pins ``association_preference`` to
+    ``master_per_quality_level`` permanently.  It is therefore a no-op on a
+    standard install, and meaningless for the container runners, where the
+    patch would land on the host's config while EDPS reads the container's.
+    Returns the value to restore afterwards, or ``None`` if nothing changed.
+    """
+    if runner in ("docker", "podman"):
+        print(f"  Warning: --prefer-masters is ignored for --runner {runner}. "
+              "It patches ~/.edps/application.properties on the host, but EDPS "
+              "runs inside the container with its own configuration.")
+        return None
+
+    original = _set_association_preference(_PREFER_MASTERS_VALUE)
+    if original is None:
+        print("  Warning: no 'association_preference=' line found in "
+              f"{_edps_properties_path()} — --prefer-masters had no effect.")
+    elif original == _PREFER_MASTERS_VALUE:
+        print("  Note: association_preference was already "
+              f"'{_PREFER_MASTERS_VALUE}' (the Install tab sets it), so "
+              "--prefer-masters changes nothing for this run.")
+    else:
+        print(f"  Overriding association_preference: {original} → "
+              f"{_PREFER_MASTERS_VALUE} (restored after the run)")
+    return original
+
+
+@contextlib.contextmanager
+def edps_session(edps_cmd, cwd, env, *, prefer_masters: bool = False,
+                 runner: str = "default"):
+    """Own the global EDPS state for the duration of a pipeline run.
+
+    Both things this guards are process-global and live in the user's ``$HOME``:
+    the ``association_preference`` line in ``~/.edps/application.properties``
+    and the EDPS daemon itself.  Previously the config was patched *before* the
+    try block, so a Ctrl-C during the (unbounded, daemon-starting) warm-up left
+    it patched permanently and the server running.
+
+    The restore happens before the stop, and the stop is guarded separately: a
+    ``TimeoutExpired`` from the stop used to propagate out of the ``finally``,
+    skipping the restore and masking the original failure.
+    """
+    original_pref = None
+    if prefer_masters:
+        original_pref = _apply_prefer_masters(runner)
+    try:
+        yield
+    except KeyboardInterrupt:
+        print("\nInterrupted — cleaning up…")
+        raise
+    finally:
+        # Restore first: it is the change that outlives the process.
+        try:
+            _restore_association_preference(original_pref)
+        except Exception as exc:
+            print(f"  Warning: could not restore association_preference: {exc}")
+        print("=== Stopping EDPS server ===")
+        try:
+            subprocess.run(edps_cmd + ["-s"], cwd=cwd, env=env,
+                           capture_output=True, timeout=15)
+        except Exception as exc:
+            print(f"  Warning: could not stop the EDPS server: {exc}")
+
+
 # ---------------------------------------------------------------------------
 # CSV row slicing (power-user --csv-lines)
 # ---------------------------------------------------------------------------
@@ -889,6 +984,39 @@ def _restore_association_preference(original: str | None) -> None:
 # (the metadata rows may have blank leading columns), or the parser reads past
 # the end of a sliced file and raises StopIteration.
 _CSV_HEADER_ROWS = 4
+
+
+def derive_has_science(data_tags, sub_workflows):
+    """True if *data_tags* contains a science raw for any of *sub_workflows*.
+
+    Used both by the auto-fetch step (a science frame requires the whole
+    calibration chain upstream of it) and by the EDPS target inference (which
+    adds the ``-m science`` flag).  Shared so the two cannot drift.
+    """
+    return any(
+        meta == "science" and tag in data_tags
+        for wf in sub_workflows
+        for _, tag, meta in WORKFLOW_TASK_CHAIN.get(wf, [])
+    )
+
+
+def _frame_count(s):
+    """argparse type for --calib/--static: an int, with a hint for stray inputs.
+
+    ``--calib`` used to accept a bare form, so ``--calib obs1.yaml`` was a
+    documented (if broken) invocation.  Catch that spelling explicitly rather
+    than letting it surface as "invalid int value".
+    """
+    try:
+        return int(s)
+    except ValueError:
+        if s.lower().endswith(INPUT_EXTS):
+            raise argparse.ArgumentTypeError(
+                f"expected a number but got the input file {s!r}. "
+                "A bare --calib/--static no longer defaults to 1: write "
+                f"'--calib 1 {s}', or '--no-calib' to disable."
+            ) from None
+        raise argparse.ArgumentTypeError(f"invalid int value: {s!r}") from None
 
 
 def _parse_line_range(s):
@@ -913,7 +1041,7 @@ def _parse_line_range(s):
         except ValueError:
             raise argparse.ArgumentTypeError(
                 f"{name} must be an integer, got {token!r}"
-            )
+            ) from None
         if value < 1:
             raise argparse.ArgumentTypeError(
                 f"{name} must be >= 1, got {value}"
@@ -1003,19 +1131,33 @@ def parse_args(argv=None):
         help="Root output directory [default: ./output/<timestamp>] "
              "(env: METIS_OUTPUT_DIR)",
     )
+    # NB: no nargs="?" on either flag. A bare `--calib` would swallow the
+    # following positional (`--calib obs1.yaml` -> "invalid int value"), which
+    # is exactly how the documented example used to fail.
     p.add_argument(
-        "--calib", type=int, nargs="?", const=1, default=1, metavar="N",
+        "--calib", type=_frame_count, default=1, metavar="N",
         help="Auto-generate N calibration frames (dark/flat) per unique config, "
-             "inferred from input content. Bare --calib = 1; --calib 0 disables. "
-             "[default: 1]",
+             "inferred from input content. Forwarded to metis_simulations as "
+             "doCalib, which sets nObs per calibration config. "
+             "--calib 0 (or --no-calib) disables. [default: 1]",
     )
     p.add_argument(
-        "--static", type=int, nargs="?", const=1, default=1, metavar="N",
+        "--no-calib", dest="calib", action="store_const", const=0,
+        help="Shorthand for --calib 0.",
+    )
+    # Unlike --calib this is a pure on/off switch: MTR hardcodes doStatic=False
+    # in the generated sim script and only ever tests `if args.static`, so there
+    # is no frame count to pass through.
+    p.add_argument(
+        "--static", type=_frame_count, choices=(0, 1), default=1,
         help="Ensure static calibration prototypes (PERSISTENCE_MAP_*, "
              "ATM_PROFILE, REF_STD_CAT, …) exist in a shared cache directory "
-             "(output/static_calibs/) and pass it to EDPS. Files are generated "
-             "once and reused across runs. "
-             "Bare --static = 1; --static 0 disables. [default: 1]",
+             "and pass it to EDPS. Files are generated once and reused across "
+             "runs. --static 0 (or --no-static) disables. [default: 1]",
+    )
+    p.add_argument(
+        "--no-static", dest="static", action="store_const", const=0,
+        help="Shorthand for --static 0.",
     )
     p.add_argument(
         "--cores", type=int, default=4, metavar="N",
@@ -1095,24 +1237,60 @@ def parse_args(argv=None):
     p.add_argument(
         "--prefer-masters", action="store_true",
         help="Set EDPS association_preference to 'master_per_quality_level' "
-             "for this run, preferring master calibrations over reduced raw data.",
+             "for this run, preferring master calibrations over reduced raw "
+             "data. Only useful when EDPS was configured outside MTR: the "
+             "Install tab already pins this value, so on a standard install "
+             "the flag changes nothing. Ignored for --runner docker/podman, "
+             "where EDPS reads the container's own configuration.",
     )
-    return p.parse_args(argv)
+    p.add_argument(
+        "--version", action="version",
+        version=f"%(prog)s {__version__}",
+    )
+    # The examples live inside the installed package, so after a pipx install
+    # there is no ./examples in the working directory to point at.
+    p.add_argument(
+        "--examples-dir", action="store_true",
+        help="Print the directory holding the bundled example inputs, and exit.",
+    )
+    p.add_argument(
+        "--copy-examples", metavar="DIR",
+        help="Copy the bundled example inputs into DIR, and exit.",
+    )
+
+    args = p.parse_args(argv)
+
+    if args.examples_dir:
+        print(paths.examples_dir())
+        sys.exit(0)
+    if args.copy_examples:
+        dest = Path(args.copy_examples).expanduser().resolve()
+        dest.mkdir(parents=True, exist_ok=True)
+        for src in sorted(paths.examples_dir().iterdir()):
+            if src.is_file():
+                shutil.copy2(src, dest / src.name)
+                print(f"  {dest / src.name}")
+        print(f"Copied bundled examples to {dest}")
+        sys.exit(0)
+
+    # Validated here rather than in main() so the parser is in scope: this
+    # yields a usage message and exit 2, not a traceback.
+    if not args.no_sim and not args.input_files:
+        p.error("Input files (YAML or CSV) are required unless --no-sim is given")
+
+    return args
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
-def main():
-    args = parse_args()
+def main(argv=None):
+    args = parse_args(argv)
     runner = args.runner
 
     if args.no_sim and args.no_pipeline:
         sys.exit("Error: --no-sim and --no-pipeline both set; nothing to do.")
-
-    if not args.no_sim and not args.input_files:
-        p.error("Input files (YAML or CSV) are required unless --no-sim is given")
 
     if runner in ("docker", "podman") and not args.container:
         sys.exit(
@@ -1123,15 +1301,16 @@ def main():
     # Resolve and validate input paths (YAML and/or CSV)
     input_files = []
     for raw in args.input_files:
-        p = Path(raw).resolve()
-        if not p.exists():
-            sys.exit(f"Error: input file not found: {p}")
-        if p.suffix.lower() not in INPUT_EXTS:
+        infile = Path(raw).resolve()
+        if not infile.is_file():
+            sys.exit(f"Error: input file not found: {infile}")
+        if infile.suffix.lower() not in INPUT_EXTS:
             sys.exit(
-                f"Error: unsupported input extension: {p.suffix} ({p})\n"
+                f"Error: unsupported input extension: {infile.suffix} ({infile})\n"
                 f"  Supported extensions: {', '.join(INPUT_EXTS)}"
             )
-        input_files.append(p)
+        if infile not in input_files:
+            input_files.append(infile)
 
     # For the default runner, confirm the Install tab has produced the
     # pipeline clone under paths.data_dir(). The runtime environment is derived
@@ -1233,9 +1412,9 @@ def main():
     # FITS source instead of <output>/sim/.
     if args.no_sim and args.pipeline_input:
         for d in args.pipeline_input:
-            p = Path(d).resolve()
-            if not p.is_dir():
-                sys.exit(f"Error: pipeline input directory not found: {p}")
+            indir = Path(d).resolve()
+            if not indir.is_dir():
+                sys.exit(f"Error: pipeline input directory not found: {indir}")
         sim_out = Path(args.pipeline_input[0]).resolve()
 
     if not args.no_sim:
@@ -1358,22 +1537,29 @@ def main():
             identify_missing_calibrations,
         )
 
-        fetch_tags = yaml_tags
+        # Resolve tags/workflows from whatever data actually exists now: the
+        # simulation has already run, so for a CSV-only or --no-sim run the
+        # YAML-derived values are empty or stale. Scanning the FITS that are
+        # on disk is the only way to know what we have.
+        fetch_tags = set(yaml_tags)
         fetch_sub_workflows = set(yaml_sub_workflows)
-        if args.no_sim:
+        if sim_out.is_dir():
             fits_tags_now, fits_wfs_now = scan_fits_inputs(sim_out)
-            fetch_tags = yaml_tags | fits_tags_now
-            fetch_sub_workflows = fetch_sub_workflows | fits_wfs_now
+            fetch_tags |= fits_tags_now
+            fetch_sub_workflows |= fits_wfs_now
+        # ...and re-derive has_science from those, not from the YAML pass.
+        fetch_has_science = derive_has_science(fetch_tags, fetch_sub_workflows)
 
         print("=== Checking for missing calibrations ===")
         all_missing = []
         all_fetched = []
+        failed = []
         for wf in sorted(fetch_sub_workflows):
             try:
                 missing = identify_missing_calibrations(
                     workflow=wf,
                     data_tags=fetch_tags,
-                    has_science=has_science,
+                    has_science=fetch_has_science,
                 )
                 if not missing:
                     continue
@@ -1381,15 +1567,23 @@ def main():
                 fetched = fetch_missing_calibrations(
                     workflow=wf,
                     data_tags=fetch_tags,
-                    has_science=has_science,
+                    has_science=fetch_has_science,
                     dest_dir=sim_out,
                     on_log=lambda msg: print(f"  {msg}"),
                 )
                 all_fetched.extend(fetched)
             except Exception as exc:
+                failed.append(wf)
                 print(f"  Warning: auto-fetch for {wf} failed ({exc}); "
                       "continuing without")
-        if not all_missing:
+        # Distinguish "checked, nothing missing" from "could not check".
+        if not fetch_sub_workflows:
+            print("  Skipped: could not identify any sub-workflow from the "
+                  "input set, so there is nothing to check against.")
+        elif failed and not all_missing:
+            print(f"  Could not check {len(failed)} workflow(s); "
+                  "calibration state is unknown")
+        elif not all_missing:
             print("  All required calibrations already present")
         elif all_fetched:
             print(f"  Downloaded {len(all_fetched)} master calibration file(s)")
@@ -1429,11 +1623,7 @@ def main():
             # Re-derive has_science from the FITS tags + active workflow
             # chains so the -m science flag is added when science raws are
             # present.
-            has_science = any(
-                meta == "science" and tag in data_tags
-                for wf in active_sub_workflows
-                for _, tag, meta in WORKFLOW_TASK_CHAIN.get(wf, [])
-            )
+            has_science = derive_has_science(data_tags, active_sub_workflows)
         else:
             data_tags = yaml_tags
             active_sub_workflows = yaml_sub_workflows
@@ -1483,21 +1673,6 @@ def main():
         edps_cwd = None if runner in ("docker", "podman") else str(pipe_out)
         edps_env = _default_subprocess_env() if runner == "default" else None
 
-        # If --prefer-masters, temporarily patch EDPS config
-        original_pref = None
-        if args.prefer_masters:
-            print("  Overriding association_preference → master_per_quality_level")
-            original_pref = _set_association_preference("master_per_quality_level")
-
-        # Warm up: start the EDPS server and confirm it is ready before
-        # submitting the reduction job.
-        print("=== Starting EDPS server ===")
-        print("=== Listing Workflows    ===")
-        rc = subprocess.run(edps_cmd + ["-lw"], cwd=edps_cwd, env=edps_env).returncode
-        if rc != 0:
-            _restore_association_preference(original_pref)
-            sys.exit(f"Error: EDPS server failed to start (exit code {rc}).")
-
         # Build EDPS input directories: sim output + any extra dirs + static
         # calibs cache.  EDPS uses nargs='*' for -i, so all paths must follow
         # a single -i flag (a second -i would replace the first, not append).
@@ -1508,28 +1683,46 @@ def main():
         if args.static and static_calibs_dir.is_dir():
             edps_inputs.append(str(static_calibs_dir))
 
+        # Everything that mutates global state — the user's
+        # ~/.edps/application.properties and the EDPS daemon — happens inside
+        # this context manager, so a Ctrl-C or a failure during the warm-up
+        # cannot leave the config patched or the server running.
         pipeline_rc = 1
-        try:
+        with edps_session(edps_cmd, edps_cwd, edps_env,
+                          prefer_masters=args.prefer_masters, runner=runner):
+            print("=== Starting EDPS server ===")
+            print("=== Listing Workflows    ===")
+            rc = subprocess.run(edps_cmd + ["-lw"], cwd=edps_cwd,
+                                env=edps_env).returncode
+            if rc != 0:
+                sys.exit(f"Error: EDPS server failed to start (exit code {rc}).")
+
             print("=== Running EDPS pipeline ===")
+            full_cmd = edps_cmd + [
+                "-w", workflow,
+            ] + edps_inputs + [
+                "-o", str(pipe_out),
+            ] + target_flags
+            # Echo it: this is the hardest part of a run to reproduce by hand
+            # and was the one thing never printed.
+            print(f"  $ {' '.join(full_cmd)}")
             pipeline_rc = subprocess.run(
-                edps_cmd + [
-                    "-w", workflow,
-                ] + edps_inputs + [
-                    "-o", str(pipe_out),
-                ] + target_flags,
-                cwd=edps_cwd,
-                env=edps_env,
+                full_cmd, cwd=edps_cwd, env=edps_env,
             ).returncode
-        finally:
-            print("=== Stopping EDPS server ===")
-            subprocess.run(edps_cmd + ["-s"], cwd=edps_cwd, env=edps_env,
-                           capture_output=True, timeout=15)
-            _restore_association_preference(original_pref)
         if pipeline_rc != 0:
             sys.exit(f"Error: pipeline step failed (exit code {pipeline_rc}).")
 
     print(f"\nDone. Pipeline products are in: {pipe_out}")
 
 
+def cli() -> None:
+    """Console-script entry point: turn Ctrl-C into exit 130, not a traceback."""
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nAborted.", file=sys.stderr)
+        sys.exit(130)
+
+
 if __name__ == "__main__":
-    main()
+    cli()

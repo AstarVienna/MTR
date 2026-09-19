@@ -10,8 +10,11 @@ Covers:
   - Missing calibration identification
 """
 
+import stat
 import sys
-from unittest.mock import patch, MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+from urllib.parse import unquote, urlsplit
 
 import pytest
 
@@ -20,7 +23,7 @@ import pytest
 # global warnings.showwarning state.
 from astropy.io import fits as _afits
 
-from metis_test_runner import archive, credentials
+from metis_test_runner import archive, credentials, paths
 
 # Mocks for the commonwise database modules imported by _ensure_db_connection().
 _DB_MOCKS = {
@@ -129,6 +132,42 @@ class TestInstallMetisWiseCommand:
         for cmd in cmds:
             assert "--extra-index-url" not in cmd
             assert not any("alice" in a or "entropynaut" in a for a in cmd)
+
+    @pytest.mark.parametrize("password", [
+        "p ass",      # a space would split PIP_EXTRA_INDEX_URL into two indexes
+        "p@ss",       # an @ would re-split the authority -> attacker-chosen host
+        "p/ss",       # a / would truncate the authority
+        "p#ss",       # a # would start a fragment
+        "p?ss",       # a ? would start a query
+        "p%ss",       # a % would be read as a percent-escape
+        "p:ss",       # a colon in the password must stay in the password
+    ])
+    def test_awkward_passwords_cannot_break_out_of_the_authority(self, password):
+        raw = f"alice:{password}"
+        if any(c.isspace() for c in raw):
+            with pytest.raises(ValueError):
+                archive.install_metiswise_command(raw)
+            return
+        _, env = archive.install_metiswise_command(raw)
+        urls = env["PIP_EXTRA_INDEX_URL"].split(" ")
+        # Still exactly three indexes, and the credentialed one still points
+        # at the real host with the whole credential inside its userinfo.
+        assert len(urls) == 3
+        cred_url = urls[-1]
+        assert urlsplit(cred_url).hostname == "pip.entropynaut.com"
+        assert unquote(urlsplit(cred_url).password) == password
+        # The raw password never appears verbatim where it could be reparsed.
+        assert password not in cred_url or password.isalnum()
+
+    @pytest.mark.parametrize("bad", ["alice", "", ":secret", "alice:", "a b:c"])
+    def test_malformed_credentials_rejected(self, bad):
+        with pytest.raises(ValueError):
+            archive.install_metiswise_command(bad)
+
+    def test_hostile_password_never_reaches_argv(self):
+        cmds, _ = archive.install_metiswise_command("alice:p@ss/evil.com")
+        for cmd in cmds:
+            assert not any("evil.com" in a or "alice" in a for a in cmd)
 
     def test_extra_index_urls_in_env(self):
         _, env = archive.install_metiswise_command("u:p")
@@ -1200,6 +1239,43 @@ class TestIdentifyMissingCalibrations:
         )
         assert missing == []
 
+    def test_science_only_input_needs_the_whole_calib_chain(self):
+        """The headline auto-fetch case: "I have science frames, get my masters".
+
+        Regression: has_science was accepted and never read, so no calibration
+        task was covered, deepest_present_idx stayed -1, and this returned []
+        while the CLI reported "All required calibrations already present".
+        """
+        missing = archive.identify_missing_calibrations(
+            "metis.metis_ifu_wkf",
+            data_tags={"IFU_SCI_RAW"},
+            has_science=True,
+        )
+        task_names = {t for t, _ in missing}
+        assert task_names == {
+            "metis_ifu_lingain", "metis_ifu_dark", "metis_ifu_distortion",
+            "metis_ifu_wavecal", "metis_ifu_rsrf",
+        }
+        # ...and never the science task itself.
+        assert not any("sci_reduce" in t for t in task_names)
+
+    def test_science_only_still_empty_when_has_science_false(self):
+        """has_science=False means the caller says there is no science frame."""
+        assert archive.identify_missing_calibrations(
+            "metis.metis_ifu_wkf", {"IFU_SCI_RAW"}, has_science=False,
+        ) == []
+
+    def test_science_plus_partial_calibs_fetches_only_the_gaps(self):
+        missing = archive.identify_missing_calibrations(
+            "metis.metis_lm_img_wkf",
+            data_tags={"LM_IMAGE_SCI_RAW", "LM_FLAT_LAMP_RAW"},
+            has_science=True,
+        )
+        task_names = {t for t, _ in missing}
+        assert "metis_lm_img_lingain" in task_names
+        assert "metis_lm_img_dark" in task_names
+        assert "metis_lm_img_flat" not in task_names   # already covered
+
     def test_science_tasks_ignored(self):
         missing = archive.identify_missing_calibrations(
             "metis.metis_lm_img_wkf",
@@ -1280,3 +1356,303 @@ class TestIdentifyMissingCalibrations:
             has_science=False,
         )
         assert missing == [("metis_lm_img_lingain", "GAIN_MAP_2RG")]
+
+
+# ---------------------------------------------------------------------------
+# fetch_missing_calibrations — orchestration
+# ---------------------------------------------------------------------------
+
+class TestFetchMissingCalibrations:
+    """The function the CLI actually calls for --auto-fetch-calibrations.
+
+    Previously untested end to end, so none of its branches were pinned.
+    query_archive/download_file are patched: this covers the orchestration,
+    not the ORM.
+    """
+
+    IFU_CALIBS = {
+        "DETLIN_IFU_RAW", "DARK_IFU_RAW", "IFU_DISTORTION_RAW",
+        "IFU_WAVE_RAW", "IFU_RSRF_RAW", "IFU_STD_RAW",
+    }
+
+    def _patch(self, monkeypatch, *, items, downloaded=Ellipsis):
+        calls = {"queried": [], "downloaded": []}
+
+        def fake_query(category=None, on_log=None):
+            calls["queried"].append(category)
+            return list(items)
+
+        def fake_download(filename, dest_dir, on_log=None):
+            calls["downloaded"].append(filename)
+            if downloaded is Ellipsis:
+                return Path(dest_dir) / filename
+            return downloaded
+
+        monkeypatch.setattr(archive, "query_archive", fake_query)
+        monkeypatch.setattr(archive, "download_file", fake_download)
+        return calls
+
+    def test_no_gaps_downloads_nothing(self, tmp_path, monkeypatch):
+        calls = self._patch(monkeypatch, items=[{"filename": "x.fits"}])
+        logs = []
+        out = archive.fetch_missing_calibrations(
+            "metis.metis_ifu_wkf", self.IFU_CALIBS, False, tmp_path,
+            on_log=logs.append,
+        )
+        assert out == []
+        assert calls["queried"] == []
+        assert any("No missing calibrations" in m for m in logs)
+
+    def test_downloads_each_missing_master(self, tmp_path, monkeypatch):
+        calls = self._patch(monkeypatch, items=[{"filename": "m.fits"}])
+        out = archive.fetch_missing_calibrations(
+            "metis.metis_ifu_wkf", {"IFU_RSRF_RAW"}, False, tmp_path,
+        )
+        assert len(out) == len(calls["queried"]) == len(calls["downloaded"])
+        assert out and all(p == tmp_path / "m.fits" for p in out)
+
+    def test_science_only_input_triggers_downloads(self, tmp_path, monkeypatch):
+        """Ties the has_science fix to the user-visible behaviour."""
+        calls = self._patch(monkeypatch, items=[{"filename": "m.fits"}])
+        out = archive.fetch_missing_calibrations(
+            "metis.metis_ifu_wkf", {"IFU_SCI_RAW"}, True, tmp_path,
+        )
+        # One download per (task, PRO.CATG) pair — a task may produce several.
+        expected = archive.identify_missing_calibrations(
+            "metis.metis_ifu_wkf", {"IFU_SCI_RAW"}, True,
+        )
+        assert len(expected) > 5          # more masters than calibration tasks
+        assert len(out) == len(expected)
+        assert calls["queried"] == [pc for _, pc in expected]
+        # Queried by PRO.CATG (the master), never by the raw tag.
+        assert "DETLIN_IFU_RAW" not in calls["queried"]
+
+    def test_absent_from_archive_is_skipped_not_fatal(self, tmp_path, monkeypatch):
+        calls = self._patch(monkeypatch, items=[])
+        logs = []
+        out = archive.fetch_missing_calibrations(
+            "metis.metis_ifu_wkf", {"IFU_RSRF_RAW"}, False, tmp_path,
+            on_log=logs.append,
+        )
+        assert out == []
+        assert calls["queried"] and not calls["downloaded"]
+        assert any("skipping" in m for m in logs)
+
+    def test_failed_download_is_not_counted(self, tmp_path, monkeypatch):
+        self._patch(monkeypatch, items=[{"filename": "m.fits"}], downloaded=None)
+        out = archive.fetch_missing_calibrations(
+            "metis.metis_ifu_wkf", {"IFU_RSRF_RAW"}, False, tmp_path,
+        )
+        assert out == []
+
+    def test_unknown_workflow_is_a_noop(self, tmp_path, monkeypatch):
+        calls = self._patch(monkeypatch, items=[{"filename": "m.fits"}])
+        assert archive.fetch_missing_calibrations(
+            "metis.nope", {"FOO"}, False, tmp_path,
+        ) == []
+        assert calls["queried"] == []
+
+
+class TestTaskProductsConsistency:
+    """TASK_PRODUCTS is hand-maintained against WORKFLOW_TASK_CHAIN."""
+
+    def test_every_task_products_key_is_a_real_task(self):
+        from metis_test_runner.run_metis import WORKFLOW_TASK_CHAIN
+        real = {t for chain in WORKFLOW_TASK_CHAIN.values() for t, _, _ in chain}
+        unknown = sorted(set(archive.TASK_PRODUCTS) - real)
+        assert unknown == [], f"TASK_PRODUCTS names no-longer-existent tasks: {unknown}"
+
+    def test_calibration_tasks_without_products_are_documented(self):
+        """A calib task absent from TASK_PRODUCTS can never be auto-fetched.
+
+        identify_missing_calibrations silently `continue`s past it, so this
+        pins the current gap rather than letting it grow unnoticed.
+        """
+        from metis_test_runner.run_metis import WORKFLOW_TASK_CHAIN
+        uncoverable = sorted({
+            t for chain in WORKFLOW_TASK_CHAIN.values()
+            for t, _, meta in chain
+            if meta != "science" and t not in archive.TASK_PRODUCTS
+        })
+        assert uncoverable == [
+            "metis_ifu_std_reduce",
+            "metis_lm_lss_adc_slitloss",
+            "metis_n_adc_slitloss",
+        ]
+
+
+# ---------------------------------------------------------------------------
+# write_env_cfg — permissions, atomicity, injection
+# ---------------------------------------------------------------------------
+
+class TestEnvCfgFilePermissions:
+    """The file holds a password in cleartext, so mode matters on every path,
+    not just on creation."""
+
+    def _write(self, tmp_path, monkeypatch, **over):
+        cfg = tmp_path / ".awe" / "Environment.cfg"
+        monkeypatch.setattr(archive, "env_cfg_path", lambda: cfg)
+        fields = {
+            "database_user": "u", "database_password": "pw", "project": "P",
+            "database_tablespacename": "ts", "database_name": "db",
+        }
+        fields.update(over)
+        archive.write_env_cfg(**fields)
+        return cfg
+
+    def test_new_file_is_0600(self, tmp_path, monkeypatch):
+        cfg = self._write(tmp_path, monkeypatch)
+        assert stat.S_IMODE(cfg.stat().st_mode) == 0o600
+
+    def test_existing_world_readable_file_is_tightened(self, tmp_path, monkeypatch):
+        """Regression: the update path never chmod-ed, so a pre-existing 0644
+        legacy file kept the password world-readable."""
+        cfg = tmp_path / ".awe" / "Environment.cfg"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text("[global]\ndatabase_user : old\n")
+        cfg.chmod(0o644)
+        self._write(tmp_path, monkeypatch)
+        assert stat.S_IMODE(cfg.stat().st_mode) == 0o600
+
+    def test_append_path_is_also_0600(self, tmp_path, monkeypatch):
+        cfg = tmp_path / ".awe" / "Environment.cfg"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text("[global]\nunrelated : keep\n")
+        cfg.chmod(0o644)
+        self._write(tmp_path, monkeypatch)
+        assert stat.S_IMODE(cfg.stat().st_mode) == 0o600
+        assert "unrelated : keep" in cfg.read_text()
+
+    def test_parent_dir_is_0700(self, tmp_path, monkeypatch):
+        cfg = self._write(tmp_path, monkeypatch)
+        assert stat.S_IMODE(cfg.parent.stat().st_mode) == 0o700
+
+    @pytest.mark.parametrize("evil", [
+        "pw\ndata_protocol : http",     # downgrade the transport to cleartext
+        "pw\r\ndata_server : evil.test",
+        "pw\rinjected : 1",
+    ])
+    def test_newline_in_a_value_is_rejected(self, tmp_path, monkeypatch, evil):
+        with pytest.raises(ValueError, match="newline"):
+            self._write(tmp_path, monkeypatch, database_password=evil)
+
+    def test_rejected_write_leaves_the_file_untouched(self, tmp_path, monkeypatch):
+        cfg = tmp_path / ".awe" / "Environment.cfg"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text("[global]\ndatabase_user : original\n")
+        with pytest.raises(ValueError):
+            self._write(tmp_path, monkeypatch, database_password="a\nb")
+        assert "original" in cfg.read_text()
+
+    def test_no_temp_files_left_behind(self, tmp_path, monkeypatch):
+        cfg = self._write(tmp_path, monkeypatch)
+        leftovers = [p.name for p in cfg.parent.iterdir() if p.name != cfg.name]
+        assert leftovers == []
+
+
+class TestWriteTextAtomic:
+    def test_replaces_content(self, tmp_path):
+        target = tmp_path / "f.txt"
+        target.write_text("old")
+        paths.write_text_atomic(target, "new")
+        assert target.read_text() == "new"
+
+    def test_applies_mode_before_rename(self, tmp_path):
+        target = tmp_path / "f.txt"
+        paths.write_text_atomic(target, "secret", mode=0o600)
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+    def test_creates_parent_dirs(self, tmp_path):
+        target = tmp_path / "a" / "b" / "f.txt"
+        paths.write_text_atomic(target, "x")
+        assert target.read_text() == "x"
+
+    def test_original_survives_a_failed_write(self, tmp_path, monkeypatch):
+        target = tmp_path / "f.txt"
+        target.write_text("original")
+        monkeypatch.setattr(archive.os, "replace",
+                            lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
+        with pytest.raises(OSError):
+            paths.write_text_atomic(target, "new")
+        assert target.read_text() == "original"
+        assert [p.name for p in tmp_path.iterdir()] == ["f.txt"]
+
+
+class TestDownloadAtomicity:
+    """A truncated *.fits at the final name is worse than no file: the
+    pipeline's FITS scan would treat it as a present, valid master."""
+
+    def _di(self, src):
+        di = MagicMock()
+        di.pathname = str(src.parent)
+        di.filename = src.name
+        di.retrieve = MagicMock()
+        return di
+
+    def _run(self, monkeypatch, src, dest_dir, filename=None, copy=None):
+        di = self._di(src)
+        item = MagicMock()
+        item.__len__ = lambda _s: 1
+        item.__getitem__ = lambda _s, _i: di
+        mod = MagicMock()
+        mod.DataItem.filename.__eq__ = lambda _s, _o: item
+        monkeypatch.setattr(archive, "_ensure_db_connection", lambda: None)
+        if copy is not None:
+            monkeypatch.setattr(archive.shutil, "copy2", copy)
+        with patch.dict("sys.modules", {"metiswise.main.dataitem": mod}):
+            return archive.download_file(filename or src.name, dest_dir)
+
+    def test_successful_download_leaves_no_part_file(self, tmp_path, monkeypatch):
+        src = tmp_path / "src" / "m.fits"
+        src.parent.mkdir()
+        src.write_bytes(b"x" * 64)
+        dest_dir = tmp_path / "out"
+        out = self._run(monkeypatch, src, dest_dir)
+        assert out == dest_dir / "m.fits"
+        assert out.read_bytes() == b"x" * 64
+        assert [p.name for p in dest_dir.iterdir()] == ["m.fits"]
+
+    def test_failed_copy_leaves_no_file_at_the_final_name(self, tmp_path, monkeypatch):
+        src = tmp_path / "src" / "m.fits"
+        src.parent.mkdir()
+        src.write_bytes(b"x" * 64)
+        dest_dir = tmp_path / "out"
+
+        def exploding_copy(s, d):
+            Path(d).write_bytes(b"trunc")     # partial write, then die
+            raise OSError("connection reset")
+
+        out = self._run(monkeypatch, src, dest_dir, copy=exploding_copy)
+        assert out is None
+        assert not (dest_dir / "m.fits").exists()
+        assert list(dest_dir.iterdir()) == []
+
+    def test_short_copy_is_rejected(self, tmp_path, monkeypatch):
+        src = tmp_path / "src" / "m.fits"
+        src.parent.mkdir()
+        src.write_bytes(b"x" * 64)
+        dest_dir = tmp_path / "out"
+        out = self._run(
+            monkeypatch, src, dest_dir,
+            copy=lambda s, d: Path(d).write_bytes(b"short"),
+        )
+        assert out is None
+        assert not (dest_dir / "m.fits").exists()
+
+    @pytest.mark.parametrize("evil", ["../escape.fits", "/etc/passwd"])
+    def test_archive_filename_cannot_escape_dest_dir(self, tmp_path, monkeypatch, evil):
+        src = tmp_path / "src" / "m.fits"
+        src.parent.mkdir()
+        src.write_bytes(b"x")
+        dest_dir = tmp_path / "out"
+        di = self._di(src)
+        item = MagicMock()
+        item.__len__ = lambda _s: 1
+        item.__getitem__ = lambda _s, _i: di
+        mod = MagicMock()
+        mod.DataItem.filename.__eq__ = lambda _s, _o: item
+        monkeypatch.setattr(archive, "_ensure_db_connection", lambda: None)
+        with patch.dict("sys.modules", {"metiswise.main.dataitem": mod}):
+            out = archive.download_file(evil, dest_dir)
+        assert out is None or dest_dir in out.parents
+        assert not (tmp_path / "escape.fits").exists()

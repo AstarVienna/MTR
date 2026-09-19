@@ -107,3 +107,52 @@ class TestRunnerPrefix:
     def test_container_runner_requires_container(self):
         with pytest.raises(ValueError, match="requires --container"):
             runner_prefix("docker", None)
+
+
+class TestSecretsNeverReachChildren:
+    """apply_db_credentials() injects archive credentials into os.environ for
+    commonwise; resolve_runtime_env must strip them so no pipeline subprocess
+    (edps, pyesorex, ScopeSim, or the interactive mtr-shell) inherits them."""
+
+    @pytest.mark.parametrize("runner", ["default", "native", "docker", "podman"])
+    def test_stripped_for_every_runner(self, runner, monkeypatch):
+        for key in env_mod.SECRET_ENV_KEYS:
+            monkeypatch.setenv(key, "s3cret")
+        resolved = resolve_runtime_env(runner)
+        leaked = sorted(env_mod.SECRET_ENV_KEYS & resolved.keys())
+        assert leaked == [], f"leaked into the child environment: {leaked}"
+
+    def test_password_value_is_absent_entirely(self, monkeypatch):
+        monkeypatch.setenv("database_password", "hunter2")
+        assert "hunter2" not in "".join(resolve_runtime_env("default").values())
+
+    def test_unrelated_variables_survive(self, monkeypatch):
+        monkeypatch.setenv("database_password", "s3cret")
+        monkeypatch.setenv("MTR_UNRELATED", "keepme")
+        assert resolve_runtime_env("default")["MTR_UNRELATED"] == "keepme"
+
+    def test_end_to_end_via_apply_db_credentials(self, monkeypatch):
+        """The real injection path, not a hand-set environment."""
+        archive = pytest.importorskip("metis_test_runner.archive")
+        fields = {k: f"v-{k}" for k in env_mod.ENV_CFG_FIELDS}
+        fields["database_password"] = "hunter2"
+        # apply_db_credentials writes straight to os.environ, which monkeypatch
+        # cannot undo unless it already owns the keys — register them first so
+        # the credentials don't leak into the rest of the session.
+        for key in env_mod.SECRET_ENV_KEYS:
+            monkeypatch.setenv(key, "")
+        monkeypatch.setattr(archive, "_db_creds_applied", False)
+        archive.apply_db_credentials(fields)
+        # commonwise must still see it in the parent process...
+        assert os.environ["database_password"] == "hunter2"
+        # ...but no child may.
+        assert "database_password" not in resolve_runtime_env("default")
+
+    def test_dotenv_cannot_reintroduce_a_secret(self, tmp_path, monkeypatch):
+        """A hand-edited .env must not put back what the strip removed."""
+        env_file = tmp_path / ".env"
+        env_file.write_text("database_password=from-dotenv\nMTR_OK=yes\n")
+        monkeypatch.setattr(paths, "env_file", lambda: env_file)
+        resolved = resolve_runtime_env("default")
+        assert "database_password" not in resolved
+        assert resolved["MTR_OK"] == "yes"
