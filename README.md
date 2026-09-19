@@ -1,15 +1,125 @@
 # METIS Test Runner
 
 <p align="center">
-  <a href="https://github.com/eiseleb47/MTR/actions/workflows/unit_tests.yaml"><img src="https://img.shields.io/github/actions/workflow/status/eiseleb47/MTR/unit_tests.yaml?branch=main&label=unit%20tests&style=for-the-badge&labelColor=1e1e2e&color=a6e3a1&logo=github&logoColor=cdd6f4" alt="Unit Tests"></a>
-  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3-89b4fa?style=for-the-badge&labelColor=1e1e2e&logo=python&logoColor=cdd6f4" alt="Python 3"></a>
-  <a href="https://github.com/eiseleb47/MTR/commits/main"><img src="https://img.shields.io/github/last-commit/eiseleb47/MTR?style=for-the-badge&labelColor=1e1e2e&color=cba6f7&logo=git&logoColor=cdd6f4" alt="Last Commit"></a>
-  <a href="https://github.com/eiseleb47/MTR"><img src="https://img.shields.io/badge/platform-linux-fab387?style=for-the-badge&labelColor=1e1e2e&logo=linux&logoColor=cdd6f4" alt="Platform"></a>
+  <a href="https://github.com/AstarVienna/MTR/actions/workflows/unit_tests.yaml"><img src="https://img.shields.io/github/actions/workflow/status/AstarVienna/MTR/unit_tests.yaml?branch=main&label=unit%20tests&style=for-the-badge&labelColor=1e1e2e&color=a6e3a1&logo=github&logoColor=cdd6f4" alt="Unit Tests"></a>
+  <a href="https://pypi.org/project/metis-test-runner/"><img src="https://img.shields.io/pypi/v/metis-test-runner?style=for-the-badge&labelColor=1e1e2e&color=89b4fa&logo=pypi&logoColor=cdd6f4" alt="PyPI"></a>
+  <a href="https://pypi.org/project/metis-test-runner/"><img src="https://img.shields.io/pypi/pyversions/metis-test-runner?style=for-the-badge&labelColor=1e1e2e&color=89b4fa&logo=python&logoColor=cdd6f4" alt="Python versions"></a>
+  <a href="https://github.com/AstarVienna/MTR/commits/main"><img src="https://img.shields.io/github/last-commit/AstarVienna/MTR?style=for-the-badge&labelColor=1e1e2e&color=cba6f7&logo=git&logoColor=cdd6f4" alt="Last Commit"></a>
+  <a href="https://github.com/AstarVienna/MTR"><img src="https://img.shields.io/badge/platform-linux-fab387?style=for-the-badge&labelColor=1e1e2e&logo=linux&logoColor=cdd6f4" alt="Platform"></a>
 </p>
 
 A graphical front-end for end-to-end testing of the [METIS instrument pipeline](https://github.com/AstarVienna/METIS_Pipeline). It generates synthetic FITS observations via [ScopeSim](https://scopesim.readthedocs.io/) and then runs the matching [EDPS](https://www.eso.org/sci/software/edps/) reduction workflow — all from a single, self-contained GUI. A command-line interface (`mtr-cli`) is also shipped as a fallback for scripted or headless use.
 
-## Install
+## Contents
+
+- [Quickstart](#quickstart)
+- [The GUI](#the-gui)
+- [Supported workflows](#supported-workflows)
+- [Output layout](#output-layout)
+- [Reference](#reference) — install methods, system dependencies, runner modes,
+  input formats, the `mtr-cli` option table, and direct environment access
+- [Related repositories](#related-repositories)
+
+
+## Quickstart
+
+```bash
+pipx install metis-test-runner          # needs Python 3.12 or 3.13
+mtr                                     # launches the GUI
+```
+
+Then, in the GUI:
+
+1. **Install tab → *Install / Update*.** Clones `METIS_Pipeline` and
+   `METIS_Simulations` and installs the ESO pipeline dependencies into MTR's own
+   isolated venv. Takes a while the first time; safe to re-run.
+2. **Run tab → *Add…*** and pick an input file, then **Run**.
+
+No input files yet? The examples ship inside the package:
+
+```bash
+mtr-cli --copy-examples ~/mtr-examples   # or --examples-dir to use them in place
+```
+
+Already have the pipeline installed another way? Skip the Install tab and set
+the *Runner* on the Run tab to `native` (tools on `PATH`) or `docker` / `podman`
+(tools in a container you built) — see **Runner modes** below.
+
+If the GUI will not start, you are probably missing a Qt system library; see
+**System dependencies**.
+
+
+## The GUI
+
+`mtr` is the recommended way to drive the test runner. It exposes every CLI flag
+as a labelled control, remembers your settings between sessions, and streams
+colour-coded live output from the pipeline. A **Light / Dark theme** button sits
+in the toolbar.
+
+### Run tab
+
+<p align="center"><img src="https://raw.githubusercontent.com/AstarVienna/MTR/main/docs/images/mtr-run.png" alt="MTR Run tab" width="900"></p>
+
+Add YAML observation blocks and/or AIT-format CSV sequences — they can be mixed
+freely in one run, and a live tally appears under the list. Every control is
+labelled with the CLI flag it maps to. The line under *Output directory* shows
+exactly where simulation frames and pipeline products will land, updating as you
+type. **Run** becomes **Stop**; output streams into the log below with ANSI
+colouring stripped and stderr highlighted. Settings persist to `QSettings`, so
+the last configuration is two clicks away.
+
+### Install tab
+
+<p align="center"><img src="https://raw.githubusercontent.com/AstarVienna/MTR/main/docs/images/mtr-install.png" alt="MTR Install tab" width="900"></p>
+
+*Install / Update* clones both repositories into the user data directory
+(`~/.local/share/metis-test-runner/`, override with `METIS_DATA_DIR`),
+pip-installs `pycpl`, `edps`, `pyesorex`, `adari_core`, `scopesim` and
+`scopesim_templates` into MTR's own venv, and initialises EDPS on port 4444.
+Re-running updates the clones in place rather than re-cloning, and out-of-band
+installs such as MetisWISE are preserved. *Uninstall* reverses all of it.
+
+Leave **Repository version (advanced)** blank to track each repository's default
+branch. Set it to install a specific branch, tag or commit instead — for people
+developing *on* those repositories.
+
+### Archive tab
+
+<p align="center"><img src="https://raw.githubusercontent.com/AstarVienna/MTR/main/docs/images/mtr-archive.png" alt="MTR Archive tab" width="900"></p>
+
+Connects to the remote METIS AIT archive via the
+[MetisWISE](https://github.com/AstarVienna/MetisWISE) client: install the
+package, store your credentials in the OS keyring, then query and download
+files. To pull missing master calibrations automatically during a run, tick
+*Auto-fetch missing calibrations* on the Run tab instead.
+
+
+## Supported Workflows
+
+| EDPS Workflow | `tech` values |
+|---|---|
+| `metis_lm_img_wkf` | `IMAGE,LM` |
+| `metis_n_img_wkf` | `IMAGE,N` |
+| `metis_ifu_wkf` | `LMS`, `IFU`, `RAVC,IFU` |
+| `metis_lm_lss_wkf` | `LSS,LM` |
+| `metis_n_lss_wkf` | `LSS,N` |
+| `metis_lm_ravc_wkf` | `RAVC,LM` |
+| `metis_lm_app_wkf` | `APP,LM` |
+| `metis_pupil_imaging_wkf` | `PUP,LM`, `PUP,N` |
+
+## Output Layout
+
+Output is written under the chosen output directory (default: `./output/<timestamp>/`):
+
+- `<output-dir>/sim/` — synthetic FITS frames from ScopeSim
+- `<output-dir>/pipeline/` — reduced data products from EDPS
+
+The GUI displays the resolved paths live under the *Output directory* field so you can see exactly where products will land before you hit Run.
+
+## Reference
+
+<details>
+<summary><b>Other install methods, and the supported Python versions</b></summary>
 
 MTR is distributed on PyPI. The recommended installer is **pipx**, which creates an isolated venv per application and never touches your system Python.
 
@@ -34,8 +144,14 @@ python -m pip install --user pipx && pipx ensurepath
 ```bash
 pipx install metis-test-runner
 mtr                                  # launches the GUI from anywhere
-mtr-cli examples/LMS_RAD_06.yaml     # CLI equivalent
+
+# The example inputs ship inside the package, so copy them out first:
+mtr-cli --copy-examples ~/mtr-examples
+mtr-cli ~/mtr-examples/LMS_RAD_06.yaml    # CLI equivalent
 ```
+
+> **Tip:** `mtr-cli --examples-dir` prints where the bundled examples live if
+> you would rather reference them in place than copy them.
 
 > **Tip:** MTR supports Python **3.12–3.13**. On a newer default `python3`
 > (e.g. 3.14) the ESO pipeline dependencies (`scopesim`, `pycpl`, …) have no
@@ -52,7 +168,10 @@ python -m venv ~/.venvs/mtr
 
 On first launch, open the **Install** tab and click *Install / Update* to fetch the METIS_Pipeline, METIS_Simulations, and ESO pipeline dependencies into `~/.local/share/metis-test-runner/` (override with `METIS_DATA_DIR=/path`). All pipeline dependencies install into the same isolated venv that MTR itself lives in — they never leak into your system Python.
 
-## System Dependencies
+</details>
+
+<details>
+<summary><b>System dependencies (Qt6 libraries, per distro)</b></summary>
 
 The GUI requires a handful of system libraries for Qt6 / OpenGL rendering. Python, Git, and basic CLI tools (`curl`, `tar`, …) are assumed to already be present.
 
@@ -88,100 +207,10 @@ brew install freetype fontconfig glib
 > ```
 > The output will list exactly which shared library failed to load.
 
-## The GUI
+</details>
 
-The GUI is the recommended way to drive the test runner. It exposes every CLI flag through labelled controls, remembers your settings between sessions, and streams colour-coded live output from the pipeline.
-
-Launch it with:
-
-```bash
-mtr
-```
-
-A **Light / Dark theme** button lives in the toolbar and toggles on the fly.
-
-### Install tab
-
-The Install tab performs the full pipeline bootstrap non-interactively. Use it if you do **not** already have the pipeline installed. Clicking **Install / Update** will:
-
-1. Clone (or update, if already present) `METIS_Pipeline` and `METIS_Simulations` into the user data directory (`~/.local/share/metis-test-runner/` by default)
-2. `pip install` all ESO pipeline Python dependencies — `pycpl`, `edps`, `pyesorex`, `adari_core`, `scopesim`, `scopesim_templates` — into the same isolated venv that hosts MTR (via `--extra-index-url` against the ESO mirrors). Out-of-band installs such as MetisWISE from the Archive tab are preserved.
-3. Initialise and configure EDPS on port 4444
-
-Re-running is safe — existing repositories are updated in place rather than re-cloned.
-
-#### Pinning a branch, tag or commit
-
-Under **Repository version (advanced)** each repository gets a dropdown, filled
-in the background with that repo's remote branches and tags (↻ reloads it). Leave
-a field blank — the default — and MTR tracks the repository's default branch
-exactly as before. Set one and that repository is checked out at your selection
-instead; the line underneath shows what the local clone is currently on.
-
-This is for people developing *on* `METIS_Pipeline` or `METIS_Simulations` who
-need to install and test their own branch rather than `main`. You can also paste
-a commit SHA; use the **full 40 characters** if you can, since an abbreviated one
-forces a slow full-history fetch. The dropdown is free text, so an entry that is
-not in the list still works.
-
-An existing clone is **overwritten** with the selection. If it has uncommitted
-changes, MTR lists them and asks before discarding anything; declining cancels the
-install. Gitignored files are kept, so build artefacts, simulation `*.fits` output
-and `inst_pkgs/` survive. Clearing a pinned field and re-running returns that
-repository to its default branch.
-
-If your clone's `origin` points at a fork rather than the AstarVienna repo, MTR
-says so in the log and fetches your ref from that fork — it will not silently
-repoint the remote.
-
-**Skip this tab** if you already have the pipeline installed via one of these paths — jump straight to the Run tab instead:
-
-- **Bare-metal / ESO docs install** — choose runner `native`
-- **Pipeline container** (Docker / Podman) — choose runner `docker` or `podman` and supply the container name
-
-### Archive tab
-
-The Archive tab connects to the remote METIS AIT archive via the
-[MetisWISE](https://github.com/AstarVienna/MetisWISE) client. It has two pages:
-
-1. **Install & Configure** — paste the OmegaCEN credentials from the
-   [METIS wiki](https://metis.strw.leidenuniv.nl/wiki/doku.php?id=ait:archive)
-   and click **Install MetisWISE** to pip-install the package into the same
-   isolated venv that hosts MTR. Then fill in the five database fields (`database_user`,
-   `database_password`, `project`, `database_tablespacename`, `database_name`)
-   and click **Save & Test Connection**. After a successful test, all
-   credentials are stored in the OS keyring (macOS Keychain / Windows
-   Credential Locker / Linux Secret Service) — never in plaintext on disk —
-   and injected into the process environment for MetisWISE at connect time.
-   On later runs, leave fields blank to use the stored values. A legacy
-   `~/.awe/Environment.cfg` from older MTR versions is still read as a
-   fallback and is scrubbed of credentials on the first successful test
-   (on keyring-less headless machines it remains the manual fallback);
-   `data_server`, port and protocol are inherited from the
-   MetisWISE-packaged default (`metis-ds.hpc.rug.nl:8013`, https).
-
-2. **Query & Download** — filter by raw classification tag or master
-   `PRO.CATG`, click **Search**, select files and download them to a local
-   directory.
-
-To auto-pull missing master calibrations during a pipeline run, add
-`--auto-fetch-calibrations` to the Run tab's options (or the CLI).
-
-### Run tab
-
-The Run tab wraps `mtr-cli` in a file-picker UI. All CLI options are exposed as form controls; runner-specific fields (container name) show and hide based on the selected runner.
-
-Workflow:
-
-1. **Add input files** via the file browser — YAML observation blocks (`*.yaml`, `*.yml`) and AIT-format CSV test sequences (`*.csv`) may be added freely and mixed in a single run. A live tally (e.g. `2 YAML  ·  1 CSV`) appears below the list.
-2. **Tune options** — output directory, CPU cores, auto-calibration, runner mode, pipeline mode (simulate + run, simulate only, pipeline only), simulations directory, instrument packages directory, or **Translate CSV → YAML** (a dry run that converts a CSV test sheet to YAML without simulating)
-3. **Pick a workflow** (only for CSV-only runs that include the pipeline) — workflow auto-detection reads YAML content, so when the list contains only CSV files and you intend to run the pipeline, the *Workflow* dropdown appears and must be set; otherwise it stays hidden
-4. **Click Run** — the Run button becomes Stop, and pipeline output streams into the log view with ANSI colouring stripped and stderr highlighted
-5. **Inspect output** — the pane below the option form shows exactly where simulation frames and pipeline products will be written, updating live as you edit the output path
-
-Settings are persisted via `QSettings` and restored on next launch, so you can re-run the last configuration with two clicks.
-
-## Prerequisites (runner modes)
+<details>
+<summary><b>Runner modes — where the pipeline tools live (default / native / docker / podman)</b></summary>
 
 Regardless of whether you drive the runner from the GUI or the CLI, the underlying pipeline tools have to live *somewhere*. Three layouts are supported — pick the one that matches your install:
 
@@ -218,14 +247,27 @@ ScopeSim instrument packages (Armazones, ELT, METIS) will be downloaded into `./
 
 > **Tip:** always launch the GUI (or invoke `mtr-cli`) from the same directory — otherwise ScopeSim will download a fresh copy of the instrument packages into every new directory, cluttering your filesystem.
 
-## Input Formats
+#### Reference
+
+| Mode | When to use |
+|---|---|
+| `default` | You used the GUI's Install tab. Pipeline tools are pip-installed alongside MTR in the same isolated pipx/venv. Subprocesses run with that venv's Python interpreter and an environment derived automatically from the install locations (see [Overriding the environment](#overriding-the-environment)). No external dependencies. |
+| `native` | Tools (`edps`, `python`, ScopeSim) are installed directly on PATH — e.g. you are running **inside** a Docker/Podman container, or have a bare-metal install. |
+| `docker` / `podman` | Tools live inside a container and you are running the script **outside** it. The runner wraps every command with `docker exec` / `podman exec`. |
+
+> **Note for `docker` / `podman` runners:** the output directory (`-o`) must be bind-mounted into the container so EDPS can write pipeline products to it. The `--simulations-dir` flag should point to the path of `METIS_Simulations/Simulations` *inside* the container (default: `/home/metis/METIS_Simulations`).
+
+</details>
+
+<details>
+<summary><b>Input formats — YAML observation blocks and AIT CSV</b></summary>
 
 Two input formats are supported and may be mixed in a single run:
 
 - **YAML observation blocks** (`*.yaml`, `*.yml`) — the primary, human-authored format. Workflow auto-detection works on YAML content.
 - **AIT-format CSV test sequences** (`*.csv`) — the AIT performance-test sheet exported as CSV. Parsed by `metis_simulations.csvParser` at simulation time. MTR does **not** inspect CSV content itself, so for CSV-only runs the workflow is auto-detected from the **simulated FITS headers** (after the simulation step).
 
-See [`examples/small_test_img_lm.csv`](examples/small_test_img_lm.csv) (IMAGE,LM) and [`examples/small_test_img_n.csv`](examples/small_test_img_n.csv) (IMAGE,N) for minimal CSVs; the rest of this section covers YAML.
+See [`small_test_img_lm.csv`](https://github.com/AstarVienna/MTR/blob/main/src/metis_test_runner/examples/small_test_img_lm.csv) (IMAGE,LM) and [`small_test_img_n.csv`](https://github.com/AstarVienna/MTR/blob/main/src/metis_test_runner/examples/small_test_img_n.csv) (IMAGE,N) for minimal CSVs; the rest of this section covers YAML. All of these ship inside the package — `mtr-cli --copy-examples DIR` writes them somewhere you can edit them.
 
 ### YAML Format
 
@@ -250,11 +292,11 @@ BLOCK_NAME:
     nObs: <int>           # number of exposures to simulate
 ```
 
-See `examples/LMS_RAD_06.yaml` for a complete IFU example covering the full calibration + science chain.
+See `LMS_RAD_06.yaml` (see `mtr-cli --examples-dir`) for a complete IFU example covering the full calibration + science chain.
 
-The small per-mode examples — `examples/small_test.yaml` (IFU),
-`examples/small_test_img_lm.yaml` / `examples/small_test_img_lm.csv` (IMAGE,LM), and
-`examples/small_test_img_n.yaml` / `examples/small_test_img_n.csv` (IMAGE,N) —
+The small per-mode examples — `small_test.yaml` (IFU),
+`small_test_img_lm.yaml` / `small_test_img_lm.csv` (IMAGE,LM), and
+`small_test_img_n.yaml` / `small_test_img_n.csv` (IMAGE,N) —
 are minimal inputs that exercise the detector linearity + gain step
 (`metis_det_lingain`) and the master-dark step (`metis_det_dark`). Each provides
 the DETLIN frames that recipe requires: **six distinct DITs**, each with two
@@ -265,29 +307,10 @@ needs at least **four** DIT points below the linearity limit (`len > order+2`);
 fewer raises *"the number of data points must exceed order to scale the
 covariance matrix."*
 
-## Supported Workflows
+</details>
 
-| EDPS Workflow | `tech` values |
-|---|---|
-| `metis_lm_img_wkf` | `IMAGE,LM` |
-| `metis_n_img_wkf` | `IMAGE,N` |
-| `metis_ifu_wkf` | `LMS`, `IFU`, `RAVC,IFU` |
-| `metis_lm_lss_wkf` | `LSS,LM` |
-| `metis_n_lss_wkf` | `LSS,N` |
-| `metis_lm_ravc_wkf` | `RAVC,LM` |
-| `metis_lm_app_wkf` | `APP,LM` |
-| `metis_pupil_imaging_wkf` | `PUP,LM`, `PUP,N` |
-
-## Output Layout
-
-Output is written under the chosen output directory (default: `./output/<timestamp>/`):
-
-- `<output-dir>/sim/` — synthetic FITS frames from ScopeSim
-- `<output-dir>/pipeline/` — reduced data products from EDPS
-
-The GUI displays the resolved paths live under the *Output directory* field so you can see exactly where products will land before you hit Run.
-
-## Command-Line Fallback
+<details>
+<summary><b>Command-line reference (`mtr-cli`) — all options and worked examples</b></summary>
 
 `mtr-cli` is the headless interface that the GUI drives under the hood. It is useful for scripting, CI jobs, and SSH sessions without a display. It accepts the same options as the GUI.
 
@@ -304,7 +327,8 @@ YAML and CSV inputs may be mixed in any combination.
 | `-o / --output` | `./output/<timestamp>` | Root directory for all outputs (env: `METIS_OUTPUT_DIR`) |
 | `--runner {default,native,docker,podman}` | `default` | Execution mode (see below; env: `METIS_RUNNER`) |
 | `--container NAME` | — | Container name/ID for `docker` / `podman` runners (env: `METIS_CONTAINER`) |
-| `--calib [N]` | `1` | Auto-generate N calibration frames (dark/flat) per unique config, inferred from input content. Pass `--calib 0` to disable. |
+| `--calib N` | `1` | Auto-generate N calibration frames (dark/flat) per unique config, inferred from input content. Forwarded to METIS_Simulations as `doCalib`, which sets `nObs` per calibration config. Pass `--calib 0` or `--no-calib` to disable. |
+| `--static {0,1}` | `1` | Ensure static calibration prototypes (`PERSISTENCE_MAP_*`, `ATM_PROFILE`, `REF_STD_CAT`, …) exist in a shared cache directory and pass it to EDPS. Generated once and reused across runs. Pass `--static 0` or `--no-static` to disable. |
 | `--cores N` | `4` | CPU cores used for parallel simulations |
 | `--no-sim` | off | Skip simulation; run pipeline on existing FITS data (source defaults to `<output>/sim/` — override with `--pipeline-input`) |
 | `--pipeline-input DIR` | `<output>/sim/` | Directory containing FITS files to feed the pipeline (only with `--no-sim`; env: `METIS_PIPELINE_INPUT`) |
@@ -314,17 +338,7 @@ YAML and CSV inputs may be mixed in any combination.
 | `--simulations-dir PATH` | `./METIS_Simulations` (host) or `/home/metis/METIS_Simulations` (container) | Path to ScopeSim scripts (env: `METIS_SIMULATIONS_DIR`) |
 | `--inst-pkgs PATH` | see below | Path to ScopeSim instrument packages (Armazones, ELT, METIS). Defaults to the user data dir for the `default` runner, `./inst_pkgs` for `native`, and container-resolved `./inst_pkgs` for `docker`/`podman` (env: `METIS_INST_PKGS`) |
 | `--auto-fetch-calibrations` | off | Before running the pipeline, query the remote METIS archive (via MetisWISE) for any master calibrations the input set is missing and download them into the pipeline input directory. Requires MetisWISE to be installed and archive credentials stored via the Archive tab (OS keyring; a legacy `~/.awe/Environment.cfg` also works). |
-| `--prefer-masters` | off | Set EDPS `association_preference` to `master_per_quality_level` for this run, preferring master calibrations over reduced raw data. |
-
-### Runner modes
-
-| Mode | When to use |
-|---|---|
-| `default` | You used the GUI's Install tab. Pipeline tools are pip-installed alongside MTR in the same isolated pipx/venv. Subprocesses run with that venv's Python interpreter and an environment derived automatically from the install locations (see [Overriding the environment](#overriding-the-environment)). No external dependencies. |
-| `native` | Tools (`edps`, `python`, ScopeSim) are installed directly on PATH — e.g. you are running **inside** a Docker/Podman container, or have a bare-metal install. |
-| `docker` / `podman` | Tools live inside a container and you are running the script **outside** it. The runner wraps every command with `docker exec` / `podman exec`. |
-
-> **Note for `docker` / `podman` runners:** the output directory (`-o`) must be bind-mounted into the container so EDPS can write pipeline products to it. The `--simulations-dir` flag should point to the path of `METIS_Simulations/Simulations` *inside* the container (default: `/home/metis/METIS_Simulations`).
+| `--prefer-masters` | off | Set EDPS `association_preference` to `master_per_quality_level` for this run, preferring master calibrations over reduced raw data. **Only useful when EDPS was configured outside MTR** — the Install tab already pins this value, so on a standard install the flag changes nothing. Ignored for `docker`/`podman`, where EDPS reads the container's own configuration. Not exposed in the GUI for the same reason. |
 
 ### Overriding the environment
 
@@ -343,48 +357,54 @@ The file is entirely optional — it is read if present and ignored if absent.
 
 ```bash
 # Full run with the pipx-installed pipeline (default runner)
-mtr-cli examples/LMS_RAD_06.yaml
+mtr-cli ~/mtr-examples/LMS_RAD_06.yaml
 
 # Inside a container or bare-metal install (tools on PATH)
-mtr-cli --runner native examples/LMS_RAD_06.yaml
+mtr-cli --runner native ~/mtr-examples/LMS_RAD_06.yaml
 
 # Exec into a running Docker container from the host
-mtr-cli --runner docker --container metis-pipeline examples/LMS_RAD_06.yaml
+mtr-cli --runner docker --container metis-pipeline ~/mtr-examples/LMS_RAD_06.yaml
 
 # Exec into a running Podman container; set runner via env var
-METIS_RUNNER=podman METIS_CONTAINER=metis-pipeline mtr-cli examples/LMS_RAD_06.yaml
+METIS_RUNNER=podman METIS_CONTAINER=metis-pipeline mtr-cli ~/mtr-examples/LMS_RAD_06.yaml
 
-# Multiple YAML files, custom output dir, with auto-calibration frames
-mtr-cli -o /tmp/myrun --calib obs1.yaml obs2.yaml
+# Multiple YAML files, custom output dir, 2 auto-calibration frames per config
+mtr-cli -o /tmp/myrun --calib 2 obs1.yaml obs2.yaml
+
+# Skip the auto-generated calibration frames entirely
+mtr-cli --no-calib obs1.yaml obs2.yaml
 
 # Crank up parallelism for big simulation batches
-mtr-cli --cores 12 examples/LMS_RAD_06.yaml
+mtr-cli --cores 12 ~/mtr-examples/LMS_RAD_06.yaml
 
 # Only simulate, inspect the FITS files manually
-mtr-cli --no-pipeline examples/LMS_RAD_06.yaml
+mtr-cli --no-pipeline ~/mtr-examples/LMS_RAD_06.yaml
 
 # Only run the pipeline on previously simulated data
-mtr-cli --no-sim -o /tmp/myrun examples/LMS_RAD_06.yaml
+mtr-cli --no-sim -o /tmp/myrun ~/mtr-examples/LMS_RAD_06.yaml
 
 # Pipeline-only with FITS files from a custom location
 mtr-cli --no-sim --pipeline-input /data/sim_fits -o /tmp/myrun
 
 # CSV-only input, simulate only (workflow auto-detection not needed)
-mtr-cli --no-pipeline examples/small_test_img_lm.csv
+mtr-cli --no-pipeline ~/mtr-examples/small_test_img_lm.csv
 
 # CSV-only input, full simulate + pipeline run (workflow auto-detected from the
 # simulated FITS headers)
-mtr-cli examples/small_test_img_lm.csv
+mtr-cli ~/mtr-examples/small_test_img_lm.csv
 
 # Dry run: translate a CSV test sheet to YAML (writes my_sheet.yaml next to it),
 # no simulation and no pipeline
 mtr-cli --csv-to-yaml /path/to/my_sheet.csv
 
 # Mixed YAML + CSV in a single run
-mtr-cli examples/small_test.yaml examples/small_test_img_lm.csv
+mtr-cli ~/mtr-examples/small_test.yaml examples/small_test_img_lm.csv
 ```
 
-## Direct environment access (`mtr-exec` / `mtr-shell`)
+</details>
+
+<details>
+<summary><b>Direct environment access (`mtr-exec` / `mtr-shell`)</b></summary>
 
 For developers who want to drive the pipeline tools themselves — bypassing MTR's
 simulation, workflow detection, and EDPS server lifecycle — two commands hand you
@@ -410,7 +430,10 @@ Both accept `--runner {default,native,docker,podman}` and `--container NAME`
 shell runs inside the named container. These replace the old
 `uv run --env-file .env …` workflow.
 
-## Repository Layout
+</details>
+
+<details>
+<summary><b>Repository layout</b></summary>
 
 ```
 MTR/
@@ -418,15 +441,18 @@ MTR/
 │   ├── gui.py              # Graphical front-end (PyQt6) — primary entry point
 │   ├── run_metis.py        # Headless CLI (used directly or wrapped by the GUI)
 │   ├── archive.py          # MetisWISE archive integration
+│   ├── credentials.py      # OS-keyring storage for archive credentials
+│   ├── direct.py           # mtr-exec / mtr-shell direct environment access
+│   ├── env.py              # Shared runtime-environment resolution
 │   ├── paths.py            # User data directory resolution (platformdirs)
 │   ├── indexes.py          # ESO mirror pip-index URL constants
 │   └── examples/           # Bundled YAML / CSV example inputs
-├── container/
-│   ├── Dockerfile          # Ubuntu 24.04 GUI container (Qt6 / Wayland)
-│   └── compose.yml         # Podman / Docker Compose for the GUI service
 ├── tests/                  # Unit tests (pytest)
 └── pyproject.toml          # Project metadata (hatchling build backend)
 ```
+
+</details>
+
 
 ## Related Repositories
 
