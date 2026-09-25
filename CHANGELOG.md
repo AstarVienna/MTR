@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- The Archive tab installs `metiswise>=0.0.4` from the entropynaut index
+  instead of the v0.0.4 GitHub tag tarball, now that the index publishes it.
+
 ## 0.5.0 — 2026-09-19
 
 ### Fixed

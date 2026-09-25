@@ -115,14 +115,12 @@ class TestInstallMetisWiseCommand:
         # The deps step must NOT carry --no-deps (it needs full resolution).
         assert "--no-deps" not in deps_cmd
 
-    def test_metiswise_command_is_no_deps_v0_0_4_tarball(self):
+    def test_metiswise_command_is_no_deps_index_requirement(self):
         (_, mw_cmd), _ = archive.install_metiswise_command("u:p")
         # --no-deps keeps eso-pymetis's stale pycpl pin out of the resolver.
         assert "--no-deps" in mw_cmd
-        reqs = [a for a in mw_cmd if a.startswith("metiswise @ ")]
-        assert len(reqs) == 1
-        assert "github.com/AstarVienna/MetisWISE" in reqs[0]
-        assert "v0.0.4" in reqs[0]
+        # Resolved from the entropynaut index, not a GitHub tarball.
+        assert mw_cmd[-1] == "metiswise>=0.0.4"
 
     def test_credentials_only_in_env_never_argv(self):
         cmds, env = archive.install_metiswise_command("alice:p4ss")

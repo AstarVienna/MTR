@@ -51,16 +51,9 @@ def metiswise_available() -> bool:
 
 
 # metiswise 0.0.4 is the first release that imports the ``metis_drld`` pip
-# package (instead of a git-cloned ``codes.drld_parser``).  It is not yet
-# published to the entropynaut index (which still tops out at 0.0.3) and its
-# GitHub release ships no wheel asset, so we install it from the public GitHub
-# tag source tarball.
-#
-# TODO: once metiswise 0.0.4+ lands on the entropynaut index, drop the tarball
-# URL and use a plain ``"metiswise"`` / ``"metiswise>=0.0.4"`` requirement.
-METISWISE_REQUIREMENT = (
-    "metiswise @ https://github.com/AstarVienna/MetisWISE/archive/refs/tags/v0.0.4.tar.gz"
-)
+# package (instead of a git-cloned ``codes.drld_parser``); installed from the
+# credentialed entropynaut index.
+METISWISE_REQUIREMENT = "metiswise>=0.0.4"
 
 # metiswise 0.0.4's runtime dependencies, MINUS ``eso-pymetis`` (provided as an
 # editable install of the cloned pymetis by the Install tab) and MINUS its
@@ -106,7 +99,7 @@ def encode_pip_credentials(raw: str) -> str:
 def install_metiswise_command(
     pip_credentials: str,
 ) -> tuple[list[list[str]], dict[str, str]]:
-    """Return ``(pip_commands, env_overrides)`` to install MetisWISE 0.0.4.
+    """Return ``(pip_commands, env_overrides)`` to install MetisWISE >=0.0.4.
 
     Installs into the same interpreter that hosts MTR (sys.executable points at
     pipx's isolated venv or whatever venv the user installed MTR into).
