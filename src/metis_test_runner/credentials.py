@@ -41,9 +41,7 @@ def _get_secret(entry: str) -> str | None:
     try:
         return keyring.get_password(SERVICE_NAME, entry)
     except Exception as exc:
-        raise CredentialsUnavailable(
-            f"Could not read '{entry}' from the OS keyring: {exc}"
-        ) from exc
+        raise CredentialsUnavailable(f"Could not read '{entry}' from the OS keyring: {exc}") from exc
 
 
 def _set_secret(entry: str, value: str) -> None:
@@ -52,9 +50,7 @@ def _set_secret(entry: str, value: str) -> None:
     try:
         keyring.set_password(SERVICE_NAME, entry, value)
     except Exception as exc:
-        raise CredentialsUnavailable(
-            f"Could not store '{entry}' in the OS keyring: {exc}"
-        ) from exc
+        raise CredentialsUnavailable(f"Could not store '{entry}' in the OS keyring: {exc}") from exc
 
 
 def _delete_secret(entry: str) -> None:
@@ -66,16 +62,16 @@ def _delete_secret(entry: str) -> None:
         # Distinguish "nothing to delete" (fine) from backend failure.
         try:
             import keyring.errors
+
             if isinstance(exc, keyring.errors.PasswordDeleteError):
                 return
         except ImportError:
             pass
-        raise CredentialsUnavailable(
-            f"Could not delete '{entry}' from the OS keyring: {exc}"
-        ) from exc
+        raise CredentialsUnavailable(f"Could not delete '{entry}' from the OS keyring: {exc}") from exc
 
 
 # ── OmegaCEN pip credentials ("username:password") ──────────────────────────
+
 
 def get_pip_credentials() -> str | None:
     """Return the stored ``user:pass`` string, or None if not stored."""
@@ -91,6 +87,7 @@ def delete_pip_credentials() -> None:
 
 
 # ── Archive DB fields (JSON blob of the five Environment.cfg keys) ──────────
+
 
 def get_db_credentials() -> dict[str, str] | None:
     """Return the stored DB fields, or None if absent or malformed.

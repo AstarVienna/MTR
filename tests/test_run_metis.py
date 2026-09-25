@@ -48,6 +48,7 @@ from metis_test_runner.run_metis import (
 # read_edps_port
 # ---------------------------------------------------------------------------
 
+
 class TestReadEdpsPort:
     def test_returns_default_when_file_missing(self, tmp_path):
         """No application.properties → falls back to default."""
@@ -97,6 +98,7 @@ class TestReadEdpsPort:
 # infer_workflow
 # ---------------------------------------------------------------------------
 
+
 def _write_yaml(tmp_path, name, content):
     p = tmp_path / name
     p.write_text(textwrap.dedent(content))
@@ -116,87 +118,115 @@ class TestInferWorkflow:
     # --- tech-based inference ---
 
     def test_lms_tech_maps_to_ifu_workflow(self, tmp_path):
-        f = _write_yaml(tmp_path, "obs.yaml", """
+        f = _write_yaml(
+            tmp_path,
+            "obs.yaml",
+            """
             block1:
               do.catg: DETLIN_IFU_RAW
               mode: wcu_lms
               properties:
                 tech: "LMS"
                 catg: "CALIB"
-        """)
+        """,
+        )
         wf, has_sci, tags = infer_workflow([f])
         assert wf == "metis.metis_ifu_wkf"
         assert not has_sci
         assert "DETLIN_IFU_RAW" in tags
 
     def test_image_lm_tech_maps_to_lm_img_workflow(self, tmp_path):
-        f = _write_yaml(tmp_path, "obs.yaml", """
+        f = _write_yaml(
+            tmp_path,
+            "obs.yaml",
+            """
             block1:
               do.catg: LM_IMAGE_SCI_RAW
               properties:
                 tech: "IMAGE,LM"
                 catg: "SCIENCE"
-        """)
+        """,
+        )
         wf, has_sci, _tags = infer_workflow([f])
         assert wf == "metis.metis_lm_img_wkf"
         assert has_sci
 
     def test_image_n_tech_maps_to_n_img_workflow(self, tmp_path):
-        f = _write_yaml(tmp_path, "obs.yaml", """
+        f = _write_yaml(
+            tmp_path,
+            "obs.yaml",
+            """
             block1:
               do.catg: N_IMAGE_SCI_RAW
               properties:
                 tech: "IMAGE,N"
                 catg: "SCIENCE"
-        """)
+        """,
+        )
         wf, has_sci, _ = infer_workflow([f])
         assert wf == "metis.metis_n_img_wkf"
         assert has_sci
 
     def test_lss_lm_tech_maps_to_lm_lss_workflow(self, tmp_path):
-        f = _write_yaml(tmp_path, "obs.yaml", """
+        f = _write_yaml(
+            tmp_path,
+            "obs.yaml",
+            """
             block1:
               do.catg: LM_LSS_SCI_RAW
               properties:
                 tech: "LSS,LM"
                 catg: "SCIENCE"
-        """)
+        """,
+        )
         wf, _, _ = infer_workflow([f])
         assert wf == "metis.metis_lm_lss_wkf"
 
     def test_lss_n_tech_maps_to_n_lss_workflow(self, tmp_path):
-        f = _write_yaml(tmp_path, "obs.yaml", """
+        f = _write_yaml(
+            tmp_path,
+            "obs.yaml",
+            """
             block1:
               do.catg: N_LSS_SCI_RAW
               properties:
                 tech: "LSS,N"
                 catg: "SCIENCE"
-        """)
+        """,
+        )
         wf, _, _ = infer_workflow([f])
         assert wf == "metis.metis_n_lss_wkf"
 
     # --- mode-based fallback ---
 
     def test_mode_lms_maps_to_ifu_workflow(self, tmp_path):
-        f = _write_yaml(tmp_path, "obs.yaml", """
+        f = _write_yaml(
+            tmp_path,
+            "obs.yaml",
+            """
             block1:
               do.catg: IFU_SCI_RAW
               mode: lms
               properties:
                 catg: "SCIENCE"
-        """)
+        """,
+        )
         wf, has_sci, _ = infer_workflow([f])
         assert wf == "metis.metis_ifu_wkf"
         assert has_sci
 
     def test_mode_img_lm_maps_to_lm_img_workflow(self, tmp_path):
-        f = _write_yaml(tmp_path, "obs.yaml", """
+        f = _write_yaml(
+            tmp_path,
+            "obs.yaml",
+            """
             block1:
               do.catg: LM_IMAGE_SCI_RAW
               mode: img_lm
               properties:
                 catg: "SCIENCE"
-        """)
+        """,
+        )
         wf, _, _ = infer_workflow([f])
         assert wf == "metis.metis_lm_img_wkf"
 
@@ -205,61 +235,81 @@ class TestInferWorkflow:
     def test_tech_with_whitespace_around_comma_still_resolves(self, tmp_path):
         # Human-edited YAML often has "IMAGE, LM" with a space; we shouldn't
         # force users to know the keys are spaceless.
-        f = _write_yaml(tmp_path, "obs.yaml", """
+        f = _write_yaml(
+            tmp_path,
+            "obs.yaml",
+            """
             block1:
               do.catg: LM_IMAGE_SCI_RAW
               properties:
                 tech: "IMAGE, LM"
                 catg: "SCIENCE"
-        """)
+        """,
+        )
         wf, _, _ = infer_workflow([f])
         assert wf == "metis.metis_lm_img_wkf"
 
     def test_mode_with_wrong_case_still_resolves(self, tmp_path):
         # Mode keys are lowercase; accept upper-case YAML values too.
-        f = _write_yaml(tmp_path, "obs.yaml", """
+        f = _write_yaml(
+            tmp_path,
+            "obs.yaml",
+            """
             block1:
               do.catg: LM_IMAGE_SCI_RAW
               mode: IMG_LM
               properties:
                 catg: "SCIENCE"
-        """)
+        """,
+        )
         wf, _, _ = infer_workflow([f])
         assert wf == "metis.metis_lm_img_wkf"
 
     # --- tech takes priority over mode ---
 
     def test_tech_takes_priority_over_mode(self, tmp_path):
-        f = _write_yaml(tmp_path, "obs.yaml", """
+        f = _write_yaml(
+            tmp_path,
+            "obs.yaml",
+            """
             block1:
               do.catg: IFU_SCI_RAW
               mode: img_lm
               properties:
                 tech: "LMS"
                 catg: "SCIENCE"
-        """)
+        """,
+        )
         wf, _, _ = infer_workflow([f])
         assert wf == "metis.metis_ifu_wkf"
 
     # --- multi-file / multi-block ---
 
     def test_multiple_yaml_files_merged(self, tmp_path):
-        f1 = _write_yaml(tmp_path, "obs1.yaml", """
+        f1 = _write_yaml(
+            tmp_path,
+            "obs1.yaml",
+            """
             block1:
               do.catg: DETLIN_IFU_RAW
               mode: wcu_lms
               properties:
                 tech: "LMS"
                 catg: "CALIB"
-        """)
-        f2 = _write_yaml(tmp_path, "obs2.yaml", """
+        """,
+        )
+        f2 = _write_yaml(
+            tmp_path,
+            "obs2.yaml",
+            """
             block2:
               do.catg: IFU_SCI_RAW
               mode: lms
               properties:
                 tech: "LMS"
                 catg: "SCIENCE"
-        """)
+        """,
+        )
         wf, has_sci, tags = infer_workflow([f1, f2])
         assert wf == "metis.metis_ifu_wkf"
         assert has_sci
@@ -267,46 +317,62 @@ class TestInferWorkflow:
         assert "IFU_SCI_RAW" in tags
 
     def test_has_science_false_for_calib_only(self, tmp_path):
-        f = _write_yaml(tmp_path, "obs.yaml", """
+        f = _write_yaml(
+            tmp_path,
+            "obs.yaml",
+            """
             block1:
               do.catg: DARK_IFU_RAW
               mode: wcu_lms
               properties:
                 tech: "LMS"
                 catg: "CALIB"
-        """)
+        """,
+        )
         _, has_sci, _ = infer_workflow([f])
         assert not has_sci
 
     def test_science_catg_case_insensitive(self, tmp_path):
-        f = _write_yaml(tmp_path, "obs.yaml", """
+        f = _write_yaml(
+            tmp_path,
+            "obs.yaml",
+            """
             block1:
               do.catg: IFU_SCI_RAW
               properties:
                 tech: "LMS"
                 catg: "science"
-        """)
+        """,
+        )
         _, has_sci, _ = infer_workflow([f])
         assert has_sci
 
     # --- error path ---
 
     def test_raises_for_unknown_tech_and_mode(self, tmp_path):
-        f = _write_yaml(tmp_path, "obs.yaml", """
+        f = _write_yaml(
+            tmp_path,
+            "obs.yaml",
+            """
             block1:
               do.catg: SOMETHING_RAW
               mode: unknown_mode
               properties:
                 tech: "UNKNOWN,TECH"
                 catg: "CALIB"
-        """)
+        """,
+        )
         with pytest.raises(ValueError, match="Cannot determine workflow"):
             infer_workflow([f])
 
     def test_raises_for_empty_yaml(self, tmp_path):
-        f = _write_yaml(tmp_path, "obs.yaml", """
+        f = _write_yaml(
+            tmp_path,
+            "obs.yaml",
+            """
             block1: null
-        """)
+        """,
+        )
         with pytest.raises(ValueError):
             infer_workflow([f])
 
@@ -320,13 +386,17 @@ class TestInferWorkflow:
 
     def test_csv_files_skipped_in_mixed_input(self, tmp_path):
         """When YAML+CSV are mixed, only YAML drives inference; CSV is ignored."""
-        yaml_file = _write_yaml(tmp_path, "obs.yaml", """
+        yaml_file = _write_yaml(
+            tmp_path,
+            "obs.yaml",
+            """
             block1:
               do.catg: LM_IMAGE_SCI_RAW
               properties:
                 tech: "IMAGE,LM"
                 catg: "SCIENCE"
-        """)
+        """,
+        )
         csv_file = _write_csv(tmp_path, "obs.csv")
         wf, has_sci, tags = infer_workflow([yaml_file, csv_file])
         assert wf == "metis.metis_lm_img_wkf"
@@ -352,6 +422,7 @@ class TestKnownWorkflows:
 # ---------------------------------------------------------------------------
 # infer_edps_target
 # ---------------------------------------------------------------------------
+
 
 class TestInferEdpsTarget:
     # --- IFU workflow ---
@@ -408,13 +479,13 @@ class TestInferEdpsTarget:
 
     def test_lm_img_full_calib_plus_science(self):
         tags = {
-            "DETLIN_2RG_RAW", "DARK_2RG_RAW",
-            "LM_FLAT_LAMP_RAW", "LM_DISTORTION_RAW",
+            "DETLIN_2RG_RAW",
+            "DARK_2RG_RAW",
+            "LM_FLAT_LAMP_RAW",
+            "LM_DISTORTION_RAW",
             "LM_IMAGE_SCI_RAW",
         }
-        flags = infer_edps_target(
-            "metis.metis_lm_img_wkf", tags, has_science=True
-        )
+        flags = infer_edps_target("metis.metis_lm_img_wkf", tags, has_science=True)
         assert flags == ["-t", "metis_lm_img_distortion", "-m", "science"]
 
     # --- LSS workflows use qc1calib ---
@@ -475,22 +546,30 @@ class TestInferEdpsTarget:
 # scan_yaml_inputs
 # ---------------------------------------------------------------------------
 
+
 class TestScanYamlInputs:
     def test_single_block_collects_workflow_and_tag(self, tmp_path):
-        f = _write_yaml(tmp_path, "obs.yaml", """
+        f = _write_yaml(
+            tmp_path,
+            "obs.yaml",
+            """
             block1:
               do.catg: IFU_SCI_RAW
               properties:
                 tech: "LMS"
                 catg: "SCIENCE"
-        """)
+        """,
+        )
         tags, has_sci, wfs = scan_yaml_inputs([f])
         assert tags == {"IFU_SCI_RAW"}
         assert has_sci is True
         assert wfs == {"metis.metis_ifu_wkf"}
 
     def test_mixed_workflows_in_one_file(self, tmp_path):
-        f = _write_yaml(tmp_path, "obs.yaml", """
+        f = _write_yaml(
+            tmp_path,
+            "obs.yaml",
+            """
             block1:
               do.catg: LM_IMAGE_SCI_RAW
               properties:
@@ -501,27 +580,36 @@ class TestScanYamlInputs:
               properties:
                 tech: "LMS"
                 catg: "SCIENCE"
-        """)
+        """,
+        )
         tags, has_sci, wfs = scan_yaml_inputs([f])
         assert tags == {"LM_IMAGE_SCI_RAW", "IFU_SCI_RAW"}
         assert has_sci is True
         assert wfs == {"metis.metis_lm_img_wkf", "metis.metis_ifu_wkf"}
 
     def test_mixed_workflows_across_files(self, tmp_path):
-        f1 = _write_yaml(tmp_path, "obs1.yaml", """
+        f1 = _write_yaml(
+            tmp_path,
+            "obs1.yaml",
+            """
             block1:
               do.catg: LM_IMAGE_SCI_RAW
               properties:
                 tech: "IMAGE,LM"
                 catg: "SCIENCE"
-        """)
-        f2 = _write_yaml(tmp_path, "obs2.yaml", """
+        """,
+        )
+        f2 = _write_yaml(
+            tmp_path,
+            "obs2.yaml",
+            """
             block1:
               do.catg: N_IMAGE_SCI_RAW
               properties:
                 tech: "IMAGE,N"
                 catg: "SCIENCE"
-        """)
+        """,
+        )
         tags, has_sci, wfs = scan_yaml_inputs([f1, f2])
         assert tags == {"LM_IMAGE_SCI_RAW", "N_IMAGE_SCI_RAW"}
         assert has_sci is True
@@ -531,45 +619,61 @@ class TestScanYamlInputs:
         # Unlike infer_workflow, scan_yaml_inputs silently skips unrecognised
         # tech/mode values — the caller decides whether an empty sub-workflow
         # set is fatal.
-        f = _write_yaml(tmp_path, "obs.yaml", """
+        f = _write_yaml(
+            tmp_path,
+            "obs.yaml",
+            """
             block1:
               do.catg: SOMETHING_RAW
               mode: unknown_mode
               properties:
                 tech: "UNKNOWN,TECH"
                 catg: "CALIB"
-        """)
+        """,
+        )
         tags, has_sci, wfs = scan_yaml_inputs([f])
         assert tags == {"SOMETHING_RAW"}
         assert has_sci is False
         assert wfs == set()
 
     def test_mode_fallback_when_tech_missing(self, tmp_path):
-        f = _write_yaml(tmp_path, "obs.yaml", """
+        f = _write_yaml(
+            tmp_path,
+            "obs.yaml",
+            """
             block1:
               do.catg: IFU_SCI_RAW
               mode: lms
               properties:
                 catg: "SCIENCE"
-        """)
+        """,
+        )
         _, _, wfs = scan_yaml_inputs([f])
         assert wfs == {"metis.metis_ifu_wkf"}
 
     def test_calib_only_has_no_science(self, tmp_path):
-        f = _write_yaml(tmp_path, "obs.yaml", """
+        f = _write_yaml(
+            tmp_path,
+            "obs.yaml",
+            """
             block1:
               do.catg: DARK_IFU_RAW
               properties:
                 tech: "LMS"
                 catg: "CALIB"
-        """)
+        """,
+        )
         _, has_sci, _ = scan_yaml_inputs([f])
         assert has_sci is False
 
     def test_empty_yaml_returns_empties(self, tmp_path):
-        f = _write_yaml(tmp_path, "obs.yaml", """
+        f = _write_yaml(
+            tmp_path,
+            "obs.yaml",
+            """
             block1: null
-        """)
+        """,
+        )
         tags, has_sci, wfs = scan_yaml_inputs([f])
         assert tags == set()
         assert has_sci is False
@@ -579,6 +683,7 @@ class TestScanYamlInputs:
 # ---------------------------------------------------------------------------
 # infer_edps_targets_for_workflows  (multi-workflow target inference)
 # ---------------------------------------------------------------------------
+
 
 class TestInferEdpsTargetsForWorkflows:
     def test_single_sub_workflow_matches_single_workflow_helper(self):
@@ -606,8 +711,7 @@ class TestInferEdpsTargetsForWorkflows:
 
     def test_mixed_with_science_appends_m_science_once(self):
         flags = infer_edps_targets_for_workflows(
-            {"LM_DISTORTION_RAW", "IFU_RSRF_RAW", "IFU_SCI_RAW",
-             "LM_IMAGE_SCI_RAW"},
+            {"LM_DISTORTION_RAW", "IFU_RSRF_RAW", "IFU_SCI_RAW", "LM_IMAGE_SCI_RAW"},
             has_science=True,
             sub_workflows={"metis.metis_lm_img_wkf", "metis.metis_ifu_wkf"},
         )
@@ -620,8 +724,7 @@ class TestInferEdpsTargetsForWorkflows:
         # both contribute, the umbrella command line must include exactly
         # one -m qc1calib.
         flags = infer_edps_targets_for_workflows(
-            {"DETLIN_2RG_RAW", "DARK_2RG_RAW",
-             "DETLIN_GEO_RAW", "DARK_GEO_RAW"},
+            {"DETLIN_2RG_RAW", "DARK_2RG_RAW", "DETLIN_GEO_RAW", "DARK_GEO_RAW"},
             has_science=False,
             sub_workflows={"metis.metis_lm_lss_wkf", "metis.metis_n_lss_wkf"},
         )
@@ -673,6 +776,7 @@ class TestInferEdpsTargetsForWorkflows:
 # UMBRELLA_WORKFLOW
 # ---------------------------------------------------------------------------
 
+
 class TestUmbrellaWorkflow:
     def test_umbrella_constant_value(self):
         # The umbrella workflow is the EDPS workflow that imports every METIS
@@ -684,10 +788,12 @@ class TestUmbrellaWorkflow:
 # collect_tags_from_fits
 # ---------------------------------------------------------------------------
 
+
 class TestCollectTagsFromFits:
     def test_returns_empty_set_when_astropy_missing(self, tmp_path):
         """If astropy is not installed, returns empty set gracefully."""
         import builtins
+
         real_import = builtins.__import__
 
         def mock_import(name, *args, **kwargs):
@@ -757,7 +863,7 @@ class TestCollectTagsFromFits:
             (("CALIB", "DETLIN", "IFU"), "detlin.fits"),
             (("CALIB", "DARK",   "IFU"), "dark.fits"),
             (("SCIENCE", "OBJECT", "IFU"), "sci.fits"),
-        ]:
+        ]:  # fmt: skip
             hdr = afits.Header()
             hdr["HIERARCH ESO DPR CATG"] = catg
             hdr["HIERARCH ESO DPR TYPE"] = typ
@@ -796,9 +902,11 @@ class TestCollectTagsFromFits:
 # scan_fits_inputs
 # ---------------------------------------------------------------------------
 
+
 class TestScanFitsInputs:
     def test_returns_empty_when_astropy_missing(self, tmp_path):
         import builtins
+
         real_import = builtins.__import__
 
         def mock_import(name, *args, **kwargs):
@@ -832,7 +940,7 @@ class TestScanFitsInputs:
         for (catg, typ, tech), fname in [
             (("SCIENCE", "OBJECT", "IMAGE,LM"), "lm_sci.fits"),
             (("SCIENCE", "OBJECT", "IFU"),      "ifu_sci.fits"),
-        ]:
+        ]:  # fmt: skip
             hdr = afits.Header()
             hdr["HIERARCH ESO DPR CATG"] = catg
             hdr["HIERARCH ESO DPR TYPE"] = typ
@@ -879,9 +987,11 @@ class TestScanFitsInputs:
 # classify_fits_file
 # ---------------------------------------------------------------------------
 
+
 class TestClassifyFitsFile:
     def test_returns_none_when_astropy_missing(self, tmp_path):
         import builtins
+
         real_import = builtins.__import__
 
         def mock_import(name, *args, **kwargs):
@@ -961,6 +1071,7 @@ class TestClassifyFitsFile:
 # _build_sim_script
 # ---------------------------------------------------------------------------
 
+
 class TestBuildSimScript:
     _base_kwargs = dict(
         out_dir="/tmp/sim",
@@ -994,28 +1105,25 @@ class TestBuildSimScript:
     def test_script_contains_csv_path_unchanged(self):
         """CSV paths must pass through to the generated script verbatim; the
         downstream metis_simulations loader dispatches by extension."""
-        script = _build_sim_script(
-            **{**self._base_kwargs, "input_list": ["/data/obs.csv"]}
-        )
+        script = _build_sim_script(**{**self._base_kwargs, "input_list": ["/data/obs.csv"]})
         assert "/data/obs.csv" in script
         assert "runSimulationBlock(['/data/obs.csv']" in script
 
     def test_script_contains_mixed_input_paths(self):
-        script = _build_sim_script(
-            **{**self._base_kwargs,
-               "input_list": ["/data/obs.yaml", "/data/obs.csv"]}
-        )
+        script = _build_sim_script(**{**self._base_kwargs, "input_list": ["/data/obs.yaml", "/data/obs.csv"]})
         assert "/data/obs.yaml" in script
         assert "/data/obs.csv" in script
 
     def test_script_is_valid_python(self):
         import ast
+
         script = _build_sim_script(**self._base_kwargs)
         # Should not raise
         ast.parse(script)
 
     def test_script_with_static_calibs_is_valid_python(self):
         import ast
+
         script = _build_sim_script(
             **self._base_kwargs,
             static_calibs_dir="/output/static_calibs",
@@ -1024,6 +1132,7 @@ class TestBuildSimScript:
 
     def test_script_with_inst_pkgs_is_valid_python(self):
         import ast
+
         script = _build_sim_script(
             **self._base_kwargs,
             inst_pkgs_path="/home/user/inst_pkgs",
@@ -1108,6 +1217,7 @@ class TestBuildSimScript:
         # CSV->YAML dry run: both testRun and writeYaml must be True so
         # metis_simulations translates the CSV and skips simulation.
         import ast
+
         script = _build_sim_script(**self._base_kwargs, write_yaml=True)
         assert "testRun   = True" in script
         assert "writeYaml = True" in script
@@ -1129,9 +1239,7 @@ class TestBuildSimScript:
         assert "setdefault" in script
         # Must precede the metis_simulations import or the env var has no
         # effect on the eager scipy.datasets.face() call.
-        assert script.index("SCIPY_DATASETS_DIR") < script.index(
-            "from metis_simulations"
-        )
+        assert script.index("SCIPY_DATASETS_DIR") < script.index("from metis_simulations")
 
     # -- macOS spawn-safety guards ------------------------------------------
 
@@ -1147,22 +1255,14 @@ class TestBuildSimScript:
         inside the __main__ guard, never at module level."""
         script = _build_sim_script(**self._base_kwargs)
         lines = script.splitlines()
-        guard_line = next(
-            i for i, l in enumerate(lines)
-            if '__name__' in l and '__main__' in l
-        )
-        sim_call_lines = [
-            i for i, l in enumerate(lines)
-            if 'runSimulationBlock' in l and 'import' not in l
-        ]
+        guard_line = next(i for i, l in enumerate(lines) if "__name__" in l and "__main__" in l)
+        sim_call_lines = [i for i, l in enumerate(lines) if "runSimulationBlock" in l and "import" not in l]
         for idx in sim_call_lines:
             assert idx > guard_line, (
-                f"runSimulationBlock call at line {idx} is before the "
-                f"__main__ guard at line {guard_line}"
+                f"runSimulationBlock call at line {idx} is before the __main__ guard at line {guard_line}"
             )
             assert lines[idx].startswith("    "), (
-                f"runSimulationBlock call at line {idx} is not indented "
-                f"under the __main__ guard"
+                f"runSimulationBlock call at line {idx} is not indented under the __main__ guard"
             )
 
     def test_monkey_patch_outside_main_guard(self):
@@ -1170,19 +1270,12 @@ class TestBuildSimScript:
         spawn-mode workers execute it when they re-import __main__."""
         script = _build_sim_script(**self._base_kwargs)
         lines = script.splitlines()
-        guard_line = next(
-            i for i, l in enumerate(lines)
-            if '__name__' in l and '__main__' in l
-        )
-        patch_lines = [
-            i for i, l in enumerate(lines)
-            if '_skc_safe_call' in l or '_skc_orig_call' in l
-        ]
+        guard_line = next(i for i, l in enumerate(lines) if "__name__" in l and "__main__" in l)
+        patch_lines = [i for i, l in enumerate(lines) if "_skc_safe_call" in l or "_skc_orig_call" in l]
         assert patch_lines, "Monkey-patch lines not found in generated script"
         for idx in patch_lines:
             assert idx < guard_line, (
-                f"Monkey-patch at line {idx} should be before the "
-                f"__main__ guard at line {guard_line}"
+                f"Monkey-patch at line {idx} should be before the __main__ guard at line {guard_line}"
             )
 
     def test_static_calibs_inside_main_guard(self):
@@ -1192,14 +1285,8 @@ class TestBuildSimScript:
             static_calibs_dir="/output/static_calibs",
         )
         lines = script.splitlines()
-        guard_line = next(
-            i for i, l in enumerate(lines)
-            if '__name__' in l and '__main__' in l
-        )
-        static_lines = [
-            i for i, l in enumerate(lines)
-            if 'generateStaticCalibs' in l
-        ]
+        guard_line = next(i for i, l in enumerate(lines) if "__name__" in l and "__main__" in l)
+        static_lines = [i for i, l in enumerate(lines) if "generateStaticCalibs" in l]
         for idx in static_lines:
             assert idx > guard_line
             assert lines[idx].startswith("    ")
@@ -1208,6 +1295,7 @@ class TestBuildSimScript:
 # ---------------------------------------------------------------------------
 # Spawn-mode safety (simulates macOS multiprocessing behavior on Linux)
 # ---------------------------------------------------------------------------
+
 
 class TestSpawnSafety:
     """Verify generated scripts survive multiprocessing spawn mode
@@ -1279,6 +1367,7 @@ class TestSpawnSafety:
 # _edps_base_cmd, _check_default_env, _default_subprocess_env
 # ---------------------------------------------------------------------------
 
+
 class TestEdpsBaseCmd:
     def test_default_runner_calls_edps_directly(self):
         cmd = _edps_base_cmd("default", None, 4444)
@@ -1302,22 +1391,19 @@ class TestEdpsBaseCmd:
 class TestCheckDefaultEnv:
     def test_raises_when_pipeline_clone_missing(self, tmp_path):
         missing = tmp_path / "nope"
-        with patch("metis_test_runner.run_metis.paths.pipeline_dir",
-                   return_value=missing):
+        with patch("metis_test_runner.run_metis.paths.pipeline_dir", return_value=missing):
             with pytest.raises(FileNotFoundError, match="Install tab"):
                 _check_default_env("default")
 
     def test_returns_silently_when_pipeline_clone_present(self, tmp_path):
         clone = tmp_path / "METIS_Pipeline"
         (clone / ".git").mkdir(parents=True)
-        with patch("metis_test_runner.run_metis.paths.pipeline_dir",
-                   return_value=clone):
+        with patch("metis_test_runner.run_metis.paths.pipeline_dir", return_value=clone):
             _check_default_env("default")  # no exception
 
     def test_noop_for_non_default_runners(self, tmp_path):
         missing = tmp_path / "nope"
-        with patch("metis_test_runner.run_metis.paths.pipeline_dir",
-                   return_value=missing):
+        with patch("metis_test_runner.run_metis.paths.pipeline_dir", return_value=missing):
             for r in ("native", "docker", "podman"):
                 _check_default_env(r)  # no exception even though clone is missing
 
@@ -1326,6 +1412,7 @@ class TestDefaultSubprocessEnv:
     def test_loads_dotenv_and_prepends_venv_bin(self, tmp_path):
         import os
         import sys
+
         env_path = tmp_path / ".env"
         env_path.write_text("FOO=bar\nMTR_TEST_KEY=value123\n")
         with patch("metis_test_runner.run_metis.paths.env_file", return_value=env_path):
@@ -1338,6 +1425,7 @@ class TestDefaultSubprocessEnv:
     def test_works_without_dotenv_file(self, tmp_path):
         import os
         import sys
+
         missing = tmp_path / "nope" / ".env"
         with patch("metis_test_runner.run_metis.paths.env_file", return_value=missing):
             env = _default_subprocess_env()
@@ -1348,6 +1436,7 @@ class TestDefaultSubprocessEnv:
 # ---------------------------------------------------------------------------
 # Lookup table completeness / consistency checks
 # ---------------------------------------------------------------------------
+
 
 class TestLookupTableConsistency:
     def test_all_tech_to_workflow_values_are_known_workflows(self):
@@ -1367,30 +1456,21 @@ class TestLookupTableConsistency:
     def test_workflow_task_chain_tuples_have_three_elements(self):
         for wf, chain in WORKFLOW_TASK_CHAIN.items():
             for entry in chain:
-                assert len(entry) == 3, (
-                    f"Task chain entry in {wf!r} does not have 3 elements: {entry!r}"
-                )
+                assert len(entry) == 3, f"Task chain entry in {wf!r} does not have 3 elements: {entry!r}"
 
     def test_meta_targets_only_valid_values(self):
         valid = {None, "qc1calib", "science"}
         for wf, chain in WORKFLOW_TASK_CHAIN.items():
             for _, _, meta in chain:
-                assert meta in valid, (
-                    f"Unknown meta_target {meta!r} in workflow {wf!r}"
-                )
+                assert meta in valid, f"Unknown meta_target {meta!r} in workflow {wf!r}"
 
     def test_dpr_to_tag_keys_are_three_tuples(self):
         for key in DPR_TO_TAG:
-            assert isinstance(key, tuple) and len(key) == 3, (
-                f"DPR_TO_TAG key is not a 3-tuple: {key!r}"
-            )
+            assert isinstance(key, tuple) and len(key) == 3, f"DPR_TO_TAG key is not a 3-tuple: {key!r}"
 
     def test_ifu_workflow_science_task_has_science_meta_target(self):
         """The IFU sci_reduce task must be gated by 'science'."""
-        chain = dict(
-            (name, meta)
-            for name, _, meta in WORKFLOW_TASK_CHAIN["metis.metis_ifu_wkf"]
-        )
+        chain = dict((name, meta) for name, _, meta in WORKFLOW_TASK_CHAIN["metis.metis_ifu_wkf"])
         assert chain.get("metis_ifu_sci_reduce") == "science"
 
     def test_lm_img_workflow_calib_tasks_have_no_meta_target(self):
@@ -1403,23 +1483,20 @@ class TestLookupTableConsistency:
         }
         for name, _, meta in WORKFLOW_TASK_CHAIN["metis.metis_lm_img_wkf"]:
             if name in calib_tasks:
-                assert meta is None, (
-                    f"Expected no meta_target for {name!r}, got {meta!r}"
-                )
+                assert meta is None, f"Expected no meta_target for {name!r}, got {meta!r}"
 
     def test_lss_calib_tasks_gated_by_qc1calib(self):
         """All non-science tasks in LSS workflows must be qc1calib-gated."""
         for wf in ("metis.metis_lm_lss_wkf", "metis.metis_n_lss_wkf"):
             for name, _, meta in WORKFLOW_TASK_CHAIN[wf]:
                 if meta != "science":
-                    assert meta == "qc1calib", (
-                        f"LSS task {name!r} in {wf!r} expected qc1calib, got {meta!r}"
-                    )
+                    assert meta == "qc1calib", f"LSS task {name!r} in {wf!r} expected qc1calib, got {meta!r}"
 
 
 # ---------------------------------------------------------------------------
 # --pipeline-input  (multi-directory support)
 # ---------------------------------------------------------------------------
+
 
 class TestPipelineInputArg:
     """Verify that --pipeline-input accepts multiple directories via action='append'."""
@@ -1429,11 +1506,15 @@ class TestPipelineInputArg:
         assert args.pipeline_input == ["/tmp/a"]
 
     def test_multiple_pipeline_inputs(self):
-        args = parse_args([
-            "--no-sim",
-            "--pipeline-input", "/tmp/a",
-            "--pipeline-input", "/tmp/b",
-        ])
+        args = parse_args(
+            [
+                "--no-sim",
+                "--pipeline-input",
+                "/tmp/a",
+                "--pipeline-input",
+                "/tmp/b",
+            ]
+        )
         assert args.pipeline_input == ["/tmp/a", "/tmp/b"]
 
     def test_no_pipeline_input_is_none(self):
@@ -1449,6 +1530,7 @@ class TestPipelineInputArg:
 # ---------------------------------------------------------------------------
 # Input file positional argument
 # ---------------------------------------------------------------------------
+
 
 class TestInputFilesArg:
     def test_positional_attribute_is_input_files(self):
@@ -1477,6 +1559,7 @@ class TestCsvToYamlFlag:
 # ---------------------------------------------------------------------------
 
 # A minimal AIT-format CSV: column-name row + 3 metadata rows + 5 data rows.
+# fmt: off
 _AIT_CSV = (
     "test_ID,step_number,DPR.TECH\n"      # line 1 (header)
     "component,component,component\n"      # line 2 (header)
@@ -1488,6 +1571,7 @@ _AIT_CSV = (
     "LINGAIN,3,IMAGE_LM\n"                 # line 8 (data row 4)
     "LINGAIN,4,IMAGE_LM\n"                 # line 9 (data row 5)
 )
+# fmt: on
 
 
 class TestParseLineRange:
@@ -1582,6 +1666,7 @@ class TestSliceCsv:
         # three metadata rows, so their first cell is empty. The fixed 4-row
         # header must still be preserved in full — otherwise csvParser's four
         # unconditional next(reader) calls run off the end (StopIteration).
+        # fmt: off
         content = (
             "test_ID,step_number,DPR.TECH\n"    # line 1: column ids
             ",,Data product technique\n"         # line 2: descriptions (blank 1st)
@@ -1591,6 +1676,7 @@ class TestSliceCsv:
             "ROW_B,2,IFU\n"                       # line 6: data
             "ROW_C,3,IFU\n"                       # line 7: data
         )
+        # fmt: on
         src = tmp_path / "real.csv"
         src.write_text(content)
         out = _slice_csv(src, (6, 6), tmp_path / "sliced")
@@ -1619,6 +1705,7 @@ class TestCsvLinesFlag:
 # ---------------------------------------------------------------------------
 # Argument validation / main() entry contract
 # ---------------------------------------------------------------------------
+
 
 class TestRequiredInputs:
     """Bare `mtr-cli` must give a usage error, not a traceback."""
@@ -1696,6 +1783,7 @@ class TestCalibStaticFlags:
 # edps_session — global state must never outlive the run
 # ---------------------------------------------------------------------------
 
+
 class TestEdpsSession:
     """Both the EDPS daemon and the association_preference line in the user's
     ~/.edps/application.properties are process-global. Neither may survive a
@@ -1767,8 +1855,7 @@ class TestEdpsSession:
 
     def test_warns_when_the_config_has_no_preference_line(self, monkeypatch, capsys):
         monkeypatch.setattr(rm, "_set_association_preference", lambda v: None)
-        monkeypatch.setattr(rm.subprocess, "run",
-                            lambda *a, **k: MagicMock(returncode=0))
+        monkeypatch.setattr(rm.subprocess, "run", lambda *a, **k: MagicMock(returncode=0))
         with rm.edps_session(["edps"], None, None, prefer_masters=True):
             pass
         assert "had no effect" in capsys.readouterr().out
@@ -1795,7 +1882,7 @@ class TestCorruptFitsAreReported:
         assert "broken.fits" in err
 
     def test_silent_when_everything_reads(self, tmp_path, capsys):
-        rm.scan_fits_inputs(tmp_path)          # empty dir
+        rm.scan_fits_inputs(tmp_path)  # empty dir
         assert "could not be read" not in capsys.readouterr().err
 
     def test_valid_files_still_scanned_alongside_broken_ones(self, tmp_path, capsys):
@@ -1827,18 +1914,15 @@ class TestPreferMastersIsHonest:
         return props
 
     @pytest.mark.parametrize("runner", ["docker", "podman"])
-    def test_container_runners_are_warned_and_skipped(self, runner, tmp_path,
-                                                      monkeypatch, capsys):
-        props = self._props(tmp_path, monkeypatch,
-                            "association_preference=best_quality\n")
+    def test_container_runners_are_warned_and_skipped(self, runner, tmp_path, monkeypatch, capsys):
+        props = self._props(tmp_path, monkeypatch, "association_preference=best_quality\n")
         assert rm._apply_prefer_masters(runner) is None
         assert props.read_text() == "association_preference=best_quality\n"
         out = capsys.readouterr().out
         assert "ignored" in out and "container" in out
 
     def test_already_set_says_it_changes_nothing(self, tmp_path, monkeypatch, capsys):
-        self._props(tmp_path, monkeypatch,
-                    "association_preference=master_per_quality_level\n")
+        self._props(tmp_path, monkeypatch, "association_preference=master_per_quality_level\n")
         rm._apply_prefer_masters("default")
         assert "changes nothing" in capsys.readouterr().out
 
@@ -1848,8 +1932,7 @@ class TestPreferMastersIsHonest:
         assert "had no effect" in capsys.readouterr().out
 
     def test_real_override_is_applied_and_announced(self, tmp_path, monkeypatch, capsys):
-        props = self._props(tmp_path, monkeypatch,
-                            "association_preference=best_quality\n")
+        props = self._props(tmp_path, monkeypatch, "association_preference=best_quality\n")
         original = rm._apply_prefer_masters("native")
         assert original == "best_quality"
         assert "master_per_quality_level" in props.read_text()
@@ -1859,9 +1942,7 @@ class TestPreferMastersIsHonest:
 
     def test_session_passes_the_runner_through(self, tmp_path, monkeypatch, capsys):
         self._props(tmp_path, monkeypatch, "association_preference=best_quality\n")
-        monkeypatch.setattr(rm.subprocess, "run",
-                            lambda *a, **k: MagicMock(returncode=0))
-        with rm.edps_session(["edps"], None, None,
-                             prefer_masters=True, runner="docker"):
+        monkeypatch.setattr(rm.subprocess, "run", lambda *a, **k: MagicMock(returncode=0))
+        with rm.edps_session(["edps"], None, None, prefer_masters=True, runner="docker"):
             pass
         assert "ignored" in capsys.readouterr().out

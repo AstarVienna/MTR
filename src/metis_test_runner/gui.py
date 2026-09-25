@@ -75,14 +75,16 @@ from .indexes import ESO_INDEX, PYCPL_INDEX
 # `gui.REPO_ROOT` (etc.) directly and have the call-time `REPO_ROOT / "..."`
 # expressions inside methods pick up the patched value.
 
+# fmt: off
 REPO_ROOT   = paths.data_dir()
 TARGET_A    = paths.pipeline_dir()
 TARGET_B    = paths.simulations_dir()
 INST_PKGS   = paths.inst_pkgs_dir()
 REPO_A_URL  = "https://github.com/AstarVienna/METIS_Pipeline.git"
 REPO_B_URL  = "https://github.com/AstarVienna/METIS_Simulations.git"
+# fmt: on
 
-LABEL_W = 280   # fixed label column width in the Run options form
+LABEL_W = 280  # fixed label column width in the Run options form
 
 # Set by main() under --smoke-test. The CI smoke test calls win.show(), which
 # fires InstallTab.showEvent and would otherwise hit the network (and leave a
@@ -93,6 +95,7 @@ SMOKE_TEST = False
 # ---------------------------------------------------------------------------
 # Subprocess environment
 # ---------------------------------------------------------------------------
+
 
 def _child_env(runner: str = "default") -> dict[str, str]:
     """Build the environment for subprocesses spawned by the GUI.
@@ -157,8 +160,7 @@ _REF_OK = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._/+@-]{0,254}\Z")
 _DEFAULT_FIRST = ("main", "master", "develop", "dev")
 
 
-def _git(args: list[str], cwd: Path | None = None,
-         timeout: int = 30) -> subprocess.CompletedProcess:
+def _git(args: list[str], cwd: Path | None = None, timeout: int = 30) -> subprocess.CompletedProcess:
     """Run git, capture output, never raise.
 
     A missing binary, a timeout, or any OSError comes back as returncode 127
@@ -172,7 +174,10 @@ def _git(args: list[str], cwd: Path | None = None,
         return subprocess.run(
             ["git", *args],
             cwd=str(cwd) if cwd else None,
-            capture_output=True, text=True, timeout=timeout, env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return subprocess.CompletedProcess(args, 127, "", str(exc))
@@ -190,8 +195,7 @@ def _validate_ref(ref: str | None) -> str:
     ref = (ref or "").strip()
     if not ref:
         return ""
-    if (not _REF_OK.match(ref) or ".." in ref
-            or ref.endswith((".lock", "/", "."))):
+    if not _REF_OK.match(ref) or ".." in ref or ref.endswith((".lock", "/", ".")):
         raise ValueError(
             f"{ref!r} is not a valid branch, tag or commit.\n\n"
             "Use letters, digits and . _ / + @ - with no spaces — for example "
@@ -213,8 +217,10 @@ def _looks_like_abbrev_sha(ref: str) -> bool:
 
 def _same_remote(a: str, b: str) -> bool:
     """Compare remote URLs ignoring a trailing slash and the .git suffix."""
+
     def norm(u: str) -> str:
         return u.strip().rstrip("/").removesuffix(".git")
+
     return norm(a) == norm(b)
 
 
@@ -233,9 +239,9 @@ def _parse_ls_remote(text: str) -> list[str]:
         if not ref or ref.endswith("^{}"):
             continue
         if ref.startswith("refs/heads/"):
-            heads.append(ref[len("refs/heads/"):])
+            heads.append(ref[len("refs/heads/") :])
         elif ref.startswith("refs/tags/"):
-            tags.append(ref[len("refs/tags/"):])
+            tags.append(ref[len("refs/tags/") :])
     hoisted = [b for b in _DEFAULT_FIRST if b in heads]
     rest = sorted((b for b in heads if b not in hoisted), key=str.lower)
     # Reverse-lexicographic is a good-enough "newest first" for vN.N.N tags.
@@ -273,8 +279,7 @@ def _describe_head(target: Path) -> str:
     if name.returncode == 0:
         label = name.stdout.strip()
     else:
-        tag = _git(["-C", str(target), "describe", "--tags", "--exact-match",
-                    "HEAD"])
+        tag = _git(["-C", str(target), "describe", "--tags", "--exact-match", "HEAD"])
         label = f"{tag.stdout.strip()} (tag)" if tag.returncode == 0 else "detached"
 
     try:
@@ -284,8 +289,7 @@ def _describe_head(target: Path) -> str:
     # Worth surfacing: a shallow clone is why an abbreviated SHA needs a slow
     # full-history fetch.
     shallow = ""
-    if _git(["-C", str(target), "rev-parse",
-             "--is-shallow-repository"]).stdout.strip() == "true":
+    if _git(["-C", str(target), "rev-parse", "--is-shallow-repository"]).stdout.strip() == "true":
         shallow = " · shallow"
     return f"{label} @ {sha.stdout.strip()}{dirty}{shallow}"
 
@@ -294,6 +298,7 @@ def _describe_head(target: Path) -> str:
 # Themes
 # ---------------------------------------------------------------------------
 
+# fmt: off
 THEMES: dict[str, dict[str, str]] = {
     "dark": {
         # SWP-S50 colour palette
@@ -416,6 +421,7 @@ THEMES: dict[str, dict[str, str]] = {
         "log_default":    "#5c3a4e",
     },
 }
+# fmt: on
 
 # Mutable mapping updated by apply_theme(); used by log_append()
 LOG_COLORS: dict[str, str] = {}
@@ -432,6 +438,7 @@ def apply_theme(app: QApplication, name: str) -> None:
         return QColor(t[key])
 
     pal = QPalette()
+    # fmt: off
     pal.setColor(QPalette.ColorRole.Window,          c("window"))
     pal.setColor(QPalette.ColorRole.WindowText,      c("window_text"))
     pal.setColor(QPalette.ColorRole.Base,            c("base"))
@@ -448,8 +455,10 @@ def apply_theme(app: QApplication, name: str) -> None:
     pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, c("placeholder"))
     pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, c("placeholder"))
     pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text,       c("placeholder"))
+    # fmt: on
     app.setPalette(pal)
 
+    # fmt: off
     brd        = t["border"]
     hl         = t["highlight"]
     win        = t["window"]
@@ -468,6 +477,7 @@ def apply_theme(app: QApplication, name: str) -> None:
     i_hov = _shift(i_bg); a_hov = _shift(accent)
     a_fg           = t["highlight_text"]   # accent-role button uses highlight_text
     highlight_text = a_fg
+    # fmt: on
 
     app.setStyleSheet(f"""
         QGroupBox {{
@@ -612,6 +622,7 @@ def apply_theme(app: QApplication, name: str) -> None:
 # Shared helpers
 # ---------------------------------------------------------------------------
 
+
 def log_append(widget: QTextEdit, text: str, color: str | None = None) -> None:
     """Append text to a read-only QTextEdit, optionally in colour.
 
@@ -636,8 +647,7 @@ def log_append(widget: QTextEdit, text: str, color: str | None = None) -> None:
         if token in ("\n", "\r\n"):
             cursor.insertText("\n", fmt)
         elif token == "\r":
-            cursor.movePosition(QTextCursor.MoveOperation.StartOfLine,
-                                QTextCursor.MoveMode.KeepAnchor)
+            cursor.movePosition(QTextCursor.MoveOperation.StartOfLine, QTextCursor.MoveMode.KeepAnchor)
             cursor.removeSelectedText()
         elif token:
             cursor.insertText(token, fmt)
@@ -665,8 +675,7 @@ def _dir_picker(edit: QLineEdit, parent: QWidget) -> QPushButton:
     btn.setProperty("role", "browse")
     btn.clicked.connect(
         lambda: edit.setText(
-            QFileDialog.getExistingDirectory(parent, "Select directory", str(REPO_ROOT))
-            or edit.text()
+            QFileDialog.getExistingDirectory(parent, "Select directory", str(REPO_ROOT)) or edit.text()
         )
     )
     return btn
@@ -730,6 +739,7 @@ def stream_subprocess(
         env=env if env is not None else _child_env(),
         start_new_session=True,
     ) as proc:
+
         def _fire() -> None:
             timed_out.set()
             _kill_process_group(proc)
@@ -753,17 +763,13 @@ def stream_subprocess(
             proc.wait()
         finally:
             watchdog.cancel()
-            if proc.poll() is None:          # loop exited early (e.g. an error)
+            if proc.poll() is None:  # loop exited early (e.g. an error)
                 _kill_process_group(proc)
 
     if timed_out.is_set():
-        raise TimeoutError(
-            f"Command timed out after {timeout}s: {' '.join(str(c) for c in cmd)}"
-        )
+        raise TimeoutError(f"Command timed out after {timeout}s: {' '.join(str(c) for c in cmd)}")
     if proc.returncode not in (0, None):
-        raise RuntimeError(
-            f"Command exited {proc.returncode}: {' '.join(str(c) for c in cmd)}"
-        )
+        raise RuntimeError(f"Command exited {proc.returncode}: {' '.join(str(c) for c in cmd)}")
 
 
 def _kill_process_group(proc: subprocess.Popen) -> None:
@@ -823,11 +829,14 @@ class WorkerHost:
 # Install worker (background thread)
 # ---------------------------------------------------------------------------
 
+
 class InstallWorker(QThread):
     """Executes all install steps sequentially in a background thread."""
 
+    # fmt: off
     log    = pyqtSignal(str, str)   # (text, colour)
     done   = pyqtSignal(bool)       # success
+    # fmt: on
 
     # Pipeline dependencies installed from the ESO/ivh mirrors, as pip
     # requirement strings (cf. UninstallWorker.PIPELINE_PACKAGES, which lists
@@ -850,16 +859,21 @@ class InstallWorker(QThread):
         # newest release: a bare ``pip install pycpl`` leaves an already-installed
         # older pycpl in place ("Requirement already satisfied").
         return [
-            sys.executable, "-m", "pip", "install", "--upgrade",
-            "--extra-index-url", PYCPL_INDEX,
-            "--extra-index-url", ESO_INDEX,
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            "--extra-index-url",
+            PYCPL_INDEX,
+            "--extra-index-url",
+            ESO_INDEX,
             *cls.PIP_REQUIREMENTS,
         ]
 
     # ── public ──────────────────────────────────────────────────────────────
 
-    def __init__(self, refs: dict[Path, str] | None = None,
-                 force: set[Path] | None = None) -> None:
+    def __init__(self, refs: dict[Path, str] | None = None, force: set[Path] | None = None) -> None:
         """*refs* maps a clone target to a branch/tag/commit ("" = default).
 
         *force* is the set of targets whose local modifications the user has
@@ -873,14 +887,10 @@ class InstallWorker(QThread):
     def run(self) -> None:
         try:
             self._step(f"Cloning / updating METIS_Pipeline  →  {TARGET_A}")
-            self._clone_or_update(REPO_A_URL, TARGET_A,
-                                  self._refs.get(TARGET_A, ""),
-                                  TARGET_A in self._force)
+            self._clone_or_update(REPO_A_URL, TARGET_A, self._refs.get(TARGET_A, ""), TARGET_A in self._force)
 
             self._step(f"Cloning / updating METIS_Simulations  →  {TARGET_B}")
-            self._clone_or_update(REPO_B_URL, TARGET_B,
-                                  self._refs.get(TARGET_B, ""),
-                                  TARGET_B in self._force)
+            self._clone_or_update(REPO_B_URL, TARGET_B, self._refs.get(TARGET_B, ""), TARGET_B in self._force)
 
             self._check_layout()
 
@@ -909,8 +919,15 @@ class InstallWorker(QThread):
             # TODO: remove/revisit if metiswise drops the pymetis dependency
             # or pymetis stops pinning pycpl.
             self._run(
-                [sys.executable, "-m", "pip", "install", "--editable",
-                 str(TARGET_A / "metisp" / "pymetis"), "--no-deps"],
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "--editable",
+                    str(TARGET_A / "metisp" / "pymetis"),
+                    "--no-deps",
+                ],
                 cwd=REPO_ROOT,
             )
 
@@ -950,15 +967,18 @@ class InstallWorker(QThread):
             self._step("Bootstrapping pip (pipx app venvs ship without it)…")
             self._run(boot)
 
-    def _run(self, cmd: list, cwd: Path | None = None,
-             stdin_text: str | None = None, timeout: int = 300) -> None:
+    def _run(
+        self, cmd: list, cwd: Path | None = None, stdin_text: str | None = None, timeout: int = 300
+    ) -> None:
         stream_subprocess(
-            cmd, on_line=self.log.emit, cwd=cwd,
-            stdin_text=stdin_text, timeout=timeout,
+            cmd,
+            on_line=self.log.emit,
+            cwd=cwd,
+            stdin_text=stdin_text,
+            timeout=timeout,
         )
 
-    def _clone_or_update(self, url: str, target: Path,
-                         ref: str = "", force: bool = False) -> None:
+    def _clone_or_update(self, url: str, target: Path, ref: str = "", force: bool = False) -> None:
         """Put *target* on *ref* ("" = the remote's default branch).
 
         *force* permits discarding uncommitted local changes; the GUI collects
@@ -997,8 +1017,7 @@ class InstallWorker(QThread):
 
     # ── git plumbing ─────────────────────────────────────────────────────────
 
-    def _checkout_ref(self, url: str, target: Path, ref: str,
-                      force: bool) -> None:
+    def _checkout_ref(self, url: str, target: Path, ref: str, force: bool) -> None:
         """Move *target* onto *ref*, cloning from scratch if need be."""
         if not (target / ".git").exists():
             # `init` + `remote add` + `fetch <ref>` reaches an arbitrary commit,
@@ -1011,8 +1030,7 @@ class InstallWorker(QThread):
 
         # An abbreviated SHA cannot be fetched by name, so don't pay for a
         # round trip that is guaranteed to fail.
-        ok = (not _looks_like_abbrev_sha(ref)
-              and self._try_fetch(target, ref, depth=1))
+        ok = not _looks_like_abbrev_sha(ref) and self._try_fetch(target, ref, depth=1)
 
         if ok:
             # FETCH_HEAD is only meaningful after a *successful* fetch (a failed
@@ -1024,13 +1042,10 @@ class InstallWorker(QThread):
             if self._has_remote_branch(target, ref):
                 # A branch fetch also creates refs/remotes/origin/<ref>, so this
                 # tells branch from tag/commit with no extra network call.
-                self._run(["git", "-C", str(target), "checkout", "-f", "-B",
-                           ref, "FETCH_HEAD"])
-                _git(["-C", str(target), "branch", "--set-upstream-to",
-                      f"origin/{ref}", ref])
+                self._run(["git", "-C", str(target), "checkout", "-f", "-B", ref, "FETCH_HEAD"])
+                _git(["-C", str(target), "branch", "--set-upstream-to", f"origin/{ref}", ref])
             else:
-                self._run(["git", "-C", str(target), "checkout", "-f",
-                           "--detach", "FETCH_HEAD"])
+                self._run(["git", "-C", str(target), "checkout", "-f", "--detach", "FETCH_HEAD"])
             return
 
         # Fallback: an abbreviated SHA, or a commit that is not at any ref tip.
@@ -1049,12 +1064,10 @@ class InstallWorker(QThread):
             "yellow",
         )
         self._deepen(target)
-        self._run(["git", "-C", str(target), "fetch", "--tags", "--force",
-                   "origin"], timeout=900)
+        self._run(["git", "-C", str(target), "fetch", "--tags", "--force", "origin"], timeout=900)
         self._checkout_local(target, url, ref, force)
 
-    def _update_default_branch(self, url: str, target: Path,
-                               force: bool) -> None:
+    def _update_default_branch(self, url: str, target: Path, force: bool) -> None:
         """Blank ref: fast-forward the checked-out branch, as MTR always has."""
         self._run(["git", "-C", str(target), "fetch", "--all", "--prune"])
 
@@ -1064,8 +1077,7 @@ class InstallWorker(QThread):
             # no upstream to fast-forward, and blank means "back to normal".
             default = self._remote_default_branch(url) or "HEAD"
             self.log.emit(
-                f"Clone is on a detached HEAD; returning to the remote's "
-                f"default branch ({default}).\n",
+                f"Clone is on a detached HEAD; returning to the remote's default branch ({default}).\n",
                 "yellow",
             )
             self._checkout_ref(url, target, default, force)
@@ -1114,14 +1126,16 @@ class InstallWorker(QThread):
         """Un-shallow *target*, but only if it actually is shallow."""
         # `fetch --unshallow` errors out on an already-complete repo, and a
         # freshly `git init`ed one is not shallow either.
-        if _git(["-C", str(target), "rev-parse",
-                 "--is-shallow-repository"]).stdout.strip() == "true":
-            self._run(["git", "-C", str(target), "fetch", "--unshallow",
-                       "origin"], timeout=900)
+        if _git(["-C", str(target), "rev-parse", "--is-shallow-repository"]).stdout.strip() == "true":
+            self._run(["git", "-C", str(target), "fetch", "--unshallow", "origin"], timeout=900)
 
     def _has_remote_branch(self, target: Path, ref: str) -> bool:
-        return _git(["-C", str(target), "rev-parse", "--verify", "--quiet",
-                     f"refs/remotes/origin/{ref}"]).returncode == 0
+        return (
+            _git(
+                ["-C", str(target), "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{ref}"]
+            ).returncode
+            == 0
+        )
 
     def _already_at(self, target: Path, ref: str, want: str) -> bool:
         """True when the checkout already matches, so nothing need be touched."""
@@ -1133,16 +1147,15 @@ class InstallWorker(QThread):
         branch = self._current_branch(target)
         if self._has_remote_branch(target, ref) and branch != ref:
             return False
-        self.log.emit(
-            f"Already at {want[:8]}; working tree left untouched.\n", "")
+        self.log.emit(f"Already at {want[:8]}; working tree left untouched.\n", "")
         return True
 
-    def _checkout_local(self, target: Path, url: str, ref: str,
-                        force: bool) -> None:
+    def _checkout_local(self, target: Path, url: str, ref: str, force: bool) -> None:
         """Check out a ref that is already present in the local object store."""
         # ^{commit} peels annotated tags and rejects a ref naming a tree/blob.
-        cp = _git(["-C", str(target), "rev-parse", "--verify", "--quiet",
-                   "--end-of-options", f"{ref}^{{commit}}"])
+        cp = _git(
+            ["-C", str(target), "rev-parse", "--verify", "--quiet", "--end-of-options", f"{ref}^{{commit}}"]
+        )
         if cp.returncode != 0:
             raise RuntimeError(
                 f"'{ref}' is not a branch, tag or commit in {url}. Check the "
@@ -1153,11 +1166,9 @@ class InstallWorker(QThread):
             return
         self._make_room(target, force)
         if self._has_remote_branch(target, ref):
-            self._run(["git", "-C", str(target), "checkout", "-f", "-B", ref,
-                       f"origin/{ref}"])
+            self._run(["git", "-C", str(target), "checkout", "-f", "-B", ref, f"origin/{ref}"])
         else:
-            self._run(["git", "-C", str(target), "checkout", "-f", "--detach",
-                       want])
+            self._run(["git", "-C", str(target), "checkout", "-f", "--detach", want])
 
     def _check_origin(self, target: Path, url: str) -> None:
         """Warn — never fail — when the clone points somewhere unexpected.
@@ -1180,16 +1191,14 @@ class InstallWorker(QThread):
 
     def _current_branch(self, target: Path) -> str | None:
         """Checked-out branch name, or None when HEAD is detached."""
-        cp = _git(["-C", str(target), "symbolic-ref", "--quiet", "--short",
-                   "HEAD"])
+        cp = _git(["-C", str(target), "symbolic-ref", "--quiet", "--short", "HEAD"])
         return cp.stdout.strip() if cp.returncode == 0 else None
 
     def _remote_default_branch(self, url: str) -> str | None:
-        cp = _git(["ls-remote", "--symref", "--end-of-options", url, "HEAD"],
-                  timeout=20)
+        cp = _git(["ls-remote", "--symref", "--end-of-options", url, "HEAD"], timeout=20)
         for line in cp.stdout.splitlines():
             if line.startswith("ref: refs/heads/"):
-                return line[len("ref: refs/heads/"):].split("\t")[0].strip()
+                return line[len("ref: refs/heads/") :].split("\t")[0].strip()
         return None
 
     def _log_head(self, target: Path) -> None:
@@ -1209,9 +1218,11 @@ class InstallWorker(QThread):
         worse — silently yields a pipeline with zero recipes because
         PYCPL_RECIPE_DIR points at a directory that does not exist.
         """
-        for needed in (TARGET_A / "metisp" / "pymetis" / "pyproject.toml",
-                       TARGET_A / "metisp" / "pyrecipes",
-                       TARGET_B / "pyproject.toml"):
+        for needed in (
+            TARGET_A / "metisp" / "pymetis" / "pyproject.toml",
+            TARGET_A / "metisp" / "pyrecipes",
+            TARGET_B / "pyproject.toml",
+        ):
             if not needed.exists():
                 raise RuntimeError(
                     f"{needed} does not exist at the selected ref. That ref "
@@ -1234,8 +1245,7 @@ class InstallWorker(QThread):
         if backup.exists():
             props.unlink()
             self.log.emit(
-                f"{backup} already exists — keeping the original backup "
-                "and discarding the current config\n",
+                f"{backup} already exists — keeping the original backup and discarding the current config\n",
                 "yellow",
             )
         else:
@@ -1261,20 +1271,18 @@ class InstallWorker(QThread):
             # an unguarded stop here would raise a *second* one that replaces
             # it — the user would see the stop command's error, not the cause.
             try:
-                subprocess.run(base + ["-s"], cwd=str(REPO_ROOT),
-                               capture_output=True, timeout=15,
-                               env=_child_env())
+                subprocess.run(
+                    base + ["-s"], cwd=str(REPO_ROOT), capture_output=True, timeout=15, env=_child_env()
+                )
             except Exception as exc:
-                self.log.emit(f"(could not stop the EDPS server: {exc})\n",
-                              "yellow")
+                self.log.emit(f"(could not stop the EDPS server: {exc})\n", "yellow")
 
     def _patch_edps_config(self) -> None:
         props = Path.home() / ".edps" / "application.properties"
         if not props.exists():
-            raise RuntimeError(
-                f"{props} not found — did EDPS initialise correctly?"
-            )
+            raise RuntimeError(f"{props} not found — did EDPS initialise correctly?")
         text = props.read_text()
+        # fmt: off
         patches = {
             "port":         (r"^port=.*",         "port=4444"),
             "workflow_dir": (r"^workflow_dir=.*", f"workflow_dir={TARGET_A}/metisp/workflows"),
@@ -1300,13 +1308,17 @@ class InstallWorker(QThread):
             # EDPS short-circuit the run with a FileNotFoundError.
             "truncate": (r"^truncate=.*", "truncate=True"),
         }
+        # fmt: on
         for key, (pattern, replacement) in patches.items():
             # A *function* replacement, because re.subn interprets backslashes
             # and \g<...> in a string replacement: a data dir containing a
             # backslash would corrupt the config or raise re.error. The paths
             # here come from METIS_DATA_DIR, which is arbitrary user input.
             text, count = re.subn(
-                pattern, lambda _m, r=replacement: r, text, flags=re.MULTILINE,
+                pattern,
+                lambda _m, r=replacement: r,
+                text,
+                flags=re.MULTILINE,
             )
             if count == 0:
                 raise RuntimeError(
@@ -1320,6 +1332,7 @@ class InstallWorker(QThread):
 # ---------------------------------------------------------------------------
 # Uninstall worker (background thread)
 # ---------------------------------------------------------------------------
+
 
 class UninstallWorker(QThread):
     """Reverses every change made by InstallWorker (and the Archive-tab
@@ -1335,17 +1348,25 @@ class UninstallWorker(QThread):
     step failed.
     """
 
+    # fmt: off
     log  = pyqtSignal(str, str)   # (text, colour)
     done = pyqtSignal(bool)       # success (False if any step failed)
+    # fmt: on
 
     # Top-level packages the Install tab installs: the pipeline deps plus the
     # two editable installs, by their distribution names (the pymetis clone
     # registers as ``pymetis``, or ``eso-pymetis`` for refs before 2026-07-13;
     # METIS_Simulations as ``metis_simulations``).
     PIPELINE_PACKAGES = [
-        "pycpl", "edps", "pyesorex", "adari_core",
-        "scopesim", "scopesim_templates",
-        "pymetis", "eso-pymetis", "metis_simulations",
+        "pycpl",
+        "edps",
+        "pyesorex",
+        "adari_core",
+        "scopesim",
+        "scopesim_templates",
+        "pymetis",
+        "eso-pymetis",
+        "metis_simulations",
     ]
 
     def run(self) -> None:
@@ -1361,7 +1382,8 @@ class UninstallWorker(QThread):
         self._step("Uninstalling Python packages via pip…")
         self.log.emit(
             "Only the explicitly-installed packages are removed; their "
-            "transitive sub-dependencies are left in place.\n", "yellow",
+            "transitive sub-dependencies are left in place.\n",
+            "yellow",
         )
         packages = [*self.PIPELINE_PACKAGES, "metiswise", *_METISWISE_RUNTIME_DEPS]
         try:
@@ -1396,7 +1418,7 @@ class UninstallWorker(QThread):
         for label, deleter in (
             ("OmegaCEN pip", credstore.delete_pip_credentials),
             ("archive DB",   credstore.delete_db_credentials),
-        ):
+        ):  # fmt: skip
             try:
                 deleter()
                 self.log.emit(f"Removed {label} credentials from the keyring.\n", "")
@@ -1404,14 +1426,16 @@ class UninstallWorker(QThread):
                 # A missing keyring backend is not fatal — there is simply
                 # nothing persisted to clear.
                 self.log.emit(
-                    f"Could not clear {label} credentials: {exc}\n", "yellow",
+                    f"Could not clear {label} credentials: {exc}\n",
+                    "yellow",
                 )
 
         if ok:
             self.log.emit("\n✓ Uninstall complete.\n", "green")
         else:
             self.log.emit(
-                "\n⚠ Uninstall finished with errors (see above).\n", "yellow",
+                "\n⚠ Uninstall finished with errors (see above).\n",
+                "yellow",
             )
         self.done.emit(ok)
 
@@ -1450,13 +1474,12 @@ class UninstallWorker(QThread):
             failures: list[str] = []
             shutil.rmtree(
                 target,
-                onexc=lambda _f, path, exc, _acc=failures: _acc.append(
-                    f"{path}: {exc}"),
+                onexc=lambda _f, path, exc, _acc=failures: _acc.append(f"{path}: {exc}"),
             )
             if failures:
                 self.log.emit(
-                    f"✗ Could not fully remove {target} "
-                    f"({len(failures)} item(s) left):\n", "red",
+                    f"✗ Could not fully remove {target} ({len(failures)} item(s) left):\n",
+                    "red",
                 )
                 for line in failures[:10]:
                     self.log.emit(f"    {line}\n", "red")
@@ -1510,6 +1533,7 @@ def _resolve_run_metis_command() -> list[str]:
 # Ref combo box
 # ---------------------------------------------------------------------------
 
+
 class RefComboBox(QComboBox):
     """Editable combo that also opens its list when the text field is clicked.
 
@@ -1538,8 +1562,7 @@ class RefComboBox(QComboBox):
         return bool(text) and self.findText(text) < 0
 
     def eventFilter(self, obj, event) -> bool:
-        if (obj is self.lineEdit() and self.count()
-                and not self._holds_custom_text()):
+        if obj is self.lineEdit() and self.count() and not self._holds_custom_text():
             # Open on RELEASE, not press. Showing the popup from the press
             # handler leaves the matching release to land on the freshly-shown
             # list, which reads it as "released over an item" and closes again
@@ -1558,6 +1581,7 @@ class RefComboBox(QComboBox):
 # Ref discovery (background thread)
 # ---------------------------------------------------------------------------
 
+
 class RefWorker(QThread):
     """Resolve one repo's local HEAD and its remote branch/tag list.
 
@@ -1566,9 +1590,11 @@ class RefWorker(QThread):
     plain text field when offline.
     """
 
+    # fmt: off
     status = pyqtSignal(str, str)    # (key, "main @ d2d257c5")  — local, instant
     refs   = pyqtSignal(str, list)   # (key, ["main", "v0.4.2", …])
     failed = pyqtSignal(str, str)    # (key, reason) — status line only, never modal
+    # fmt: on
 
     def __init__(self, key: str, url: str, target: Path) -> None:
         super().__init__()
@@ -1576,11 +1602,9 @@ class RefWorker(QThread):
 
     def run(self) -> None:
         self.status.emit(self._key, _describe_head(self._target))
-        cp = _git(["ls-remote", "--heads", "--tags", "--end-of-options",
-                   self._url], timeout=20)
+        cp = _git(["ls-remote", "--heads", "--tags", "--end-of-options", self._url], timeout=20)
         if cp.returncode != 0:
-            reason = (cp.stderr.strip().splitlines()
-                      or ["git ls-remote failed"])[-1]
+            reason = (cp.stderr.strip().splitlines() or ["git ls-remote failed"])[-1]
             self.failed.emit(self._key, reason)
             return
         self.refs.emit(self._key, _parse_ls_remote(cp.stdout))
@@ -1590,8 +1614,8 @@ class RefWorker(QThread):
 # Install tab
 # ---------------------------------------------------------------------------
 
-class InstallTab(WorkerHost, QWidget):
 
+class InstallTab(WorkerHost, QWidget):
     # (settings key, label, repo URL, clone target)
     REPOS = (
         ("pipeline_ref", "METIS_Pipeline", REPO_A_URL, TARGET_A),
@@ -1783,13 +1807,11 @@ class InstallTab(WorkerHost, QWidget):
 
     def _load_settings(self) -> None:
         for key, _label, _url, _target in self.REPOS:
-            self.ref_combos[key].setCurrentText(
-                self._settings.value(f"install/{key}", "", type=str))
+            self.ref_combos[key].setCurrentText(self._settings.value(f"install/{key}", "", type=str))
 
     def _save_settings(self) -> None:
         for key, _label, _url, _target in self.REPOS:
-            self._settings.setValue(f"install/{key}",
-                                    self.ref_combos[key].currentText().strip())
+            self._settings.setValue(f"install/{key}", self.ref_combos[key].currentText().strip())
 
     def stop_ref_workers(self) -> None:
         """Let a pending ls-remote finish before the window goes away."""
@@ -1801,8 +1823,10 @@ class InstallTab(WorkerHost, QWidget):
 
     def _start(self) -> None:
         try:
-            refs = {target: _validate_ref(self.ref_combos[key].currentText())
-                    for key, _label, _url, target in self.REPOS}
+            refs = {
+                target: _validate_ref(self.ref_combos[key].currentText())
+                for key, _label, _url, target in self.REPOS
+            }
         except ValueError as exc:
             QMessageBox.warning(self, "Invalid ref", str(exc))
             return
@@ -1834,23 +1858,31 @@ class InstallTab(WorkerHost, QWidget):
                 entries = _dirty_files(target)
             except RuntimeError as exc:
                 # Assuming "clean" here risks silent data loss, so ask.
-                if QMessageBox.question(
-                    self, "Could not check for local changes",
-                    f"Could not determine whether {label} ({target}) has local "
-                    f"changes:\n\n{exc}\n\nContinue anyway?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.No,
-                ) != QMessageBox.StandardButton.Yes:
+                if (
+                    QMessageBox.question(
+                        self,
+                        "Could not check for local changes",
+                        f"Could not determine whether {label} ({target}) has local "
+                        f"changes:\n\n{exc}\n\nContinue anyway?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No,
+                    )
+                    != QMessageBox.StandardButton.Yes
+                ):
                     return None
                 continue
             if not entries:
                 continue
-            if QMessageBox.question(
-                self, "Discard local changes?",
-                self._discard_text(label, target, entries),
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            ) != QMessageBox.StandardButton.Yes:
+            if (
+                QMessageBox.question(
+                    self,
+                    "Discard local changes?",
+                    self._discard_text(label, target, entries),
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                != QMessageBox.StandardButton.Yes
+            ):
                 return None
             force.add(target)
         return force
@@ -1860,8 +1892,7 @@ class InstallTab(WorkerHost, QWidget):
         modified = [e for e in entries if not e.startswith("?")]
         untracked = [e for e in entries if e.startswith("?")]
         parts = [f"{label} ({target}) has uncommitted changes.\n"]
-        for title, group in (("Will be reverted:", modified),
-                             ("Will be deleted:", untracked)):
+        for title, group in (("Will be reverted:", modified), ("Will be deleted:", untracked)):
             if not group:
                 continue
             parts.append(title)
@@ -1879,7 +1910,8 @@ class InstallTab(WorkerHost, QWidget):
 
     def _uninstall(self) -> None:
         reply = QMessageBox.question(
-            self, "Confirm uninstall",
+            self,
+            "Confirm uninstall",
             "This will permanently:\n"
             "• pip-uninstall all pipeline and MetisWISE packages\n"
             f"• delete the entire data directory ({REPO_ROOT})\n"
@@ -1917,11 +1949,14 @@ class InstallTab(WorkerHost, QWidget):
 # Archive workers (background threads)
 # ---------------------------------------------------------------------------
 
+
 class MetisWISEInstallWorker(QThread):
     """Install MetisWISE into MTR's venv via `sys.executable -m pip install`."""
 
+    # fmt: off
     log  = pyqtSignal(str, str)
     done = pyqtSignal(bool)
+    # fmt: on
     # Emitted when neither the field nor the keyring provides credentials;
     # the slot runs on the main thread (queued connection) and shows a dialog.
     needs_input = pyqtSignal(str)
@@ -1966,8 +2001,11 @@ class MetisWISEInstallWorker(QThread):
             for cmd in cmds:
                 self.log.emit(f"$ {' '.join(cmd)}\n", "cyan")
                 proc = subprocess.Popen(
-                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    text=True, env=os.environ | env_overrides,
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    env=os.environ | env_overrides,
                 )
                 for line in iter(proc.stdout.readline, ""):
                     self.log.emit(line, "")
@@ -1989,8 +2027,8 @@ class MetisWISEInstallWorker(QThread):
                     )
                 except credstore.CredentialsUnavailable:
                     self.log.emit(
-                        "Keyring unavailable — credentials kept for this "
-                        "session only.\n", "yellow",
+                        "Keyring unavailable — credentials kept for this session only.\n",
+                        "yellow",
                     )
             self.log.emit("\n✓ MetisWISE installed successfully.\n", "green")
             self.done.emit(True)
@@ -2007,8 +2045,10 @@ class TestConnectionWorker(QThread):
     Nothing is persisted unless the connection probe succeeds.
     """
 
+    # fmt: off
     log  = pyqtSignal(str, str)
     done = pyqtSignal(bool)
+    # fmt: on
     # Emitted when fields are missing from both the form and the keyring;
     # the slot runs on the main thread (queued connection) and shows a dialog.
     needs_input = pyqtSignal(str)
@@ -2038,13 +2078,13 @@ class TestConnectionWorker(QThread):
                 fields[k] = stored[k]
             if filled:
                 self.log.emit(
-                    f"Loaded {len(filled)} field(s) from keyring.\n", "",
+                    f"Loaded {len(filled)} field(s) from keyring.\n",
+                    "",
                 )
         missing = [k for k, v in fields.items() if not v]
         if missing:
             self.needs_input.emit(
-                "These fields are neither filled in nor stored in the OS "
-                "keyring:\n  " + "\n  ".join(missing),
+                "These fields are neither filled in nor stored in the OS keyring:\n  " + "\n  ".join(missing),
             )
             self.done.emit(False)
             return
@@ -2067,18 +2107,19 @@ class TestConnectionWorker(QThread):
             self.log.emit("Saved credentials to the OS keyring.\n", "green")
             if scrub_env_cfg():
                 self.log.emit(
-                    "Migrated: removed credentials from "
-                    "~/.awe/Environment.cfg\n", "",
+                    "Migrated: removed credentials from ~/.awe/Environment.cfg\n",
+                    "",
                 )
         except credstore.CredentialsUnavailable:
             # Keep the legacy file intact — without a keyring backend it is
             # the only persistent store the user has.
             self.log.emit(
-                "Keyring unavailable — credentials active for this session "
-                "only (not saved).\n", "yellow",
+                "Keyring unavailable — credentials active for this session only (not saved).\n",
+                "yellow",
             )
         self.log.emit(
-            f"\n✓ Connected — {len(items)} item(s) visible.\n", "green",
+            f"\n✓ Connected — {len(items)} item(s) visible.\n",
+            "green",
         )
         self.done.emit(True)
 
@@ -2086,9 +2127,11 @@ class TestConnectionWorker(QThread):
 class QueryWorker(QThread):
     """Query the archive for available files."""
 
+    # fmt: off
     log     = pyqtSignal(str, str)
     results = pyqtSignal(list)
     done    = pyqtSignal(bool)
+    # fmt: on
 
     def __init__(self, category: str | None = None) -> None:
         super().__init__()
@@ -2096,6 +2139,7 @@ class QueryWorker(QThread):
 
     def run(self) -> None:
         from .archive import query_archive
+
         try:
             items = query_archive(
                 category=self._category,
@@ -2112,9 +2156,11 @@ class QueryWorker(QThread):
 class DownloadWorker(QThread):
     """Download files from the archive."""
 
+    # fmt: off
     log      = pyqtSignal(str, str)
     progress = pyqtSignal(int, int)
     done     = pyqtSignal(bool)
+    # fmt: on
 
     def __init__(self, filenames: list[str], dest_dir: Path) -> None:
         super().__init__()
@@ -2123,19 +2169,22 @@ class DownloadWorker(QThread):
 
     def run(self) -> None:
         from .archive import download_file
+
         try:
             total = len(self._filenames)
             downloaded = 0
             for i, fn in enumerate(self._filenames, 1):
                 self.progress.emit(i, total)
                 path = download_file(
-                    fn, self._dest_dir,
+                    fn,
+                    self._dest_dir,
                     on_log=lambda msg: self.log.emit(msg + "\n", ""),
                 )
                 if path:
                     downloaded += 1
             self.log.emit(
-                f"\n✓ Downloaded {downloaded}/{total} file(s).\n", "green",
+                f"\n✓ Downloaded {downloaded}/{total} file(s).\n",
+                "green",
             )
             self.done.emit(True)
         except Exception as exc:
@@ -2146,9 +2195,11 @@ class DownloadWorker(QThread):
 class UploadWorker(QThread):
     """Upload local FITS files into the remote archive."""
 
+    # fmt: off
     log      = pyqtSignal(str, str)
     progress = pyqtSignal(int, int)
     done     = pyqtSignal(bool)
+    # fmt: on
 
     def __init__(self, entries: list[tuple[Path, str | None]]) -> None:
         super().__init__()
@@ -2156,19 +2207,22 @@ class UploadWorker(QThread):
 
     def run(self) -> None:
         from .archive import upload_file
+
         try:
             total = len(self._entries)
             uploaded = 0
             for i, (path, class_name) in enumerate(self._entries, 1):
                 self.progress.emit(i, total)
                 ok = upload_file(
-                    path, class_name,
+                    path,
+                    class_name,
                     on_log=lambda msg: self.log.emit(msg + "\n", ""),
                 )
                 if ok:
                     uploaded += 1
             self.log.emit(
-                f"\n✓ Uploaded {uploaded}/{total} file(s).\n", "green",
+                f"\n✓ Uploaded {uploaded}/{total} file(s).\n",
+                "green",
             )
             self.done.emit(True)
         except Exception as exc:
@@ -2179,6 +2233,7 @@ class UploadWorker(QThread):
 # ---------------------------------------------------------------------------
 # Archive tab
 # ---------------------------------------------------------------------------
+
 
 class ArchiveTab(WorkerHost, QWidget):
     """Archive tab: install MetisWISE + configure remote archive, then
@@ -2305,14 +2360,14 @@ class ArchiveTab(WorkerHost, QWidget):
         cfg_grp = QGroupBox("2. Remote archive credentials")
         cfg_lay = QVBoxLayout(cfg_grp)
         cfg_desc = QLabel(
-            "Stored in your OS keyring after a successful test; leave a "
-            "field blank to use its stored value."
+            "Stored in your OS keyring after a successful test; leave a field blank to use its stored value."
         )
         cfg_desc.setWordWrap(True)
         cfg_desc.setTextFormat(Qt.TextFormat.RichText)
         cfg_lay.addWidget(cfg_desc)
 
         self._cfg_edits: dict[str, QLineEdit] = {}
+        # fmt: off
         labels = {
             "database_user":            "database_user:",
             "database_password":        "database_password:",
@@ -2320,6 +2375,7 @@ class ArchiveTab(WorkerHost, QWidget):
             "database_tablespacename":  "database_tablespacename:",
             "database_name":            "database_name:",
         }
+        # fmt: on
         for key in self._CFG_FIELD_ORDER:
             row = QHBoxLayout()
             label = QLabel(labels[key])
@@ -2386,11 +2442,13 @@ class ArchiveTab(WorkerHost, QWidget):
         from itertools import chain as _chain
 
         from .archive import TASK_PRODUCTS
+
         all_produces = set(_chain.from_iterable(p.produces for p in TASK_PRODUCTS.values()))
         for catg in sorted(all_produces):
             self._catg_combo.addItem(catg)
         self._catg_combo.insertSeparator(self._catg_combo.count())
         from .run_metis import DPR_TO_TAG
+
         for tag in sorted(set(DPR_TO_TAG.values())):
             self._catg_combo.addItem(tag)
         filter_row.addWidget(self._catg_combo)
@@ -2523,6 +2581,7 @@ class ArchiveTab(WorkerHost, QWidget):
     def _refresh_install_status(self) -> None:
         """Update the MetisWISE status label + Continue button gate."""
         from .archive import metiswise_available
+
         if metiswise_available():
             self._mw_status.setText("Installed")
             self._mw_status.setStyleSheet("color: green; font-weight: bold;")
@@ -2535,6 +2594,7 @@ class ArchiveTab(WorkerHost, QWidget):
 
     def _update_continue_button(self) -> None:
         from .archive import metiswise_available
+
         self._continue_btn.setEnabled(
             metiswise_available() and self._connection_ok,
         )
@@ -2571,9 +2631,9 @@ class ArchiveTab(WorkerHost, QWidget):
         if not self.busy():
             return False
         QMessageBox.information(
-            self, "Archive busy",
-            "Another archive operation is still running. "
-            "Please wait for it to finish.",
+            self,
+            "Archive busy",
+            "Another archive operation is still running. Please wait for it to finish.",
         )
         return True
 
@@ -2585,11 +2645,13 @@ class ArchiveTab(WorkerHost, QWidget):
         creds = self._cred_edit.text()
         if creds:
             from .archive import encode_pip_credentials
+
             try:
                 encode_pip_credentials(creds)
             except ValueError as exc:
                 QMessageBox.warning(
-                    self, "Malformed credentials",
+                    self,
+                    "Malformed credentials",
                     f"{exc}\n\nLeave the field blank to use the keyring entry.",
                 )
                 return
@@ -2615,9 +2677,11 @@ class ArchiveTab(WorkerHost, QWidget):
         if self._reject_if_busy():
             return
         from .archive import metiswise_available
+
         if not metiswise_available():
             QMessageBox.warning(
-                self, "MetisWISE not installed",
+                self,
+                "MetisWISE not installed",
                 "Install MetisWISE first — the test connection needs it.",
             )
             return
@@ -2693,7 +2757,9 @@ class ArchiveTab(WorkerHost, QWidget):
             QMessageBox.warning(self, "No selection", "Select files to download.")
             return
         dest = QFileDialog.getExistingDirectory(
-            self, "Download destination", str(REPO_ROOT),
+            self,
+            "Download destination",
+            str(REPO_ROOT),
         )
         if not dest:
             return
@@ -2712,16 +2778,14 @@ class ArchiveTab(WorkerHost, QWidget):
     _UNKNOWN_CLASS_PLACEHOLDER = "⚠ pick class"
 
     def _staged_paths(self) -> set[str]:
-        return {
-            self._stage_table.item(r, 2).text()
-            for r in range(self._stage_table.rowCount())
-        }
+        return {self._stage_table.item(r, 2).text() for r in range(self._stage_table.rowCount())}
 
     def _add_staged_file(self, path: Path) -> None:
         """Append a single row to the staging table with auto-classification."""
         if str(path) in self._staged_paths():
             return
         from .run_metis import classify_fits_file
+
         tag = classify_fits_file(path)
         row = self._stage_table.rowCount()
         self._stage_table.insertRow(row)
@@ -2743,7 +2807,8 @@ class ArchiveTab(WorkerHost, QWidget):
 
     def _on_add_upload_files(self) -> None:
         files, _ = QFileDialog.getOpenFileNames(
-            self, "Stage FITS files for upload",
+            self,
+            "Stage FITS files for upload",
             str(REPO_ROOT),
             "FITS files (*.fits *.fits.gz)",
         )
@@ -2752,7 +2817,9 @@ class ArchiveTab(WorkerHost, QWidget):
 
     def _on_add_upload_folder(self) -> None:
         folder = QFileDialog.getExistingDirectory(
-            self, "Stage folder of FITS files", str(REPO_ROOT),
+            self,
+            "Stage folder of FITS files",
+            str(REPO_ROOT),
         )
         if not folder:
             return
@@ -2782,6 +2849,7 @@ class ArchiveTab(WorkerHost, QWidget):
 
         from .archive import TASK_PRODUCTS
         from .run_metis import DPR_TO_TAG
+
         produces = _chain.from_iterable(p.produces for p in TASK_PRODUCTS.values())
         candidates = set(DPR_TO_TAG.values()) | set(produces)
         return sorted(candidates)
@@ -2790,7 +2858,8 @@ class ArchiveTab(WorkerHost, QWidget):
         rows = sorted({idx.row() for idx in self._stage_table.selectedIndexes()})
         if not rows:
             QMessageBox.warning(
-                self, "No selection",
+                self,
+                "No selection",
                 "Select one or more rows, then choose a class to apply.",
             )
             return
@@ -2798,17 +2867,16 @@ class ArchiveTab(WorkerHost, QWidget):
         dlg = QDialog(self)
         dlg.setWindowTitle("Set DataItem class")
         v = QVBoxLayout(dlg)
-        v.addWidget(QLabel(
-            f"Apply to {len(rows)} selected row(s):",
-        ))
+        v.addWidget(
+            QLabel(
+                f"Apply to {len(rows)} selected row(s):",
+            )
+        )
         combo = QComboBox()
         combo.setEditable(True)
         combo.addItems(self._candidate_class_names())
         v.addWidget(combo)
-        btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel
-        )
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         btns.accepted.connect(dlg.accept)
         btns.rejected.connect(dlg.reject)
         v.addWidget(btns)
@@ -2829,7 +2897,8 @@ class ArchiveTab(WorkerHost, QWidget):
         total_rows = self._stage_table.rowCount()
         if total_rows == 0:
             QMessageBox.warning(
-                self, "Nothing to upload",
+                self,
+                "Nothing to upload",
                 "Add files or a folder first.",
             )
             return
@@ -2852,10 +2921,10 @@ class ArchiveTab(WorkerHost, QWidget):
 
         if unresolved:
             QMessageBox.warning(
-                self, "Unresolved rows",
+                self,
+                "Unresolved rows",
                 "These files have no DataItem class set. Use "
-                "“Set class for selected…” first:\n  "
-                + "\n  ".join(unresolved),
+                "“Set class for selected…” first:\n  " + "\n  ".join(unresolved),
             )
             return
 
@@ -2880,14 +2949,16 @@ class ArchiveTab(WorkerHost, QWidget):
     def _load_settings(self) -> None:
         # Scrub any archive fields previously persisted to QSettings
         # (~/.config/METIS/TestRunner.conf) by older builds.
-        for stale in ("archive_cred",
-                      "archive_cfg_database_user",
-                      "archive_cfg_database_password",
-                      "archive_cfg_project",
-                      "archive_cfg_database_tablespacename",
-                      "archive_cfg_database_name",
-                      "archive_db_user",
-                      "archive_db_pass"):
+        for stale in (
+            "archive_cred",
+            "archive_cfg_database_user",
+            "archive_cfg_database_password",
+            "archive_cfg_project",
+            "archive_cfg_database_tablespacename",
+            "archive_cfg_database_name",
+            "archive_db_user",
+            "archive_db_pass",
+        ):
             self._settings.remove(stale)
 
         # Pre-populate from a legacy (pre-keyring) ~/.awe/Environment.cfg if
@@ -2897,6 +2968,7 @@ class ArchiveTab(WorkerHost, QWidget):
         # post-migration the file is scrubbed and the fields stay blank
         # (placeholders explain that blank = stored keyring value).
         from .archive import read_env_cfg
+
         existing = read_env_cfg()
         for key, edit in self._cfg_edits.items():
             edit.setText(existing.get(key, ""))
@@ -2912,11 +2984,11 @@ class ArchiveTab(WorkerHost, QWidget):
 # Run tab
 # ---------------------------------------------------------------------------
 
+
 class RunTab(WorkerHost, QWidget):
     #: How long to let run_metis clean up (stop EDPS, restore config) after
     #: SIGTERM before resorting to SIGKILL.
     STOP_GRACE_MS = 10_000
-
 
     def __init__(self) -> None:
         super().__init__()
@@ -2986,9 +3058,7 @@ class RunTab(WorkerHost, QWidget):
         csv_h.setContentsMargins(0, 0, 0, 0)
         csv_main_lbl = QLabel("CSV line range  (--csv-lines):")
         csv_main_lbl.setFixedWidth(LABEL_W)
-        csv_main_lbl.setAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-        )
+        csv_main_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         csv_h.addWidget(csv_main_lbl)
         csv_h.addWidget(QLabel("Start:"))
         csv_h.addWidget(self.csv_start_spin)
@@ -3013,9 +3083,7 @@ class RunTab(WorkerHost, QWidget):
         # Output directory
         self.output_edit = QLineEdit()
         out_browse = _dir_picker(self.output_edit, self)
-        opts_lay.addWidget(
-            _labeled("Output directory:", self.output_edit, out_browse)
-        )
+        opts_lay.addWidget(_labeled("Output directory:", self.output_edit, out_browse))
 
         # Output path info hint
         self.output_info = QLabel()
@@ -3067,9 +3135,7 @@ class RunTab(WorkerHost, QWidget):
         cty_lbl = QLabel("")
         cty_lbl.setFixedWidth(LABEL_W)
         cty_h.addWidget(cty_lbl)
-        self.csv_to_yaml_cb = QCheckBox(
-            "Translate CSV → YAML, no simulation  (--csv-to-yaml)"
-        )
+        self.csv_to_yaml_cb = QCheckBox("Translate CSV → YAML, no simulation  (--csv-to-yaml)")
         self.csv_to_yaml_cb.toggled.connect(self._update_csv_to_yaml_state)
         cty_h.addWidget(self.csv_to_yaml_cb)
         cty_h.addStretch()
@@ -3086,10 +3152,8 @@ class RunTab(WorkerHost, QWidget):
         # (YAML pre-sim, CSV from the simulated FITS). There is no workflow
         # override here: for manual control over the EDPS/pyesorex invocation
         # use the mtr-exec / mtr-shell commands.
-        self.input_list.model().rowsInserted.connect(
-            lambda *_a: self._refresh_input_status())
-        self.input_list.model().rowsRemoved.connect(
-            lambda *_a: self._refresh_input_status())
+        self.input_list.model().rowsInserted.connect(lambda *_a: self._refresh_input_status())
+        self.input_list.model().rowsRemoved.connect(lambda *_a: self._refresh_input_status())
 
         # Runner
         self.runner_combo = QComboBox()
@@ -3104,9 +3168,11 @@ class RunTab(WorkerHost, QWidget):
         lbl2.setFixedWidth(LABEL_W)
         mode_h.addWidget(lbl2)
         self._mode_grp = QButtonGroup(self)
+        # fmt: off
         self.rb_both      = QRadioButton("Simulate + run pipeline")
         self.rb_sim_only  = QRadioButton("Simulate only  (--no-pipeline)")
         self.rb_pipe_only = QRadioButton("Pipeline only  (--no-sim)")
+        # fmt: on
         for rb in (self.rb_both, self.rb_sim_only, self.rb_pipe_only):
             self._mode_grp.addButton(rb)
             mode_h.addWidget(rb)
@@ -3116,8 +3182,7 @@ class RunTab(WorkerHost, QWidget):
 
         # Pipeline input dirs  [pipeline-only mode only]
         self.pipeline_input_list = QListWidget()
-        self.pipeline_input_list.setSelectionMode(
-            QListWidget.SelectionMode.ExtendedSelection)
+        self.pipeline_input_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         pipe_in_content = QHBoxLayout()
         pipe_in_content.addWidget(self.pipeline_input_list)
         pipe_in_btns = QVBoxLayout()
@@ -3138,8 +3203,7 @@ class RunTab(WorkerHost, QWidget):
         # The list is capped at 100px; when the row gets more height the list
         # would be vertically centred while the button column (top-stretched)
         # stays at the top. Pin the list to the top so both edges line up.
-        pipe_in_content.setAlignment(
-            self.pipeline_input_list, Qt.AlignmentFlag.AlignTop)
+        pipe_in_content.setAlignment(self.pipeline_input_list, Qt.AlignmentFlag.AlignTop)
 
         self.pipeline_input_row = QWidget()
         pi_outer = QVBoxLayout(self.pipeline_input_row)
@@ -3150,8 +3214,7 @@ class RunTab(WorkerHost, QWidget):
         # Cap the list at the button column's height (computed after the
         # layouts are parented so style spacing resolves) so the list's
         # bottom edge lines up with the Clear button.
-        self.pipeline_input_list.setMaximumHeight(
-            pipe_in_btns.sizeHint().height())
+        self.pipeline_input_list.setMaximumHeight(pipe_in_btns.sizeHint().height())
         opts_lay.addWidget(self.pipeline_input_row)
         # Connect mode radio buttons now that pipeline_input_row exists
         for rb in (self.rb_both, self.rb_sim_only, self.rb_pipe_only):
@@ -3225,21 +3288,16 @@ class RunTab(WorkerHost, QWidget):
         pipe_out = root / "pipeline"
 
         if self.rb_pipe_only.isChecked():
-            dirs = [self.pipeline_input_list.item(i).text()
-                    for i in range(self.pipeline_input_list.count())]
+            dirs = [self.pipeline_input_list.item(i).text() for i in range(self.pipeline_input_list.count())]
             pipe_in_str = ", ".join(dirs) if dirs else f"{root / 'sim'}/"
             self.output_info.setText(
-                f"Pipeline input \u2192 {pipe_in_str}   \u00b7   "
-                f"Pipeline products \u2192 {pipe_out}/"
+                f"Pipeline input \u2192 {pipe_in_str}   \u00b7   Pipeline products \u2192 {pipe_out}/"
             )
         elif self.rb_sim_only.isChecked():
-            self.output_info.setText(
-                f"Simulations \u2192 {root / 'sim'}/"
-            )
+            self.output_info.setText(f"Simulations \u2192 {root / 'sim'}/")
         else:
             self.output_info.setText(
-                f"Simulations \u2192 {root / 'sim'}/   \u00b7   "
-                f"Pipeline products \u2192 {pipe_out}/"
+                f"Simulations \u2192 {root / 'sim'}/   \u00b7   Pipeline products \u2192 {pipe_out}/"
             )
 
     # ── Mode-dependent field visibility ──────────────────────────────────────
@@ -3254,9 +3312,15 @@ class RunTab(WorkerHost, QWidget):
         """CSV→YAML is a translate-only dry run, so the simulation/pipeline
         options don't apply — disable them while it's ticked."""
         on = self.csv_to_yaml_cb.isChecked()
-        for w in (self.rb_both, self.rb_sim_only, self.rb_pipe_only,
-                  self.calib_cb, self.static_cb, self.auto_fetch_cb,
-                  self.cores_spin):
+        for w in (
+            self.rb_both,
+            self.rb_sim_only,
+            self.rb_pipe_only,
+            self.calib_cb,
+            self.static_cb,
+            self.auto_fetch_cb,
+            self.cores_spin,
+        ):
             w.setEnabled(not on)
 
     # ── Runner-dependent field visibility ────────────────────────────────────
@@ -3274,12 +3338,12 @@ class RunTab(WorkerHost, QWidget):
 
     def _add_input(self) -> None:
         files, _ = QFileDialog.getOpenFileNames(
-            self, "Select input files", str(REPO_ROOT),
-            "Observation inputs (*.yaml *.yml *.csv);;"
-            "YAML (*.yaml *.yml);;CSV (*.csv);;All files (*)"
+            self,
+            "Select input files",
+            str(REPO_ROOT),
+            "Observation inputs (*.yaml *.yml *.csv);;YAML (*.yaml *.yml);;CSV (*.csv);;All files (*)",
         )
-        existing = {self.input_list.item(i).text()
-                    for i in range(self.input_list.count())}
+        existing = {self.input_list.item(i).text() for i in range(self.input_list.count())}
         for f in files:
             if f not in existing:
                 self.input_list.addItem(f)
@@ -3310,11 +3374,9 @@ class RunTab(WorkerHost, QWidget):
         self.input_status.setText(f"{n_yaml} YAML  ·  {n_csv} CSV")
 
     def _add_pipeline_input(self) -> None:
-        d = QFileDialog.getExistingDirectory(
-            self, "Select input directory", str(REPO_ROOT))
+        d = QFileDialog.getExistingDirectory(self, "Select input directory", str(REPO_ROOT))
         if d and not any(
-            self.pipeline_input_list.item(i).text() == d
-            for i in range(self.pipeline_input_list.count())
+            self.pipeline_input_list.item(i).text() == d for i in range(self.pipeline_input_list.count())
         ):
             self.pipeline_input_list.addItem(d)
             self._update_output_info()
@@ -3351,8 +3413,7 @@ class RunTab(WorkerHost, QWidget):
         elif self.rb_pipe_only.isChecked():
             args.append("--no-sim")
             for i in range(self.pipeline_input_list.count()):
-                args += ["--pipeline-input",
-                         self.pipeline_input_list.item(i).text()]
+                args += ["--pipeline-input", self.pipeline_input_list.item(i).text()]
 
         runner = self.runner_combo.currentText()
         args += ["--runner", runner]
@@ -3380,10 +3441,7 @@ class RunTab(WorkerHost, QWidget):
 
     def _run(self) -> None:
         if not self.rb_pipe_only.isChecked() and self.input_list.count() == 0:
-            QMessageBox.warning(
-                self, "No input files",
-                "Add at least one input file (YAML or CSV)."
-            )
+            QMessageBox.warning(self, "No input files", "Add at least one input file (YAML or CSV).")
             return
 
         self._save_settings()
@@ -3506,7 +3564,8 @@ class RunTab(WorkerHost, QWidget):
 
         if not target.exists():
             QMessageBox.information(
-                self, "Directory not found",
+                self,
+                "Directory not found",
                 f"The output directory does not exist yet:\n\n{target}\n\n"
                 "Run the pipeline first to create it.",
             )
@@ -3517,8 +3576,7 @@ class RunTab(WorkerHost, QWidget):
             return
 
         # No file manager — fall back to opening a terminal at the directory.
-        for term in ("x-terminal-emulator", "xterm", "konsole",
-                     "gnome-terminal", "xfce4-terminal"):
+        for term in ("x-terminal-emulator", "xterm", "konsole", "gnome-terminal", "xfce4-terminal"):
             exe = shutil.which(term)
             if not exe:
                 continue
@@ -3534,9 +3592,9 @@ class RunTab(WorkerHost, QWidget):
                 continue
 
         QMessageBox.information(
-            self, "Cannot open folder",
-            f"No file manager or terminal emulator found.\n\n"
-            f"Output directory:\n{target}",
+            self,
+            "Cannot open folder",
+            f"No file manager or terminal emulator found.\n\nOutput directory:\n{target}",
         )
 
     # ── Settings persistence ─────────────────────────────────────────────────
@@ -3551,9 +3609,9 @@ class RunTab(WorkerHost, QWidget):
         self.csv_start_spin.setValue(s.value("csv_start", 0, type=int))
         self.csv_end_spin.setValue(s.value("csv_end", 0, type=int))
         mode = s.value("pipeline_mode", "both")
-        {"sim_only": self.rb_sim_only, "pipe_only": self.rb_pipe_only}.get(
-            mode, self.rb_both
-        ).setChecked(True)
+        {"sim_only": self.rb_sim_only, "pipe_only": self.rb_pipe_only}.get(mode, self.rb_both).setChecked(
+            True
+        )
         self.runner_combo.setCurrentText(s.value("runner", "default"))
         self.container_edit.setText(s.value("container", ""))
         self.sim_dir_edit.setText(s.value("sim_dir", ""))
@@ -3561,7 +3619,7 @@ class RunTab(WorkerHost, QWidget):
         self.auto_fetch_cb.setChecked(s.value("auto_fetch", False, type=bool))
         self.csv_to_yaml_cb.setChecked(s.value("csv_to_yaml", False, type=bool))
         self._update_csv_to_yaml_state()
-        for f in (s.value("pipeline_input_dirs") or []):
+        for f in s.value("pipeline_input_dirs") or []:
             self.pipeline_input_list.addItem(f)
         # Backward-compat: prefer the new "input_files" key, fall back to the
         # legacy "yaml_files" key for users with existing settings.
@@ -3592,13 +3650,11 @@ class RunTab(WorkerHost, QWidget):
         s.setValue("inst_pkgs", self.inst_edit.text())
         s.setValue("auto_fetch", self.auto_fetch_cb.isChecked())
         s.setValue("csv_to_yaml", self.csv_to_yaml_cb.isChecked())
-        s.setValue("pipeline_input_dirs", [
-            self.pipeline_input_list.item(i).text()
-            for i in range(self.pipeline_input_list.count())
-        ])
-        s.setValue("input_files", [
-            self.input_list.item(i).text() for i in range(self.input_list.count())
-        ])
+        s.setValue(
+            "pipeline_input_dirs",
+            [self.pipeline_input_list.item(i).text() for i in range(self.pipeline_input_list.count())],
+        )
+        s.setValue("input_files", [self.input_list.item(i).text() for i in range(self.input_list.count())])
         # Remove legacy keys after successful migration to avoid confusion.
         s.remove("yaml_files")
         s.remove("workflow")
@@ -3607,6 +3663,7 @@ class RunTab(WorkerHost, QWidget):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 class _ExpandingTabBar(QTabBar):
     """Tab bar that divides its width equally among all tabs, overriding QSS."""
@@ -3636,8 +3693,8 @@ class _ExpandingTabBar(QTabBar):
 # Main window
 # ---------------------------------------------------------------------------
 
-class MainWindow(QMainWindow):
 
+class MainWindow(QMainWindow):
     def __init__(self, initial_theme: str = "dark") -> None:
         super().__init__()
         self.setWindowTitle("METIS Test Runner")
@@ -3690,8 +3747,10 @@ class MainWindow(QMainWindow):
         proc = getattr(self._run_tab, "_process", None)
         if proc is not None and proc.state() != QProcess.ProcessState.NotRunning:
             jobs.append("a pipeline run")
-        for tab, label in ((self._install_tab, "an install/uninstall"),
-                           (self._archive_tab, "an archive operation")):
+        for tab, label in (
+            (self._install_tab, "an install/uninstall"),
+            (self._archive_tab, "an archive operation"),
+        ):
             for worker in tab.live_workers():
                 jobs.append(label)
                 break
@@ -3704,7 +3763,8 @@ class MainWindow(QMainWindow):
         busy = self._busy_jobs()
         if busy and not SMOKE_TEST:
             reply = QMessageBox.question(
-                self, "Job still running",
+                self,
+                "Job still running",
                 "There is still " + " and ".join(busy) + " in progress.\n\n"
                 "Quit anyway? The job will be stopped.",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -3728,6 +3788,7 @@ class MainWindow(QMainWindow):
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     global SMOKE_TEST

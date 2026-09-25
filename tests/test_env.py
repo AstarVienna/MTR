@@ -50,7 +50,7 @@ class TestResolveRuntimeEnv:
         env_file.write_text("PYESOREX_MSG_LEVEL=info\nEXTRA_VAR=hello\n")
         monkeypatch.setattr(paths, "env_file", lambda: env_file)
         env = resolve_runtime_env("default")
-        assert env["PYESOREX_MSG_LEVEL"] == "info"   # override wins over derived
+        assert env["PYESOREX_MSG_LEVEL"] == "info"  # override wins over derived
         assert env["EXTRA_VAR"] == "hello"
 
     def test_native_injects_nothing_clone_specific(self, monkeypatch, tmp_path):
@@ -65,7 +65,8 @@ class TestEnsurePipCommandIfNeeded:
     def test_returns_none_when_pip_present(self, monkeypatch):
         # pip --version exits 0 → pip already usable, nothing to bootstrap.
         monkeypatch.setattr(
-            env_mod.subprocess, "run",
+            env_mod.subprocess,
+            "run",
             lambda *a, **k: SimpleNamespace(returncode=0),
         )
         assert ensurepip_command_if_needed("/some/python") is None
@@ -73,11 +74,15 @@ class TestEnsurePipCommandIfNeeded:
     def test_returns_ensurepip_command_when_pip_missing(self, monkeypatch):
         # pip --version exits non-zero (pipx venv) → bootstrap via ensurepip.
         monkeypatch.setattr(
-            env_mod.subprocess, "run",
+            env_mod.subprocess,
+            "run",
             lambda *a, **k: SimpleNamespace(returncode=1),
         )
         assert ensurepip_command_if_needed("/some/python") == [
-            "/some/python", "-m", "ensurepip", "--upgrade",
+            "/some/python",
+            "-m",
+            "ensurepip",
+            "--upgrade",
         ]
 
     def test_defaults_to_sys_executable(self, monkeypatch):
@@ -101,8 +106,7 @@ class TestRunnerPrefix:
         assert runner_prefix("docker", "c1") == ["docker", "exec", "-i", "c1"]
 
     def test_podman_interactive(self):
-        assert runner_prefix("podman", "c1", interactive=True) == \
-            ["podman", "exec", "-it", "c1"]
+        assert runner_prefix("podman", "c1", interactive=True) == ["podman", "exec", "-it", "c1"]
 
     def test_container_runner_requires_container(self):
         with pytest.raises(ValueError, match="requires --container"):

@@ -21,15 +21,9 @@ def _keyring_mocks(store: dict | None = None) -> dict:
     store = store if store is not None else {}
 
     kr = MagicMock()
-    kr.get_password.side_effect = (
-        lambda service, entry: store.get((service, entry))
-    )
-    kr.set_password.side_effect = (
-        lambda service, entry, value: store.__setitem__((service, entry), value)
-    )
-    kr.delete_password.side_effect = (
-        lambda service, entry: store.pop((service, entry))
-    )
+    kr.get_password.side_effect = lambda service, entry: store.get((service, entry))
+    kr.set_password.side_effect = lambda service, entry, value: store.__setitem__((service, entry), value)
+    kr.delete_password.side_effect = lambda service, entry: store.pop((service, entry))
 
     errors = MagicMock()
     errors.PasswordDeleteError = KeyError
@@ -72,6 +66,7 @@ class TestPipCredentials:
 
 
 class TestDbCredentials:
+    # fmt: off
     _FIELDS = {
         "database_user":           "AWTEST",
         "database_password":       "lmno",
@@ -79,6 +74,7 @@ class TestDbCredentials:
         "database_tablespacename": "metis_data",
         "database_name":           "metis.example.com:5436/pgmetis",
     }
+    # fmt: on
 
     def test_round_trip(self):
         with patch.dict(sys.modules, _keyring_mocks()):
@@ -94,8 +90,7 @@ class TestDbCredentials:
         with patch.dict(sys.modules, _keyring_mocks(store)):
             credentials.set_db_credentials(self._FIELDS)
         assert list(store) == [("metis-test-runner", "archive-db")]
-        assert json.loads(store[("metis-test-runner", "archive-db")]) \
-            == self._FIELDS
+        assert json.loads(store[("metis-test-runner", "archive-db")]) == self._FIELDS
 
     def test_malformed_json_returns_none(self):
         store = {("metis-test-runner", "archive-db"): "{not json"}

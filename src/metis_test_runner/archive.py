@@ -45,6 +45,7 @@ def metiswise_available() -> bool:
     """Return ``True`` if the ``metiswise`` package is importable."""
     try:
         import metiswise  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -90,9 +91,7 @@ def encode_pip_credentials(raw: str) -> str:
         raise ValueError("Credentials must not contain spaces or newlines.")
     user, sep, password = raw.partition(":")
     if not sep or not user or not password:
-        raise ValueError(
-            "Credentials must be in the form 'username:password'."
-        )
+        raise ValueError("Credentials must be in the form 'username:password'.")
     return f"{quote(user, safe='')}:{quote(password, safe='')}"
 
 
@@ -137,18 +136,27 @@ def install_metiswise_command(
     single ``pip install <metiswise>`` with normal resolution.
     """
     env_overrides = {
-        "PIP_EXTRA_INDEX_URL": " ".join((
-            ESO_INDEX,
-            PYCPL_INDEX,
-            f"https://{encode_pip_credentials(pip_credentials)}@pip.entropynaut.com/packages/",
-        )),
+        "PIP_EXTRA_INDEX_URL": " ".join(
+            (
+                ESO_INDEX,
+                PYCPL_INDEX,
+                f"https://{encode_pip_credentials(pip_credentials)}@pip.entropynaut.com/packages/",
+            )
+        ),
     }
     deps_cmd = [
-        sys.executable, "-m", "pip", "install",
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
         *_METISWISE_RUNTIME_DEPS,
     ]
     metiswise_cmd = [
-        sys.executable, "-m", "pip", "install", "--no-deps",
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "--no-deps",
         METISWISE_REQUIREMENT,
     ]
     return [deps_cmd, metiswise_cmd], env_overrides
@@ -234,8 +242,10 @@ def _ensure_db_connection() -> None:
     # os.environ into its module-global Env dict at import time.
     _ensure_credentials_applied()
     from common.config.Profile import profiles
+
     profiles.create_profile()
     from common.database.Database import database
+
     database.connect()
     _thread_local.db_ready = True
 
@@ -270,9 +280,7 @@ def apply_db_credentials(fields: dict[str, str]) -> None:
     if fields.get("database_password") == "undefined":
         missing.append("database_password")
     if missing:
-        raise RuntimeError(
-            "Incomplete archive credentials — missing: " + ", ".join(missing)
-        )
+        raise RuntimeError("Incomplete archive credentials — missing: " + ", ".join(missing))
 
     _ensure_awetarget()
     injected = {k: fields[k] for k in ENV_CFG_FIELDS}
@@ -393,8 +401,7 @@ def write_env_cfg(
     for key, value in values.items():
         if "\n" in value or "\r" in value:
             raise ValueError(
-                f"{key} must not contain a newline (it would inject "
-                "additional configuration lines)."
+                f"{key} must not contain a newline (it would inject additional configuration lines)."
             )
 
     cfg = env_cfg_path()
@@ -422,9 +429,7 @@ def write_env_cfg(
         if stripped == "[global]":
             global_start = idx
             continue
-        if (global_start >= 0
-                and stripped.startswith("[")
-                and stripped.endswith("]")):
+        if global_start >= 0 and stripped.startswith("[") and stripped.endswith("]"):
             global_end = idx
             break
 
@@ -493,9 +498,7 @@ def scrub_env_cfg() -> Path | None:
         if stripped == "[global]":
             global_start = idx
             continue
-        if (global_start >= 0
-                and stripped.startswith("[")
-                and stripped.endswith("]")):
+        if global_start >= 0 and stripped.startswith("[") and stripped.endswith("]"):
             global_end = idx
             break
     if global_start < 0:
@@ -550,9 +553,7 @@ def query_archive(
     try:
         from metiswise.main.dataitem import DataItem
     except ImportError as exc:
-        raise RuntimeError(
-            "MetisWISE is not installed.  Use the Archive tab to install it."
-        ) from exc
+        raise RuntimeError("MetisWISE is not installed.  Use the Archive tab to install it.") from exc
 
     if on_log:
         on_log("Querying archive…")
@@ -581,11 +582,13 @@ def query_archive(
             filename = getattr(r, "filename", None)
             if filename is None:
                 continue
-            items.append({
-                "filename": filename,
-                "pro_catg": getattr(r, "pro_catg", ""),
-                "class_name": type(r).__name__,
-            })
+            items.append(
+                {
+                    "filename": filename,
+                    "pro_catg": getattr(r, "pro_catg", ""),
+                    "class_name": type(r).__name__,
+                }
+            )
     return items
 
 
@@ -603,15 +606,13 @@ def download_file(
     try:
         from metiswise.main.dataitem import DataItem
     except ImportError as exc:
-        raise RuntimeError(
-            "MetisWISE is not installed.  Use the Archive tab to install it."
-        ) from exc
+        raise RuntimeError("MetisWISE is not installed.  Use the Archive tab to install it.") from exc
 
     if on_log:
         on_log(f"Retrieving {filename} from archive…")
 
     try:
-        results = (DataItem.filename == filename)
+        results = DataItem.filename == filename
         if len(results) == 0:
             if on_log:
                 on_log(f"File not found in archive: {filename}")
@@ -648,10 +649,7 @@ def download_file(
                 expected = src.stat().st_size
                 got = tmp.stat().st_size
                 if got != expected:
-                    raise OSError(
-                        f"size mismatch after copy: got {got} bytes, "
-                        f"expected {expected}"
-                    )
+                    raise OSError(f"size mismatch after copy: got {got} bytes, expected {expected}")
                 os.replace(tmp, dest)
             except BaseException:
                 tmp.unlink(missing_ok=True)
@@ -697,10 +695,7 @@ def _build_pro_dataitem(path: Path):
         raise ValueError(f"{path.name}: no 'ESO PRO CATG' header")
     cls = Pro.class_from_procatg.get(pro_catg)
     if cls is None:
-        raise ValueError(
-            f"{path.name}: PRO.CATG {pro_catg!r} not registered in "
-            "Pro.class_from_procatg"
-        )
+        raise ValueError(f"{path.name}: PRO.CATG {pro_catg!r} not registered in Pro.class_from_procatg")
 
     di = cls()
     di.pathname = str(path)
@@ -714,14 +709,22 @@ def _build_pro_dataitem(path: Path):
         raws = [get_optional_dataitem_from_filename(fn) for fn in names_raws]
         di.raws = [r for r in raws if r is not None]
         padded = raws + [None] * 9
-        (di.raw1, di.raw2, di.raw3, di.raw4, di.raw5,
-         di.raw6, di.raw7, di.raw8, di.raw9) = padded[:9]
+        (di.raw1, di.raw2, di.raw3, di.raw4, di.raw5, di.raw6, di.raw7, di.raw8, di.raw9) = padded[:9]
 
         calibs = [get_optional_dataitem_from_filename(fn) for fn in names_calibs]
         di.calibs = [c for c in calibs if c is not None]
         padded = calibs + [None] * 9
-        (di.calib1, di.calib2, di.calib3, di.calib4, di.calib5,
-         di.calib6, di.calib7, di.calib8, di.calib9) = padded[:9]
+        (
+            di.calib1,
+            di.calib2,
+            di.calib3,
+            di.calib4,
+            di.calib5,
+            di.calib6,
+            di.calib7,
+            di.calib8,
+            di.calib9,
+        ) = padded[:9]
 
     for prop_name in cls.get_persistent_properties():
         prop = getattr(cls, prop_name)
@@ -761,9 +764,7 @@ def upload_file(
         from metiswise.main.dataitem import DataItem
         from metiswise.main.raw import Raw
     except ImportError as exc:
-        raise RuntimeError(
-            "MetisWISE is not installed.  Use the Archive tab to install it."
-        ) from exc
+        raise RuntimeError("MetisWISE is not installed.  Use the Archive tab to install it.") from exc
 
     if not path.exists():
         if on_log:
@@ -771,7 +772,7 @@ def upload_file(
         return False
 
     try:
-        existing = (DataItem.filename == path.name)
+        existing = DataItem.filename == path.name
         if len(existing):
             if on_log:
                 on_log(f"{path.name}: already in archive — skipping")
@@ -796,10 +797,7 @@ def upload_file(
             di = cls(filename=str(path))
         else:
             if on_log:
-                on_log(
-                    f"Cannot classify {path.name}: neither "
-                    "ESO DPR CATG nor ESO PRO CATG in header"
-                )
+                on_log(f"Cannot classify {path.name}: neither ESO DPR CATG nor ESO PRO CATG in header")
             return False
 
         di.store()
@@ -846,6 +844,7 @@ class TaskProducts:
     consumes: tuple[str, ...] = ()
 
 
+# fmt: off
 TASK_PRODUCTS: dict[str, TaskProducts] = {
     # LM IMG
     "metis_lm_img_lingain":          TaskProducts(produces=("LINEARITY_2RG", "GAIN_MAP_2RG")),
@@ -876,11 +875,13 @@ TASK_PRODUCTS: dict[str, TaskProducts] = {
     "metis_n_lss_trace":             TaskProducts(produces=("N_LSS_TRACE_TABLE",)),
     "metis_n_lss_wave":              TaskProducts(produces=("N_LSS_WAVECAL",)),
 }
+# fmt: on
 
 
 def _get_task_chain(workflow: str) -> list[tuple[str, str, str | None]]:
     """Import and return the task chain for *workflow* from ``run_metis``."""
     from .run_metis import WORKFLOW_TASK_CHAIN
+
     return WORKFLOW_TASK_CHAIN.get(workflow, [])
 
 

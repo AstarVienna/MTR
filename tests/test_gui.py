@@ -34,6 +34,7 @@ from metis_test_runner import gui
 
 def _make_run_tab(qapp):
     from metis_test_runner.gui import RunTab
+
     return RunTab()
 
 
@@ -58,6 +59,7 @@ def _fake_git(responses, recorder=None):
     The first key that appears anywhere in the argv wins; anything unmatched
     comes back as a successful empty result. Pass *recorder* to capture argv.
     """
+
     def fake(args, cwd=None, timeout=30):
         if recorder is not None:
             recorder.append(list(args))
@@ -66,6 +68,7 @@ def _fake_git(responses, recorder=None):
             if needle in joined:
                 return result
         return _cp("")
+
     return fake
 
 
@@ -73,11 +76,13 @@ def _fake_git(responses, recorder=None):
 # append_log
 # ---------------------------------------------------------------------------
 
+
 class TestAppendLog:
     def test_plain_text_appended(self, qapp):
         from PyQt6.QtWidgets import QTextEdit
 
         from metis_test_runner.gui import log_append
+
         w = QTextEdit()
         log_append(w, "hello world")
         assert "hello world" in w.toPlainText()
@@ -86,6 +91,7 @@ class TestAppendLog:
         from PyQt6.QtWidgets import QTextEdit
 
         from metis_test_runner.gui import log_append
+
         w = QTextEdit()
         log_append(w, "line one\n")
         log_append(w, "line two\n")
@@ -97,6 +103,7 @@ class TestAppendLog:
         from PyQt6.QtWidgets import QTextEdit
 
         from metis_test_runner.gui import log_append
+
         w = QTextEdit()
         log_append(w, "error message", "red")
         assert "error message" in w.toPlainText()
@@ -105,8 +112,9 @@ class TestAppendLog:
         from PyQt6.QtWidgets import QTextEdit
 
         from metis_test_runner.gui import log_append
+
         w = QTextEdit()
-        log_append(w, "neutral", "")   # empty string — no crash, text still added
+        log_append(w, "neutral", "")  # empty string — no crash, text still added
         assert "neutral" in w.toPlainText()
 
 
@@ -114,9 +122,11 @@ class TestAppendLog:
 # MainWindow / tab construction
 # ---------------------------------------------------------------------------
 
+
 class TestWindowConstruction:
     def test_main_window_creates(self, qapp):
         from metis_test_runner.gui import MainWindow
+
         win = MainWindow()
         assert win is not None
         win.close()
@@ -125,6 +135,7 @@ class TestWindowConstruction:
         from PyQt6.QtWidgets import QTabWidget
 
         from metis_test_runner.gui import MainWindow
+
         win = MainWindow()
         tabs = win.findChild(QTabWidget)
         assert tabs is not None
@@ -135,6 +146,7 @@ class TestWindowConstruction:
         from PyQt6.QtWidgets import QTabWidget
 
         from metis_test_runner.gui import MainWindow
+
         win = MainWindow()
         tabs = win.findChild(QTabWidget)
         labels = [tabs.tabText(i) for i in range(tabs.count())]
@@ -147,6 +159,7 @@ class TestWindowConstruction:
 # ---------------------------------------------------------------------------
 # Runner field visibility
 # ---------------------------------------------------------------------------
+
 
 class TestRunnerFieldVisibility:
     def test_default_hides_container(self, qapp):
@@ -181,15 +194,18 @@ class TestRunnerFieldVisibility:
 # Instrument packages placeholder text
 # ---------------------------------------------------------------------------
 
+
 class TestInstPkgsPlaceholder:
     def test_default_runner_placeholder_shows_resolved_path(self, qapp):
         from metis_test_runner import gui
+
         tab = _make_run_tab(qapp)
         tab.runner_combo.setCurrentText("default")
         assert tab.inst_edit.placeholderText() == str(gui.REPO_ROOT / "inst_pkgs")
 
     def test_native_runner_placeholder_shows_resolved_path(self, qapp):
         from metis_test_runner import gui
+
         tab = _make_run_tab(qapp)
         tab.runner_combo.setCurrentText("native")
         assert tab.inst_edit.placeholderText() == str(gui.REPO_ROOT / "inst_pkgs")
@@ -206,6 +222,7 @@ class TestInstPkgsPlaceholder:
 
     def test_switching_runner_updates_placeholder(self, qapp):
         from metis_test_runner import gui
+
         tab = _make_run_tab(qapp)
         tab.runner_combo.setCurrentText("default")
         assert tab.inst_edit.placeholderText() == str(gui.REPO_ROOT / "inst_pkgs")
@@ -216,6 +233,7 @@ class TestInstPkgsPlaceholder:
 # ---------------------------------------------------------------------------
 # _build_cmd_args
 # ---------------------------------------------------------------------------
+
 
 class TestBuildCmdArgs:
     def _tab_with_inputs(self, qapp, *paths):
@@ -414,6 +432,7 @@ class TestBuildCmdArgs:
 # InstallWorker._patch_edps_config
 # ---------------------------------------------------------------------------
 
+
 class TestPatchEdpsConfig:
     # All four keys must be present for _patch_edps_config to succeed — it
     # raises if any pattern matches zero times.
@@ -427,6 +446,7 @@ class TestPatchEdpsConfig:
 
     def _make_worker(self, qapp):
         from metis_test_runner.gui import InstallWorker
+
         return InstallWorker()
 
     def _seed(self, tmp_path, content):
@@ -443,6 +463,7 @@ class TestPatchEdpsConfig:
 
     def test_patches_workflow_dir(self, qapp, tmp_path, monkeypatch):
         from metis_test_runner.gui import TARGET_A
+
         monkeypatch.setenv("HOME", str(tmp_path))
         props = self._seed(tmp_path, self.FULL_PROPS)
         self._make_worker(qapp)._patch_edps_config()
@@ -568,9 +589,11 @@ class TestPatchEdpsConfig:
 # InstallWorker._backup_edps_config
 # ---------------------------------------------------------------------------
 
+
 class TestBackupEdpsConfig:
     def _make_worker(self, qapp):
         from metis_test_runner.gui import InstallWorker
+
         return InstallWorker()
 
     def _seed(self, tmp_path, content):
@@ -602,9 +625,11 @@ class TestBackupEdpsConfig:
         the backup with it would lose the user's original permanently.
         """
         monkeypatch.setenv("HOME", str(tmp_path))
+        # fmt: off
         props = self._seed(tmp_path, "port=9999\n")          # MTR's own config
         old_backup = props.with_name("application.properties_backup")
         old_backup.write_text("port=1111\n")                 # the user's original
+        # fmt: on
         self._make_worker(qapp)._backup_edps_config()
         assert not props.exists()
         assert old_backup.read_text() == "port=1111\n"
@@ -616,7 +641,7 @@ class TestBackupEdpsConfig:
         backup = props.with_name("application.properties_backup")
         for content in ("port=2222\n", "port=3333\n"):
             worker._backup_edps_config()
-            props.write_text(content)                        # MTR rewrites it
+            props.write_text(content)  # MTR rewrites it
         assert backup.read_text() == "port=1111\n"
 
 
@@ -624,9 +649,11 @@ class TestBackupEdpsConfig:
 # InstallWorker._pip_deps_command — pipeline dependency pip argv
 # ---------------------------------------------------------------------------
 
+
 class TestPipDepsCommand:
     def _cmd(self):
         from metis_test_runner.gui import InstallWorker
+
         return InstallWorker._pip_deps_command()
 
     def test_runs_pip_in_mtrs_own_interpreter(self):
@@ -648,6 +675,7 @@ class TestPipDepsCommand:
 
     def test_both_extra_indexes_present(self):
         from metis_test_runner.gui import ESO_INDEX, PYCPL_INDEX
+
         cmd = self._cmd()
         assert cmd.count("--extra-index-url") == 2
         assert PYCPL_INDEX in cmd
@@ -670,9 +698,11 @@ class TestPipDepsCommand:
 # InstallWorker._clone_or_update — submodule (.git as file) handling
 # ---------------------------------------------------------------------------
 
+
 class TestCloneOrUpdateSubmodule:
     def _make_worker(self, qapp):
         from metis_test_runner.gui import InstallWorker
+
         return InstallWorker()
 
     def test_submodule_checkout_takes_update_branch(self, qapp, tmp_path, monkeypatch):
@@ -687,10 +717,16 @@ class TestCloneOrUpdateSubmodule:
         worker = self._make_worker(qapp)
         invoked = []
         monkeypatch.setattr(worker, "_run", lambda cmd, **kw: invoked.append(cmd))
-        monkeypatch.setattr(gui, "_git", _fake_git({
-            "symbolic-ref": _cp("main"),   # on a branch, so pull --ff-only applies
-            "pull": _cp(""),
-        }))
+        monkeypatch.setattr(
+            gui,
+            "_git",
+            _fake_git(
+                {
+                    "symbolic-ref": _cp("main"),  # on a branch, so pull --ff-only applies
+                    "pull": _cp(""),
+                }
+            ),
+        )
         worker._clone_or_update("http://example.invalid/x.git", target)
 
         # The point of the test: a .git FILE is recognised as a repo, so we
@@ -703,6 +739,7 @@ class TestCloneOrUpdateSubmodule:
 # ---------------------------------------------------------------------------
 # Auto-fetch checkbox in RunTab
 # ---------------------------------------------------------------------------
+
 
 class TestAutoFetchCheckbox:
     def test_auto_fetch_flag_when_checked(self, qapp):
@@ -744,12 +781,26 @@ class TestCsvToYamlCheckbox:
     def test_disables_mode_and_calib_options_when_checked(self, qapp):
         tab = _make_run_tab(qapp)
         tab.csv_to_yaml_cb.setChecked(True)
-        for w in (tab.rb_both, tab.rb_sim_only, tab.rb_pipe_only,
-                  tab.calib_cb, tab.static_cb, tab.auto_fetch_cb, tab.cores_spin):
+        for w in (
+            tab.rb_both,
+            tab.rb_sim_only,
+            tab.rb_pipe_only,
+            tab.calib_cb,
+            tab.static_cb,
+            tab.auto_fetch_cb,
+            tab.cores_spin,
+        ):
             assert not w.isEnabled()
         tab.csv_to_yaml_cb.setChecked(False)
-        for w in (tab.rb_both, tab.rb_sim_only, tab.rb_pipe_only,
-                  tab.calib_cb, tab.static_cb, tab.auto_fetch_cb, tab.cores_spin):
+        for w in (
+            tab.rb_both,
+            tab.rb_sim_only,
+            tab.rb_pipe_only,
+            tab.calib_cb,
+            tab.static_cb,
+            tab.auto_fetch_cb,
+            tab.cores_spin,
+        ):
             assert w.isEnabled()
 
 
@@ -757,9 +808,11 @@ class TestCsvToYamlCheckbox:
 # ArchiveTab construction
 # ---------------------------------------------------------------------------
 
+
 class TestArchiveTab:
     def test_archive_tab_creates(self, qapp):
         from metis_test_runner.gui import ArchiveTab
+
         tab = ArchiveTab()
         assert tab is not None
 
@@ -767,6 +820,7 @@ class TestArchiveTab:
         from PyQt6.QtWidgets import QStackedWidget
 
         from metis_test_runner.gui import ArchiveTab
+
         tab = ArchiveTab()
         stack = tab.findChild(QStackedWidget)
         assert stack is not None
@@ -777,6 +831,7 @@ class TestArchiveTab:
 # ArchiveTab — upload page (page 2)
 # ---------------------------------------------------------------------------
 
+
 class TestArchiveTabUploadPage:
     """Exercise the Page 2 staging table, add/remove handlers, and upload
     gating on unresolved rows.  Classification is stubbed out so the tests
@@ -785,26 +840,27 @@ class TestArchiveTabUploadPage:
     def _make_tab(self, qapp, monkeypatch, classify=None):
         """Create an ArchiveTab with classify_fits_file patched."""
         from metis_test_runner import run_metis
+
         if classify is None:
             classify = lambda _p: "LM_FLAT_LAMP_RAW"
         monkeypatch.setattr(run_metis, "classify_fits_file", classify)
         from metis_test_runner.gui import ArchiveTab
+
         return ArchiveTab()
 
     def test_page_upload_table_has_three_columns(self, qapp, monkeypatch):
         tab = self._make_tab(qapp, monkeypatch)
         assert tab._stage_table.columnCount() == 3
-        headers = [
-            tab._stage_table.horizontalHeaderItem(c).text()
-            for c in range(3)
-        ]
+        headers = [tab._stage_table.horizontalHeaderItem(c).text() for c in range(3)]
         assert headers == ["Filename", "DataItem class", "Full path"]
 
     def test_add_staged_file_appends_row_with_auto_class(
-        self, qapp, tmp_path, monkeypatch,
+        self,
+        qapp,
+        tmp_path,
+        monkeypatch,
     ):
-        tab = self._make_tab(qapp, monkeypatch,
-                             classify=lambda _p: "LM_FLAT_LAMP_RAW")
+        tab = self._make_tab(qapp, monkeypatch, classify=lambda _p: "LM_FLAT_LAMP_RAW")
         fits = tmp_path / "flat.fits"
         fits.write_bytes(b"")
         tab._add_staged_file(fits)
@@ -814,7 +870,10 @@ class TestArchiveTabUploadPage:
         assert tab._stage_table.item(0, 2).text() == str(fits)
 
     def test_add_staged_file_unknown_uses_placeholder(
-        self, qapp, tmp_path, monkeypatch,
+        self,
+        qapp,
+        tmp_path,
+        monkeypatch,
     ):
         tab = self._make_tab(qapp, monkeypatch, classify=lambda _p: None)
         fits = tmp_path / "u.fits"
@@ -823,7 +882,10 @@ class TestArchiveTabUploadPage:
         assert tab._stage_table.item(0, 1).text() == tab._UNKNOWN_CLASS_PLACEHOLDER
 
     def test_add_staged_file_dedupes_by_full_path(
-        self, qapp, tmp_path, monkeypatch,
+        self,
+        qapp,
+        tmp_path,
+        monkeypatch,
     ):
         tab = self._make_tab(qapp, monkeypatch)
         fits = tmp_path / "x.fits"
@@ -833,7 +895,10 @@ class TestArchiveTabUploadPage:
         assert tab._stage_table.rowCount() == 1
 
     def test_on_remove_staged_removes_selected_rows(
-        self, qapp, tmp_path, monkeypatch,
+        self,
+        qapp,
+        tmp_path,
+        monkeypatch,
     ):
         tab = self._make_tab(qapp, monkeypatch)
         for n in ("a.fits", "b.fits", "c.fits"):
@@ -843,12 +908,13 @@ class TestArchiveTabUploadPage:
         assert tab._stage_table.rowCount() == 3
         tab._stage_table.selectRow(1)
         tab._on_remove_staged()
-        remaining = [tab._stage_table.item(r, 0).text()
-                     for r in range(tab._stage_table.rowCount())]
+        remaining = [tab._stage_table.item(r, 0).text() for r in range(tab._stage_table.rowCount())]
         assert remaining == ["a.fits", "c.fits"]
 
     def test_candidate_class_names_includes_raw_tags_and_masters(
-        self, qapp, monkeypatch,
+        self,
+        qapp,
+        monkeypatch,
     ):
         tab = self._make_tab(qapp, monkeypatch)
         candidates = tab._candidate_class_names()
@@ -858,9 +924,13 @@ class TestArchiveTabUploadPage:
         assert "MASTER_DARK_2RG" in candidates
 
     def test_on_upload_blocks_unresolved_rows(
-        self, qapp, tmp_path, monkeypatch,
+        self,
+        qapp,
+        tmp_path,
+        monkeypatch,
     ):
         from unittest.mock import patch as mock_patch
+
         tab = self._make_tab(qapp, monkeypatch, classify=lambda _p: None)
         fits = tmp_path / "u.fits"
         fits.write_bytes(b"")
@@ -874,17 +944,21 @@ class TestArchiveTabUploadPage:
         assert tab._upload_btn.isEnabled()
 
     def test_on_upload_dispatches_worker_when_all_resolved(
-        self, qapp, tmp_path, monkeypatch,
+        self,
+        qapp,
+        tmp_path,
+        monkeypatch,
     ):
         from unittest.mock import MagicMock
         from unittest.mock import patch as mock_patch
-        tab = self._make_tab(qapp, monkeypatch,
-                             classify=lambda _p: "LM_FLAT_LAMP_RAW")
+
+        tab = self._make_tab(qapp, monkeypatch, classify=lambda _p: "LM_FLAT_LAMP_RAW")
         fits = tmp_path / "ok.fits"
         fits.write_bytes(b"")
         tab._add_staged_file(fits)
 
         captured = {}
+
         class StubWorker:
             def __init__(self, entries):
                 captured["entries"] = entries
@@ -896,10 +970,13 @@ class TestArchiveTabUploadPage:
                 self.done.connect = MagicMock()
                 self.finished.connect = MagicMock()
                 self.progress.connect = MagicMock()
+
             def start(self):
                 captured["started"] = True
+
             def isRunning(self):
                 return False
+
             def deleteLater(self):
                 pass
 
@@ -920,6 +997,7 @@ class TestArchiveTabUploadPage:
 # UploadWorker
 # ---------------------------------------------------------------------------
 
+
 class TestUploadWorker:
     """Run the worker's body synchronously (call .run() directly) so we can
     observe signal emissions without a Qt event loop."""
@@ -935,6 +1013,7 @@ class TestUploadWorker:
         from unittest.mock import patch as mock_patch
 
         from metis_test_runner.gui import UploadWorker
+
         entries = [
             (tmp_path / "a.fits", "LM_FLAT_LAMP_RAW"),
             (tmp_path / "b.fits", "DARK_IFU_RAW"),
@@ -952,6 +1031,7 @@ class TestUploadWorker:
         from unittest.mock import patch as mock_patch
 
         from metis_test_runner.gui import UploadWorker
+
         entries = [
             (tmp_path / "a.fits", "X"),
             (tmp_path / "b.fits", "Y"),
@@ -969,10 +1049,10 @@ class TestUploadWorker:
         from unittest.mock import patch as mock_patch
 
         from metis_test_runner.gui import UploadWorker
+
         worker = UploadWorker([(tmp_path / "a.fits", "X")])
         emitted = self._connect(worker)
-        with mock_patch("metis_test_runner.archive.upload_file",
-                        side_effect=RuntimeError("boom")):
+        with mock_patch("metis_test_runner.archive.upload_file", side_effect=RuntimeError("boom")):
             worker.run()
         assert emitted["done"] == [False]
         log_text = "".join(t for t, _ in emitted["log"])
@@ -982,6 +1062,7 @@ class TestUploadWorker:
         from unittest.mock import patch as mock_patch
 
         from metis_test_runner.gui import UploadWorker
+
         entries = [(tmp_path / f"{n}.fits", "X") for n in ("a", "b", "c")]
         worker = UploadWorker(entries)
         emitted = self._connect(worker)
@@ -994,9 +1075,11 @@ class TestUploadWorker:
 # UninstallWorker._cleanup_edps — restore-from-backup vs full removal
 # ---------------------------------------------------------------------------
 
+
 class TestUninstallEdpsCleanup:
     def _make_worker(self, qapp):
         from metis_test_runner.gui import UninstallWorker
+
         return UninstallWorker()
 
     def _seed(self, tmp_path, content, *, backup=None):
@@ -1042,12 +1125,14 @@ class TestUninstallEdpsCleanup:
 
     def test_edps_base_dir_parses_config_value(self, qapp, tmp_path):
         from metis_test_runner.gui import UninstallWorker
+
         props = tmp_path / "application.properties"
         props.write_text("port=4444\nbase_dir=/data/edps\nmode=link\n")
         assert UninstallWorker._edps_base_dir(props) == Path("/data/edps")
 
     def test_edps_base_dir_defaults_when_absent(self, qapp, tmp_path, monkeypatch):
         from metis_test_runner.gui import UninstallWorker
+
         monkeypatch.setenv("HOME", str(tmp_path))
         props = tmp_path / "application.properties"
         props.write_text("port=4444\n")
@@ -1058,10 +1143,12 @@ class TestUninstallEdpsCleanup:
 # UninstallWorker.PIPELINE_PACKAGES — distribution names
 # ---------------------------------------------------------------------------
 
+
 class TestUninstallPackages:
     def test_removes_both_pymetis_names(self):
         # The clone registers as ``pymetis`` since 2026-07-13, ``eso-pymetis`` before.
         from metis_test_runner.gui import UninstallWorker
+
         assert {"pymetis", "eso-pymetis"} <= set(UninstallWorker.PIPELINE_PACKAGES)
 
 
@@ -1069,13 +1156,16 @@ class TestUninstallPackages:
 # UninstallWorker._remove_data_dir — whole-tree removal
 # ---------------------------------------------------------------------------
 
+
 class TestUninstallRemoveDataDir:
     def _make_worker(self, qapp):
         from metis_test_runner.gui import UninstallWorker
+
         return UninstallWorker()
 
     def test_removes_entire_data_tree(self, qapp, tmp_path, monkeypatch):
         from metis_test_runner import gui
+
         data = tmp_path / "data"
         sims = data / "METIS_Simulations"  # inside the data dir
         sims.mkdir(parents=True)
@@ -1090,6 +1180,7 @@ class TestUninstallRemoveDataDir:
         # METIS_SIMULATIONS_DIR can point outside the data dir; removing the
         # data dir alone would leave that clone behind.
         from metis_test_runner import gui
+
         data = tmp_path / "data"
         data.mkdir()
         external_sims = tmp_path / "elsewhere" / "METIS_Simulations"
@@ -1102,6 +1193,7 @@ class TestUninstallRemoveDataDir:
 
     def test_noop_when_nothing_to_remove(self, qapp, tmp_path, monkeypatch):
         from metis_test_runner import gui
+
         data = tmp_path / "missing"
         monkeypatch.setattr(gui, "REPO_ROOT", data)
         monkeypatch.setattr(gui, "TARGET_B", data / "METIS_Simulations")
@@ -1112,6 +1204,7 @@ class TestUninstallRemoveDataDir:
     def test_refuses_to_remove_home(self, qapp, tmp_path, monkeypatch):
         """METIS_DATA_DIR=$HOME must not turn Uninstall into `rm -rf ~`."""
         from metis_test_runner import gui
+
         home = tmp_path / "home"
         (home / "precious").mkdir(parents=True)
         monkeypatch.setenv("HOME", str(home))
@@ -1122,6 +1215,7 @@ class TestUninstallRemoveDataDir:
 
     def test_refuses_to_remove_root(self, qapp, monkeypatch):
         from metis_test_runner import gui
+
         monkeypatch.setattr(gui, "REPO_ROOT", Path("/"))
         monkeypatch.setattr(gui, "TARGET_B", Path("/"))
         self._make_worker(qapp)._remove_data_dir()
@@ -1129,6 +1223,7 @@ class TestUninstallRemoveDataDir:
 
     def test_refuses_shallow_paths(self, qapp, monkeypatch):
         from metis_test_runner import gui
+
         monkeypatch.setattr(gui, "REPO_ROOT", Path("/tmp"))
         monkeypatch.setattr(gui, "TARGET_B", Path("/tmp"))
         self._make_worker(qapp)._remove_data_dir()
@@ -1136,6 +1231,7 @@ class TestUninstallRemoveDataDir:
 
     def test_refuses_a_symlinked_data_dir(self, qapp, tmp_path, monkeypatch):
         from metis_test_runner import gui
+
         real = tmp_path / "real"
         (real / "keep").mkdir(parents=True)
         link = tmp_path / "link"
@@ -1150,6 +1246,7 @@ class TestUninstallRemoveDataDir:
 # _validate_ref
 # ---------------------------------------------------------------------------
 
+
 class TestValidateRef:
     @pytest.mark.parametrize("raw", ["", "   ", None])
     def test_blank_means_default_branch(self, raw):
@@ -1159,19 +1256,45 @@ class TestValidateRef:
         # Copying a ref out of a terminal drags a newline along.
         assert gui._validate_ref("  main\n") == "main"
 
-    @pytest.mark.parametrize("ref", [
-        "main", "feature/my-branch", "be/master_associations", "v0.4.2",
-        "2024-06-01", "release+1", "user@host",
-        "8a50c60d4a5417a17d784ab0588d2d85212543db", "8a50c60",
-    ])
+    @pytest.mark.parametrize(
+        "ref",
+        [
+            "main",
+            "feature/my-branch",
+            "be/master_associations",
+            "v0.4.2",
+            "2024-06-01",
+            "release+1",
+            "user@host",
+            "8a50c60d4a5417a17d784ab0588d2d85212543db",
+            "8a50c60",
+        ],
+    )
     def test_accepts_plausible_refs(self, ref):
         assert gui._validate_ref(ref) == ref
 
-    @pytest.mark.parametrize("ref", [
-        "-x", "--upload-pack=echo", "a b", "a..b", "HEAD^", "x~1", "a:b",
-        "refs/heads/x.lock", "x/", "x.", "a\nb", "a?b", "a*b", "a[b", "a\\b",
-        "a{b", "x" * 300,
-    ])
+    @pytest.mark.parametrize(
+        "ref",
+        [
+            "-x",
+            "--upload-pack=echo",
+            "a b",
+            "a..b",
+            "HEAD^",
+            "x~1",
+            "a:b",
+            "refs/heads/x.lock",
+            "x/",
+            "x.",
+            "a\nb",
+            "a?b",
+            "a*b",
+            "a[b",
+            "a\\b",
+            "a{b",
+            "x" * 300,
+        ],
+    )
     def test_rejects_bad_refs(self, ref):
         with pytest.raises(ValueError):
             gui._validate_ref(ref)
@@ -1198,6 +1321,7 @@ class TestSameRemote:
 # ---------------------------------------------------------------------------
 # _parse_ls_remote
 # ---------------------------------------------------------------------------
+
 
 class TestParseLsRemote:
     SAMPLE = (
@@ -1244,6 +1368,7 @@ class TestParseLsRemote:
 # _describe_head
 # ---------------------------------------------------------------------------
 
+
 class TestDescribeHead:
     def test_absent_clone_never_shells_out(self, tmp_path, monkeypatch):
         called = []
@@ -1256,54 +1381,85 @@ class TestDescribeHead:
         return tmp_path
 
     def test_on_a_branch(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(gui, "_git", _fake_git({
-            "rev-parse --short=8": _cp("d2d257c5\n"),
-            "symbolic-ref": _cp("main\n"),
-            "status": _cp(""),
-            "is-shallow-repository": _cp("false\n"),
-        }))
+        monkeypatch.setattr(
+            gui,
+            "_git",
+            _fake_git(
+                {
+                    "rev-parse --short=8": _cp("d2d257c5\n"),
+                    "symbolic-ref": _cp("main\n"),
+                    "status": _cp(""),
+                    "is-shallow-repository": _cp("false\n"),
+                }
+            ),
+        )
         assert gui._describe_head(self._repo(tmp_path)) == "main @ d2d257c5"
 
     def test_detached_at_a_tag(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(gui, "_git", _fake_git({
-            "rev-parse --short=8": _cp("8a50c604\n"),
-            "symbolic-ref": _cp("", 1),
-            "describe": _cp("v0.4.2\n"),
-            "status": _cp(""),
-            "is-shallow-repository": _cp("false\n"),
-        }))
+        monkeypatch.setattr(
+            gui,
+            "_git",
+            _fake_git(
+                {
+                    "rev-parse --short=8": _cp("8a50c604\n"),
+                    "symbolic-ref": _cp("", 1),
+                    "describe": _cp("v0.4.2\n"),
+                    "status": _cp(""),
+                    "is-shallow-repository": _cp("false\n"),
+                }
+            ),
+        )
         assert gui._describe_head(self._repo(tmp_path)) == "v0.4.2 (tag) @ 8a50c604"
 
     def test_detached_without_a_tag(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(gui, "_git", _fake_git({
-            "rev-parse --short=8": _cp("8a50c604\n"),
-            "symbolic-ref": _cp("", 1),
-            "describe": _cp("", 128),
-            "status": _cp(""),
-            "is-shallow-repository": _cp("false\n"),
-        }))
+        monkeypatch.setattr(
+            gui,
+            "_git",
+            _fake_git(
+                {
+                    "rev-parse --short=8": _cp("8a50c604\n"),
+                    "symbolic-ref": _cp("", 1),
+                    "describe": _cp("", 128),
+                    "status": _cp(""),
+                    "is-shallow-repository": _cp("false\n"),
+                }
+            ),
+        )
         assert gui._describe_head(self._repo(tmp_path)) == "detached @ 8a50c604"
 
     def test_dirty_and_shallow_markers(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(gui, "_git", _fake_git({
-            "rev-parse --short=8": _cp("d2d257c5\n"),
-            "symbolic-ref": _cp("main\n"),
-            "status": _cp(" M x.py\n"),
-            "is-shallow-repository": _cp("true\n"),
-        }))
+        monkeypatch.setattr(
+            gui,
+            "_git",
+            _fake_git(
+                {
+                    "rev-parse --short=8": _cp("d2d257c5\n"),
+                    "symbolic-ref": _cp("main\n"),
+                    "status": _cp(" M x.py\n"),
+                    "is-shallow-repository": _cp("true\n"),
+                }
+            ),
+        )
         out = gui._describe_head(self._repo(tmp_path))
         assert out == "main @ d2d257c5 · modified · shallow"
 
     def test_broken_repo(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(gui, "_git", _fake_git({
-            "rev-parse --short=8": _cp("", 128),
-        }))
+        monkeypatch.setattr(
+            gui,
+            "_git",
+            _fake_git(
+                {
+                    "rev-parse --short=8": _cp("", 128),
+                }
+            ),
+        )
         assert gui._describe_head(self._repo(tmp_path)) == "not a git repository"
 
 
 # ---------------------------------------------------------------------------
 # _dirty_files
 # ---------------------------------------------------------------------------
+
 
 class TestDirtyFiles:
     def test_absent_clone_is_not_dirty(self, tmp_path):
@@ -1316,15 +1472,13 @@ class TestDirtyFiles:
 
     def test_dirty_tree_returns_lines(self, tmp_path, monkeypatch):
         (tmp_path / ".git").mkdir()
-        monkeypatch.setattr(gui, "_git",
-                            _fake_git({"status": _cp(" M a.py\n?? b.py\n")}))
+        monkeypatch.setattr(gui, "_git", _fake_git({"status": _cp(" M a.py\n?? b.py\n")}))
         assert gui._dirty_files(tmp_path) == [" M a.py", "?? b.py"]
 
     def test_git_failure_raises_rather_than_assuming_clean(self, tmp_path, monkeypatch):
         # Assuming "clean" here would silently destroy work.
         (tmp_path / ".git").mkdir()
-        monkeypatch.setattr(gui, "_git",
-                            _fake_git({"status": _cp("", 128, "index corrupt")}))
+        monkeypatch.setattr(gui, "_git", _fake_git({"status": _cp("", 128, "index corrupt")}))
         with pytest.raises(RuntimeError, match="index corrupt"):
             gui._dirty_files(tmp_path)
 
@@ -1339,14 +1493,14 @@ SHA = "8a50c60d4a5417a17d784ab0588d2d85212543db"
 
 def _worker(qapp, **kw):
     from metis_test_runner.gui import InstallWorker
+
     return InstallWorker(**kw)
 
 
 def _spy(worker, monkeypatch):
     """Record every argv passed to the fatal/streaming _run."""
     invoked = []
-    monkeypatch.setattr(worker, "_run", lambda cmd, **kw: invoked.append(
-        [str(c) for c in cmd]))
+    monkeypatch.setattr(worker, "_run", lambda cmd, **kw: invoked.append([str(c) for c in cmd]))
     return invoked
 
 
@@ -1361,16 +1515,21 @@ def _flat(invoked):
 
 
 class TestCloneOrUpdateRef:
-    def test_absent_target_with_branch_inits_fetches_and_checks_out(
-            self, qapp, tmp_path, monkeypatch):
+    def test_absent_target_with_branch_inits_fetches_and_checks_out(self, qapp, tmp_path, monkeypatch):
         w = _worker(qapp)
         invoked = _spy(w, monkeypatch)
-        monkeypatch.setattr(gui, "_git", _fake_git({
-            "fetch": _cp(""),                       # _try_fetch succeeds
-            "rev-parse FETCH_HEAD": _cp(SHA),
-            "rev-parse HEAD": _cp("other"),
-            "refs/remotes/origin/main": _cp(SHA),   # it is a branch
-        }))
+        monkeypatch.setattr(
+            gui,
+            "_git",
+            _fake_git(
+                {
+                    "fetch": _cp(""),  # _try_fetch succeeds
+                    "rev-parse FETCH_HEAD": _cp(SHA),
+                    "rev-parse HEAD": _cp("other"),
+                    "refs/remotes/origin/main": _cp(SHA),  # it is a branch
+                }
+            ),
+        )
         w._clone_or_update(URL, tmp_path / "new", "main")
 
         flat = _flat(invoked)
@@ -1379,16 +1538,22 @@ class TestCloneOrUpdateRef:
         assert any("checkout -f -B main FETCH_HEAD" in c for c in flat)
         assert not any("clone" in c for c in flat)
 
-    def test_branch_fetch_is_shallow_and_option_safe(
-            self, qapp, tmp_path, monkeypatch):
+    def test_branch_fetch_is_shallow_and_option_safe(self, qapp, tmp_path, monkeypatch):
         seen = []
         w = _worker(qapp)
         _spy(w, monkeypatch)
-        monkeypatch.setattr(gui, "_git", _fake_git({
-            "rev-parse FETCH_HEAD": _cp(SHA),
-            "rev-parse HEAD": _cp("other"),
-            "refs/remotes/origin/main": _cp(SHA),
-        }, recorder=seen))
+        monkeypatch.setattr(
+            gui,
+            "_git",
+            _fake_git(
+                {
+                    "rev-parse FETCH_HEAD": _cp(SHA),
+                    "rev-parse HEAD": _cp("other"),
+                    "refs/remotes/origin/main": _cp(SHA),
+                },
+                recorder=seen,
+            ),
+        )
         w._clone_or_update(URL, tmp_path / "new", "main")
 
         fetches = [_argv_text(c) for c in seen if "fetch" in c]
@@ -1397,49 +1562,66 @@ class TestCloneOrUpdateRef:
         # never be read as an option.
         assert "--depth 1 --end-of-options origin main" in fetches[0]
 
-    def test_tag_or_sha_checks_out_detached_not_a_branch(
-            self, qapp, tmp_path, monkeypatch):
+    def test_tag_or_sha_checks_out_detached_not_a_branch(self, qapp, tmp_path, monkeypatch):
         w = _worker(qapp)
         invoked = _spy(w, monkeypatch)
-        monkeypatch.setattr(gui, "_git", _fake_git({
-            "rev-parse FETCH_HEAD": _cp(SHA),
-            "rev-parse HEAD": _cp("other"),
-            "refs/remotes/origin/": _cp("", 1),     # not a branch
-        }))
+        monkeypatch.setattr(
+            gui,
+            "_git",
+            _fake_git(
+                {
+                    "rev-parse FETCH_HEAD": _cp(SHA),
+                    "rev-parse HEAD": _cp("other"),
+                    "refs/remotes/origin/": _cp("", 1),  # not a branch
+                }
+            ),
+        )
         w._clone_or_update(URL, _repo(tmp_path), "v0.4.2")
 
         flat = _flat(invoked)
         assert any("checkout -f --detach FETCH_HEAD" in c for c in flat)
         assert not any(" -B " in c for c in flat)
 
-    def test_full_sha_needs_only_one_fetch_and_no_unshallow(
-            self, qapp, tmp_path, monkeypatch):
+    def test_full_sha_needs_only_one_fetch_and_no_unshallow(self, qapp, tmp_path, monkeypatch):
         seen = []
         w = _worker(qapp)
         invoked = _spy(w, monkeypatch)
-        monkeypatch.setattr(gui, "_git", _fake_git({
-            "rev-parse FETCH_HEAD": _cp(SHA),
-            "rev-parse HEAD": _cp("other"),
-            "refs/remotes/origin/": _cp("", 1),
-        }, recorder=seen))
+        monkeypatch.setattr(
+            gui,
+            "_git",
+            _fake_git(
+                {
+                    "rev-parse FETCH_HEAD": _cp(SHA),
+                    "rev-parse HEAD": _cp("other"),
+                    "refs/remotes/origin/": _cp("", 1),
+                },
+                recorder=seen,
+            ),
+        )
         w._clone_or_update(URL, _repo(tmp_path), SHA)
 
         assert len([c for c in seen if "fetch" in c]) == 1
         assert not any("unshallow" in c for c in _flat(invoked))
 
-    def test_abbreviated_sha_skips_the_doomed_fetch_and_unshallows(
-            self, qapp, tmp_path, monkeypatch):
+    def test_abbreviated_sha_skips_the_doomed_fetch_and_unshallows(self, qapp, tmp_path, monkeypatch):
         # GitHub cannot serve `fetch origin <short-sha>`, so the shallow fetch
         # is skipped outright rather than attempted and failed.
         seen = []
         w = _worker(qapp)
         invoked = _spy(w, monkeypatch)
-        monkeypatch.setattr(gui, "_git", _fake_git({
-            "is-shallow-repository": _cp("true\n"),
-            "8a50c60^{commit}": _cp(SHA),
-            "rev-parse HEAD": _cp("other"),
-            "refs/remotes/origin/": _cp("", 1),
-        }, recorder=seen))
+        monkeypatch.setattr(
+            gui,
+            "_git",
+            _fake_git(
+                {
+                    "is-shallow-repository": _cp("true\n"),
+                    "8a50c60^{commit}": _cp(SHA),
+                    "rev-parse HEAD": _cp("other"),
+                    "refs/remotes/origin/": _cp("", 1),
+                },
+                recorder=seen,
+            ),
+        )
         w._clone_or_update(URL, _repo(tmp_path), "8a50c60")
 
         assert not any("fetch" in c and "8a50c60" in _argv_text(c) for c in seen)
@@ -1447,65 +1629,84 @@ class TestCloneOrUpdateRef:
         assert any("fetch --unshallow" in c for c in flat)
         assert any(f"checkout -f --detach {SHA}" in c for c in flat)
 
-    def test_unshallow_is_skipped_on_a_complete_repo(
-            self, qapp, tmp_path, monkeypatch):
+    def test_unshallow_is_skipped_on_a_complete_repo(self, qapp, tmp_path, monkeypatch):
         # `fetch --unshallow` errors out on a repo that is not shallow.
         w = _worker(qapp)
         invoked = _spy(w, monkeypatch)
-        monkeypatch.setattr(gui, "_git", _fake_git({
-            "is-shallow-repository": _cp("false\n"),
-            "8a50c60^{commit}": _cp(SHA),
-            "rev-parse HEAD": _cp("other"),
-            "refs/remotes/origin/": _cp("", 1),
-        }))
+        monkeypatch.setattr(
+            gui,
+            "_git",
+            _fake_git(
+                {
+                    "is-shallow-repository": _cp("false\n"),
+                    "8a50c60^{commit}": _cp(SHA),
+                    "rev-parse HEAD": _cp("other"),
+                    "refs/remotes/origin/": _cp("", 1),
+                }
+            ),
+        )
         w._clone_or_update(URL, _repo(tmp_path), "8a50c60")
         assert not any("unshallow" in c for c in _flat(invoked))
 
-    def test_unresolvable_ref_raises_and_never_touches_fetch_head(
-            self, qapp, tmp_path, monkeypatch):
+    def test_unresolvable_ref_raises_and_never_touches_fetch_head(self, qapp, tmp_path, monkeypatch):
         # A failed fetch truncates FETCH_HEAD, so checking it out would pick up
         # a stale commit from an earlier fetch.
         w = _worker(qapp)
         invoked = _spy(w, monkeypatch)
-        monkeypatch.setattr(gui, "_git", _fake_git({
-            "fetch": _cp("", 128, "couldn't find remote ref"),
-            "^{commit}": _cp("", 128),
-            "is-shallow-repository": _cp("false\n"),
-        }))
+        monkeypatch.setattr(
+            gui,
+            "_git",
+            _fake_git(
+                {
+                    "fetch": _cp("", 128, "couldn't find remote ref"),
+                    "^{commit}": _cp("", 128),
+                    "is-shallow-repository": _cp("false\n"),
+                }
+            ),
+        )
         with pytest.raises(RuntimeError, match="not a branch, tag or commit"):
             w._clone_or_update(URL, _repo(tmp_path), SHA)
         assert not any("checkout" in c for c in _flat(invoked))
 
-    def test_mistyped_branch_fails_fast_without_a_full_history_fetch(
-            self, qapp, tmp_path, monkeypatch):
+    def test_mistyped_branch_fails_fast_without_a_full_history_fetch(self, qapp, tmp_path, monkeypatch):
         # Only a hex commit id can need the un-shallow fallback; a bad branch
         # name must not cost a full clone before erroring.
         w = _worker(qapp)
         invoked = _spy(w, monkeypatch)
-        monkeypatch.setattr(gui, "_git", _fake_git({
-            "fetch": _cp("", 128, "couldn't find remote ref"),
-        }))
+        monkeypatch.setattr(
+            gui,
+            "_git",
+            _fake_git(
+                {
+                    "fetch": _cp("", 128, "couldn't find remote ref"),
+                }
+            ),
+        )
         with pytest.raises(RuntimeError, match="not a branch or tag"):
             w._clone_or_update(URL, _repo(tmp_path), "no-such-branch")
         assert not any("unshallow" in c for c in _flat(invoked))
 
-    def test_already_at_target_leaves_the_tree_untouched(
-            self, qapp, tmp_path, monkeypatch):
+    def test_already_at_target_leaves_the_tree_untouched(self, qapp, tmp_path, monkeypatch):
         w = _worker(qapp)
         invoked = _spy(w, monkeypatch)
-        monkeypatch.setattr(gui, "_git", _fake_git({
-            "rev-parse FETCH_HEAD": _cp(SHA),
-            "rev-parse HEAD": _cp(SHA),
-            "refs/remotes/origin/main": _cp(SHA),
-            "symbolic-ref": _cp("main\n"),
-        }))
+        monkeypatch.setattr(
+            gui,
+            "_git",
+            _fake_git(
+                {
+                    "rev-parse FETCH_HEAD": _cp(SHA),
+                    "rev-parse HEAD": _cp(SHA),
+                    "refs/remotes/origin/main": _cp(SHA),
+                    "symbolic-ref": _cp("main\n"),
+                }
+            ),
+        )
         w._clone_or_update(URL, _repo(tmp_path), "main")
         flat = _flat(invoked)
         assert not any("checkout" in c for c in flat)
         assert not any("clean" in c for c in flat)
 
-    def test_non_empty_non_repo_dir_refuses_before_git_init(
-            self, qapp, tmp_path, monkeypatch):
+    def test_non_empty_non_repo_dir_refuses_before_git_init(self, qapp, tmp_path, monkeypatch):
         # The guard must sit ABOVE the ref dispatch: `git init` would happily
         # initialise over a non-empty foreign directory.
         target = tmp_path / "foreign"
@@ -1526,8 +1727,7 @@ class TestCloneOrUpdateRef:
 
 
 class TestCloneOrUpdateBlankRef:
-    def test_absent_target_still_takes_the_shallow_clone_fast_path(
-            self, qapp, tmp_path, monkeypatch):
+    def test_absent_target_still_takes_the_shallow_clone_fast_path(self, qapp, tmp_path, monkeypatch):
         w = _worker(qapp)
         invoked = _spy(w, monkeypatch)
         monkeypatch.setattr(gui, "_git", _fake_git({}))
@@ -1536,43 +1736,58 @@ class TestCloneOrUpdateBlankRef:
         assert any("clone --depth 1" in c for c in flat)
         assert not any("git init" in c for c in flat)
 
-    def test_branch_checkout_fast_forwards_without_resetting(
-            self, qapp, tmp_path, monkeypatch):
+    def test_branch_checkout_fast_forwards_without_resetting(self, qapp, tmp_path, monkeypatch):
         w = _worker(qapp)
         invoked = _spy(w, monkeypatch)
-        monkeypatch.setattr(gui, "_git", _fake_git({
-            "symbolic-ref": _cp("main\n"),
-            "pull": _cp("Already up to date.\n"),
-        }))
+        monkeypatch.setattr(
+            gui,
+            "_git",
+            _fake_git(
+                {
+                    "symbolic-ref": _cp("main\n"),
+                    "pull": _cp("Already up to date.\n"),
+                }
+            ),
+        )
         w._clone_or_update(URL, _repo(tmp_path))
         flat = _flat(invoked)
         assert any("fetch --all --prune" in c for c in flat)
         assert not any("reset" in c for c in flat)
         assert not any("clean" in c for c in flat)
 
-    def test_failed_pull_is_fatal_instead_of_silently_swallowed(
-            self, qapp, tmp_path, monkeypatch):
+    def test_failed_pull_is_fatal_instead_of_silently_swallowed(self, qapp, tmp_path, monkeypatch):
         # Pre-existing bug: the old bare subprocess.run never checked the
         # return code, so a diverged branch left the install running on the
         # wrong commit.
         w = _worker(qapp)
         _spy(w, monkeypatch)
-        monkeypatch.setattr(gui, "_git", _fake_git({
-            "symbolic-ref": _cp("main\n"),
-            "pull": _cp("", 1, "Not possible to fast-forward"),
-        }))
+        monkeypatch.setattr(
+            gui,
+            "_git",
+            _fake_git(
+                {
+                    "symbolic-ref": _cp("main\n"),
+                    "pull": _cp("", 1, "Not possible to fast-forward"),
+                }
+            ),
+        )
         with pytest.raises(RuntimeError, match="ff-only"):
             w._clone_or_update(URL, _repo(tmp_path))
 
-    def test_failed_pull_with_force_resets_then_retries(
-            self, qapp, tmp_path, monkeypatch):
+    def test_failed_pull_with_force_resets_then_retries(self, qapp, tmp_path, monkeypatch):
         w = _worker(qapp)
         invoked = _spy(w, monkeypatch)
-        monkeypatch.setattr(gui, "_git", _fake_git({
-            "symbolic-ref": _cp("main\n"),
-            "pull": _cp("", 1, "diverged"),
-            "status": _cp(" M x.py\n"),
-        }))
+        monkeypatch.setattr(
+            gui,
+            "_git",
+            _fake_git(
+                {
+                    "symbolic-ref": _cp("main\n"),
+                    "pull": _cp("", 1, "diverged"),
+                    "status": _cp(" M x.py\n"),
+                }
+            ),
+        )
         w._clone_or_update(URL, _repo(tmp_path), force=True)
         flat = _flat(invoked)
         assert any("reset --hard" in c for c in flat)
@@ -1580,49 +1795,57 @@ class TestCloneOrUpdateBlankRef:
         assert not any("-fdx" in c for c in flat)
         assert any("pull --ff-only" in c for c in flat)
 
-    def test_detached_head_returns_to_the_default_branch(
-            self, qapp, tmp_path, monkeypatch):
+    def test_detached_head_returns_to_the_default_branch(self, qapp, tmp_path, monkeypatch):
         # Leftover from an earlier pinned install: `pull --ff-only` cannot work
         # on a detached HEAD, and blank means "go back to normal".
         w = _worker(qapp)
         invoked = _spy(w, monkeypatch)
-        monkeypatch.setattr(gui, "_git", _fake_git({
-            "symbolic-ref": _cp("", 1),
-            "ls-remote --symref": _cp("ref: refs/heads/main\tHEAD\nabc\tHEAD\n"),
-            "rev-parse FETCH_HEAD": _cp(SHA),
-            "rev-parse HEAD": _cp("other"),
-            "refs/remotes/origin/main": _cp(SHA),
-        }))
+        monkeypatch.setattr(
+            gui,
+            "_git",
+            _fake_git(
+                {
+                    "symbolic-ref": _cp("", 1),
+                    "ls-remote --symref": _cp("ref: refs/heads/main\tHEAD\nabc\tHEAD\n"),
+                    "rev-parse FETCH_HEAD": _cp(SHA),
+                    "rev-parse HEAD": _cp("other"),
+                    "refs/remotes/origin/main": _cp(SHA),
+                }
+            ),
+        )
         w._clone_or_update(URL, _repo(tmp_path))
         flat = _flat(invoked)
         assert any("checkout -f -B main FETCH_HEAD" in c for c in flat)
         assert not any("pull --ff-only" in c for c in flat)
 
-    def test_symref_failure_falls_back_to_head_without_raising(
-            self, qapp, tmp_path, monkeypatch):
+    def test_symref_failure_falls_back_to_head_without_raising(self, qapp, tmp_path, monkeypatch):
         w = _worker(qapp)
         _spy(w, monkeypatch)
-        monkeypatch.setattr(gui, "_git", _fake_git({
-            "symbolic-ref": _cp("", 1),
-            "ls-remote --symref": _cp("", 128),
-            "rev-parse FETCH_HEAD": _cp(SHA),
-            "rev-parse HEAD": _cp("other"),
-            "refs/remotes/origin/": _cp("", 1),
-        }))
-        w._clone_or_update(URL, _repo(tmp_path))   # must not raise
+        monkeypatch.setattr(
+            gui,
+            "_git",
+            _fake_git(
+                {
+                    "symbolic-ref": _cp("", 1),
+                    "ls-remote --symref": _cp("", 128),
+                    "rev-parse FETCH_HEAD": _cp(SHA),
+                    "rev-parse HEAD": _cp("other"),
+                    "refs/remotes/origin/": _cp("", 1),
+                }
+            ),
+        )
+        w._clone_or_update(URL, _repo(tmp_path))  # must not raise
 
 
 class TestMakeRoom:
-    def test_clean_tree_is_never_reset_even_with_force(
-            self, qapp, tmp_path, monkeypatch):
+    def test_clean_tree_is_never_reset_even_with_force(self, qapp, tmp_path, monkeypatch):
         w = _worker(qapp)
         invoked = _spy(w, monkeypatch)
         monkeypatch.setattr(gui, "_git", _fake_git({"status": _cp("")}))
         w._make_room(_repo(tmp_path), force=True)
         assert invoked == []
 
-    def test_dirty_tree_without_confirmation_refuses(
-            self, qapp, tmp_path, monkeypatch):
+    def test_dirty_tree_without_confirmation_refuses(self, qapp, tmp_path, monkeypatch):
         # The worker re-checks rather than trusting the GUI's flag.
         w = _worker(qapp)
         _spy(w, monkeypatch)
@@ -1630,8 +1853,7 @@ class TestMakeRoom:
         with pytest.raises(RuntimeError, match="not confirmed"):
             w._make_room(_repo(tmp_path), force=False)
 
-    def test_dirty_tree_with_confirmation_resets_and_cleans(
-            self, qapp, tmp_path, monkeypatch):
+    def test_dirty_tree_with_confirmation_resets_and_cleans(self, qapp, tmp_path, monkeypatch):
         w = _worker(qapp)
         invoked = _spy(w, monkeypatch)
         monkeypatch.setattr(gui, "_git", _fake_git({"status": _cp("?? x.py\n")}))
@@ -1647,13 +1869,16 @@ class TestMakeRoom:
 # InstallTab — ref selection UI
 # ---------------------------------------------------------------------------
 
+
 def _install_tab(qapp):
     from metis_test_runner.gui import InstallTab
+
     return InstallTab()
 
 
 class _FakeWorker:
     """Stands in for InstallWorker so _start can be driven without a thread."""
+
     constructed = []
 
     def __init__(self, refs=None, force=None):
@@ -1701,6 +1926,7 @@ class TestInstallTabRefWidgets:
 
     def test_enter_does_not_append_typed_text_to_the_dropdown(self, qapp):
         from PyQt6.QtWidgets import QComboBox
+
         tab = _install_tab(qapp)
         for combo in tab.ref_combos.values():
             assert combo.insertPolicy() == QComboBox.InsertPolicy.NoInsert
@@ -1751,11 +1977,11 @@ class TestInstallTabRefWidgets:
 class TestInstallTabStart:
     def test_invalid_ref_blocks_the_install(self, qapp, monkeypatch):
         from PyQt6.QtWidgets import QMessageBox
+
         tab = _install_tab(qapp)
         fake = _stub_worker(monkeypatch)
         warned = []
-        monkeypatch.setattr(QMessageBox, "warning",
-                            lambda *a, **k: warned.append(a))
+        monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a))
         tab.ref_combos["pipeline_ref"].setCurrentText("--upload-pack=echo")
         tab._start()
         assert warned, "expected a warning dialog"
@@ -1763,11 +1989,11 @@ class TestInstallTabStart:
 
     def test_clean_trees_are_never_questioned(self, qapp, monkeypatch):
         from PyQt6.QtWidgets import QMessageBox
+
         tab = _install_tab(qapp)
         fake = _stub_worker(monkeypatch)
         asked = []
-        monkeypatch.setattr(QMessageBox, "question",
-                            lambda *a, **k: asked.append(a))
+        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: asked.append(a))
         monkeypatch.setattr(gui, "_dirty_files", lambda t: [])
         tab._start()
         assert asked == []
@@ -1776,47 +2002,45 @@ class TestInstallTabStart:
 
     def test_declining_the_discard_dialog_aborts(self, qapp, monkeypatch):
         from PyQt6.QtWidgets import QMessageBox
+
         tab = _install_tab(qapp)
         fake = _stub_worker(monkeypatch)
         monkeypatch.setattr(gui, "_dirty_files", lambda t: [" M x.py"])
-        monkeypatch.setattr(QMessageBox, "question",
-                            lambda *a, **k: QMessageBox.StandardButton.No)
+        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
         tab._start()
         assert fake.constructed == []
 
     def test_accepting_the_dialog_forces_only_that_repo(self, qapp, monkeypatch):
         from PyQt6.QtWidgets import QMessageBox
+
         tab = _install_tab(qapp)
         fake = _stub_worker(monkeypatch)
         # Only the pipeline clone is dirty; confirming it must NOT authorise
         # discarding work in the simulations clone.
-        monkeypatch.setattr(
-            gui, "_dirty_files",
-            lambda t: [" M x.py"] if t == gui.TARGET_A else [])
-        monkeypatch.setattr(QMessageBox, "question",
-                            lambda *a, **k: QMessageBox.StandardButton.Yes)
+        monkeypatch.setattr(gui, "_dirty_files", lambda t: [" M x.py"] if t == gui.TARGET_A else [])
+        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
         tab._start()
         assert len(fake.constructed) == 1
         assert fake.constructed[0].force == {gui.TARGET_A}
 
-    def test_dirty_tree_is_checked_even_when_the_ref_is_unchanged(
-            self, qapp, monkeypatch):
+    def test_dirty_tree_is_checked_even_when_the_ref_is_unchanged(self, qapp, monkeypatch):
         # checkout -f discards tracked edits whether or not the ref moved, so
         # the dialog must not be gated on a ref change.
         from PyQt6.QtWidgets import QMessageBox
+
         tab = _install_tab(qapp)
         _stub_worker(monkeypatch)
         asked = []
         monkeypatch.setattr(gui, "_dirty_files", lambda t: [" M x.py"])
         monkeypatch.setattr(
-            QMessageBox, "question",
-            lambda *a, **k: (asked.append(a), QMessageBox.StandardButton.Yes)[1])
-        tab._start()          # every combo left blank — no ref change at all
+            QMessageBox, "question", lambda *a, **k: (asked.append(a), QMessageBox.StandardButton.Yes)[1]
+        )
+        tab._start()  # every combo left blank — no ref change at all
         assert asked, "a dirty tree must be questioned even with a blank ref"
 
-    def test_unreadable_status_asks_rather_than_assuming_clean(
-            self, qapp, monkeypatch):
+    def test_unreadable_status_asks_rather_than_assuming_clean(self, qapp, monkeypatch):
         from PyQt6.QtWidgets import QMessageBox
+
         tab = _install_tab(qapp)
         fake = _stub_worker(monkeypatch)
 
@@ -1824,18 +2048,17 @@ class TestInstallTabStart:
             raise RuntimeError("index corrupt")
 
         monkeypatch.setattr(gui, "_dirty_files", boom)
-        monkeypatch.setattr(QMessageBox, "question",
-                            lambda *a, **k: QMessageBox.StandardButton.No)
+        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
         tab._start()
         assert fake.constructed == []
 
     def test_selected_refs_reach_the_worker(self, qapp, monkeypatch):
         from PyQt6.QtWidgets import QMessageBox
+
         tab = _install_tab(qapp)
         fake = _stub_worker(monkeypatch)
         monkeypatch.setattr(gui, "_dirty_files", lambda t: [])
-        monkeypatch.setattr(QMessageBox, "question",
-                            lambda *a, **k: QMessageBox.StandardButton.Yes)
+        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
         tab.ref_combos["pipeline_ref"].setCurrentText("  feature/x  ")
         tab._start()
         assert fake.constructed[0].refs[gui.TARGET_A] == "feature/x"
@@ -1849,8 +2072,7 @@ class TestRefWorker:
     def test_status_is_emitted_before_the_network_call(self, qapp, monkeypatch):
         seen = []
         monkeypatch.setattr(gui, "_describe_head", lambda t: "main @ abc")
-        monkeypatch.setattr(gui, "_git",
-                            _fake_git({"ls-remote": _cp("aaa\trefs/heads/main\n")}))
+        monkeypatch.setattr(gui, "_git", _fake_git({"ls-remote": _cp("aaa\trefs/heads/main\n")}))
         w = gui.RefWorker("k", "http://x.invalid/r.git", Path("/nope"))
         w.status.connect(lambda k, s: seen.append(("status", s)))
         w.refs.connect(lambda k, r: seen.append(("refs", r)))
@@ -1861,9 +2083,15 @@ class TestRefWorker:
     def test_ls_remote_failure_emits_failed_not_refs(self, qapp, monkeypatch):
         seen = []
         monkeypatch.setattr(gui, "_describe_head", lambda t: "not cloned")
-        monkeypatch.setattr(gui, "_git", _fake_git({
-            "ls-remote": _cp("", 128, "fatal: could not read Username"),
-        }))
+        monkeypatch.setattr(
+            gui,
+            "_git",
+            _fake_git(
+                {
+                    "ls-remote": _cp("", 128, "fatal: could not read Username"),
+                }
+            ),
+        )
         w = gui.RefWorker("k", "http://x.invalid/r.git", Path("/nope"))
         w.refs.connect(lambda k, r: seen.append("refs"))
         w.failed.connect(lambda k, r: seen.append(("failed", r)))
@@ -1886,6 +2114,7 @@ class TestMainWindowKeepsInstallTab:
         # MainWindow used to construct InstallTab inline, so closeEvent could
         # not save its settings or stop its ref-list thread.
         from metis_test_runner.gui import InstallTab, MainWindow
+
         win = MainWindow()
         assert isinstance(win._install_tab, InstallTab)
         win.close()
@@ -1894,6 +2123,7 @@ class TestMainWindowKeepsInstallTab:
 # ---------------------------------------------------------------------------
 # RefComboBox — mouse access to the dropdown
 # ---------------------------------------------------------------------------
+
 
 class TestRefComboBox:
     def _click(self, qapp, combo):
@@ -1907,10 +2137,17 @@ class TestRefComboBox:
         from PyQt6.QtGui import QMouseEvent
 
         def send(widget, typ):
-            qapp.sendEvent(widget, QMouseEvent(
-                typ, QPointF(10, 10), QPointF(10, 10),
-                Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
-                Qt.KeyboardModifier.NoModifier))
+            qapp.sendEvent(
+                widget,
+                QMouseEvent(
+                    typ,
+                    QPointF(10, 10),
+                    QPointF(10, 10),
+                    Qt.MouseButton.LeftButton,
+                    Qt.MouseButton.LeftButton,
+                    Qt.KeyboardModifier.NoModifier,
+                ),
+            )
 
         send(combo.lineEdit(), QEvent.Type.MouseButtonPress)
         # A real release goes wherever the popup now is.
@@ -1930,6 +2167,7 @@ class TestRefComboBox:
 
     def test_enter_does_not_append_typed_text_to_the_list(self, qapp):
         from PyQt6.QtWidgets import QComboBox
+
         assert self._combo(qapp).insertPolicy() == QComboBox.InsertPolicy.NoInsert
 
     def test_click_on_blank_field_opens_the_list(self, qapp):
@@ -1976,12 +2214,12 @@ class TestRefComboBox:
     def test_picking_from_the_open_list_sets_the_value(self, qapp):
         from PyQt6.QtCore import QEvent, Qt
         from PyQt6.QtGui import QKeyEvent
+
         c = self._combo(qapp)
         self._click(qapp, c)
         assert c.view().isVisible()
         for key in (Qt.Key.Key_Down, Qt.Key.Key_Return):
-            qapp.sendEvent(c.view(), QKeyEvent(
-                QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier))
+            qapp.sendEvent(c.view(), QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier))
         qapp.processEvents()
         assert not c.view().isVisible()
         assert c.currentText() in ("main", "AIT_Templates")
@@ -2000,11 +2238,11 @@ class TestComboArrowIsNotSuppressed:
         import re
 
         from PyQt6.QtWidgets import QApplication
+
         gui.apply_theme(QApplication.instance(), "dark")
         # Strip /* … */ comments: the stylesheet explains this rule's absence
         # by naming the subcontrol.
-        qss = re.sub(r"/\*.*?\*/", "", QApplication.instance().styleSheet(),
-                     flags=re.S)
+        qss = re.sub(r"/\*.*?\*/", "", QApplication.instance().styleSheet(), flags=re.S)
         assert "QComboBox::drop-down" not in qss
         assert "QComboBox::down-arrow" not in qss
 
@@ -2012,6 +2250,7 @@ class TestComboArrowIsNotSuppressed:
 # ---------------------------------------------------------------------------
 # stream_subprocess — real subprocesses, real deadlines
 # ---------------------------------------------------------------------------
+
 
 class TestStreamSubprocess:
     """These run actual processes: the bug being guarded is that the old
@@ -2026,7 +2265,8 @@ class TestStreamSubprocess:
     def test_streams_stdout(self):
         out, on_line = self._lines()
         gui.stream_subprocess(
-            [sys.executable, "-c", "print('hello')"], on_line=on_line,
+            [sys.executable, "-c", "print('hello')"],
+            on_line=on_line,
         )
         assert any("hello" in line for line in out)
 
@@ -2039,14 +2279,16 @@ class TestStreamSubprocess:
         _, on_line = self._lines()
         with pytest.raises(RuntimeError, match="exited 3"):
             gui.stream_subprocess(
-                [sys.executable, "-c", "raise SystemExit(3)"], on_line=on_line,
+                [sys.executable, "-c", "raise SystemExit(3)"],
+                on_line=on_line,
             )
 
     def test_stdin_text_is_delivered(self):
         out, on_line = self._lines()
         gui.stream_subprocess(
             [sys.executable, "-c", "import sys; print(sys.stdin.read().strip())"],
-            on_line=on_line, stdin_text="from-stdin",
+            on_line=on_line,
+            stdin_text="from-stdin",
         )
         assert any("from-stdin" in line for line in out)
 
@@ -2054,7 +2296,8 @@ class TestStreamSubprocess:
         out, on_line = self._lines()
         gui.stream_subprocess(
             [sys.executable, "-c", "import os; print(os.getcwd())"],
-            on_line=on_line, cwd=tmp_path,
+            on_line=on_line,
+            cwd=tmp_path,
         )
         assert any(str(tmp_path) in line for line in out)
 
@@ -2073,7 +2316,8 @@ class TestStreamSubprocess:
         with pytest.raises(TimeoutError, match="timed out"):
             gui.stream_subprocess(
                 [sys.executable, "-c", "import time; time.sleep(60)"],
-                on_line=on_line, timeout=1,
+                on_line=on_line,
+                timeout=1,
             )
         assert time.monotonic() - start < 20, "watchdog did not interrupt the wait"
 
@@ -2088,14 +2332,18 @@ class TestStreamSubprocess:
         start = time.monotonic()
         with pytest.raises(TimeoutError):
             gui.stream_subprocess(
-                [sys.executable, "-c", code], on_line=on_line, timeout=1,
+                [sys.executable, "-c", code],
+                on_line=on_line,
+                timeout=1,
             )
         assert time.monotonic() - start < 20
 
     def test_fast_command_is_not_killed_by_the_watchdog(self):
         out, on_line = self._lines()
         gui.stream_subprocess(
-            [sys.executable, "-c", "print('quick')"], on_line=on_line, timeout=30,
+            [sys.executable, "-c", "print('quick')"],
+            on_line=on_line,
+            timeout=30,
         )
         assert any("quick" in line for line in out)
 
@@ -2103,6 +2351,7 @@ class TestStreamSubprocess:
 # ---------------------------------------------------------------------------
 # WorkerHost — real QThreads (nothing else in this suite starts one)
 # ---------------------------------------------------------------------------
+
 
 class _SleepyWorker(gui.QThread):
     """A worker that runs until interrupted, so lifetime can be observed."""
@@ -2141,7 +2390,7 @@ class TestWorkerHost:
         worker.start()
         host.stop_workers()
         worker.wait(3000)
-        qapp.processEvents()          # let the queued finished handler run
+        qapp.processEvents()  # let the queued finished handler run
         assert not host.busy()
 
     def test_tracking_survives_a_second_worker(self, qapp):
@@ -2170,22 +2419,24 @@ class TestArchiveTabBusyGuard:
     def _tab(self, qapp, monkeypatch):
         monkeypatch.setattr(gui, "_installation_complete", lambda: True)
         monkeypatch.setattr(
-            "metis_test_runner.archive.metiswise_available", lambda: True,
+            "metis_test_runner.archive.metiswise_available",
+            lambda: True,
         )
         monkeypatch.setattr(
-            "metis_test_runner.archive.read_env_cfg", lambda: {},
+            "metis_test_runner.archive.read_env_cfg",
+            lambda: {},
         )
         return gui.ArchiveTab()
 
     def test_second_action_is_refused_while_busy(self, qapp, monkeypatch):
         from PyQt6.QtWidgets import QMessageBox
+
         tab = self._tab(qapp, monkeypatch)
         worker = _SleepyWorker()
         tab.track_worker(worker)
         worker.start()
         infos = []
-        monkeypatch.setattr(QMessageBox, "information",
-                            lambda *a, **k: infos.append(a))
+        monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: infos.append(a))
         try:
             assert tab._reject_if_busy() is True
             assert infos, "expected a 'busy' dialog"
@@ -2200,6 +2451,7 @@ class TestArchiveTabBusyGuard:
 # ---------------------------------------------------------------------------
 # GUI argv <-> CLI parser contract
 # ---------------------------------------------------------------------------
+
 
 class TestGuiArgsParseAsCli:
     """The GUI hand-builds an argv list that run_metis's argparse must accept.
@@ -2216,16 +2468,18 @@ class TestGuiArgsParseAsCli:
 
     def test_default_args_round_trip(self, qapp):
         from metis_test_runner.run_metis import parse_args
+
         parsed = parse_args(self._tab(qapp)._build_cmd_args())
         assert parsed.input_files == ["a.yaml"]
 
     def test_every_toggle_combination_round_trips(self, qapp):
         from metis_test_runner.run_metis import parse_args
+
         tab = self._tab(qapp)
         for cb in (tab.calib_cb, tab.static_cb, tab.auto_fetch_cb):
             for state in (True, False):
                 cb.setChecked(state)
-                parse_args(tab._build_cmd_args())   # must not SystemExit
+                parse_args(tab._build_cmd_args())  # must not SystemExit
 
     def test_prefer_masters_is_not_exposed_in_the_gui(self, qapp):
         """Deliberately CLI-only: the Install tab already pins
@@ -2245,6 +2499,7 @@ class TestGuiArgsParseAsCli:
 
     def test_runner_and_container_round_trip(self, qapp):
         from metis_test_runner.run_metis import parse_args
+
         tab = self._tab(qapp)
         tab.runner_combo.setCurrentText("docker")
         tab.container_edit.setText("metis-pipeline")
@@ -2254,6 +2509,7 @@ class TestGuiArgsParseAsCli:
 
     def test_pipeline_only_mode_round_trips(self, qapp):
         from metis_test_runner.run_metis import parse_args
+
         tab = self._tab(qapp)
         tab.rb_pipe_only.setChecked(True)
         tab.pipeline_input_list.addItem("/data/fits")

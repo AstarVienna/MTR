@@ -32,12 +32,14 @@ _RUNNERS = ["default", "native", "docker", "podman"]
 
 def _add_runner_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
-        "--runner", choices=_RUNNERS,
+        "--runner",
+        choices=_RUNNERS,
         default=os.environ.get("METIS_RUNNER", "default"),
         help="Execution mode (env: METIS_RUNNER) [default: default]",
     )
     p.add_argument(
-        "--container", metavar="NAME",
+        "--container",
+        metavar="NAME",
         default=os.environ.get("METIS_CONTAINER"),
         help="Container name/ID for --runner=docker/podman (env: METIS_CONTAINER)",
     )
@@ -48,28 +50,26 @@ def exec_main(argv=None) -> int:
     p = argparse.ArgumentParser(
         prog="mtr-exec",
         description="Run a command in MTR's resolved pipeline environment.",
-        epilog="Example: mtr-exec -- edps -w metis.metis_wkf -t metis_ifu_dark "
-               "-i ./sim -o ./out",
+        epilog="Example: mtr-exec -- edps -w metis.metis_wkf -t metis_ifu_dark -i ./sim -o ./out",
     )
     _add_runner_args(p)
     p.add_argument(
-        "command", nargs=argparse.REMAINDER,
+        "command",
+        nargs=argparse.REMAINDER,
         help="The command to run, e.g. `-- edps -lw`. A leading -- separating "
-             "it from mtr-exec's own options is optional but recommended.",
+        "it from mtr-exec's own options is optional but recommended.",
     )
     args = p.parse_args(sys.argv[1:] if argv is None else argv)
 
     command = args.command
-    if command and command[0] == "--":      # strip the optional separator
+    if command and command[0] == "--":  # strip the optional separator
         command = command[1:]
     if not command:
-        print("mtr-exec: no command given (e.g. `mtr-exec -- edps -lw`).",
-              file=sys.stderr)
+        print("mtr-exec: no command given (e.g. `mtr-exec -- edps -lw`).", file=sys.stderr)
         return 2
 
     try:
-        prefix = runner_prefix(args.runner, args.container,
-                               interactive=sys.stdin.isatty())
+        prefix = runner_prefix(args.runner, args.container, interactive=sys.stdin.isatty())
     except ValueError as exc:
         print(f"mtr-exec: {exc}", file=sys.stderr)
         return 2
@@ -89,7 +89,7 @@ def shell_main(argv=None) -> int:
     p = argparse.ArgumentParser(
         prog="mtr-shell",
         description="Open an interactive shell with MTR's pipeline environment "
-                    "pre-applied (edps / pyesorex / python+scopesim on PATH).",
+        "pre-applied (edps / pyesorex / python+scopesim on PATH).",
     )
     _add_runner_args(p)
     args = p.parse_args(sys.argv[1:] if argv is None else argv)
@@ -112,6 +112,7 @@ def shell_main(argv=None) -> int:
 
 def _print_banner(runner: str, env: dict) -> None:
     from .run_metis import read_edps_port
+
     print("── MTR environment ready ───────────────────────────────")
     print(f"  runner          : {runner}")
     print(f"  EDPS port       : {read_edps_port()}")

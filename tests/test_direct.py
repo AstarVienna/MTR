@@ -13,6 +13,7 @@ def _recorder(store, rc=0):
         store["cmd"] = cmd
         store["env"] = env
         return _FakeProc(rc)
+
     return run
 
 
@@ -47,8 +48,7 @@ class TestExecMain:
     def test_docker_wraps_command_in_exec_prefix(self, monkeypatch):
         captured = {}
         monkeypatch.setattr(direct.subprocess, "run", _recorder(captured))
-        direct.exec_main(["--runner", "docker", "--container", "c1",
-                          "--", "edps", "-lw"])
+        direct.exec_main(["--runner", "docker", "--container", "c1", "--", "edps", "-lw"])
         cmd = captured["cmd"]
         assert cmd[:2] == ["docker", "exec"]
         assert cmd[2] in ("-i", "-it")
@@ -67,6 +67,7 @@ class TestExecMain:
     def test_missing_executable_returns_127(self, monkeypatch):
         def boom(cmd, env=None, **kwargs):
             raise FileNotFoundError(cmd[0])
+
         monkeypatch.setattr(direct.subprocess, "run", boom)
         monkeypatch.setattr(direct, "resolve_runtime_env", lambda r: {})
         assert direct.exec_main(["--", "no_such_tool"]) == 127
@@ -75,8 +76,7 @@ class TestExecMain:
 class TestShellMain:
     def test_default_execs_user_shell_with_env(self, monkeypatch):
         captured = {}
-        monkeypatch.setattr(direct.os, "execvpe",
-                            lambda f, a, e: captured.update(file=f, argv=a, env=e))
+        monkeypatch.setattr(direct.os, "execvpe", lambda f, a, e: captured.update(file=f, argv=a, env=e))
         monkeypatch.setattr(direct, "resolve_runtime_env", lambda r: {"X": "1"})
         monkeypatch.setattr(direct, "_print_banner", lambda *a, **k: None)
         monkeypatch.setenv("SHELL", "/bin/zsh")

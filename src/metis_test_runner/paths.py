@@ -61,6 +61,7 @@ def examples_dir() -> Path:
     install and a source checkout alike.
     """
     from importlib.resources import files
+
     return Path(str(files("metis_test_runner") / "examples"))
 
 

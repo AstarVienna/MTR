@@ -42,6 +42,7 @@ _IMPORT_MOCKS = {
 }
 
 # The five DB fields used throughout (also stocked into the fake keyring).
+# fmt: off
 _FIVE = {
     "database_user":            "AWTEST",
     "database_password":        "lmno",
@@ -49,6 +50,7 @@ _FIVE = {
     "database_tablespacename":  "metis_data",
     "database_name":            "metis.example.com:5436/pgmetis",
 }
+# fmt: on
 
 
 @pytest.fixture(autouse=True)
@@ -61,7 +63,9 @@ def _stub_keyring(monkeypatch):
     is snapshotted because apply_db_credentials mutates it.
     """
     monkeypatch.setattr(
-        credentials, "get_db_credentials", lambda: dict(_FIVE),
+        credentials,
+        "get_db_credentials",
+        lambda: dict(_FIVE),
     )
     archive._db_creds_applied = False
     with patch.dict("os.environ"):
@@ -139,7 +143,7 @@ class TestInstallMetisWiseCommand:
         "p?ss",       # a ? would start a query
         "p%ss",       # a % would be read as a percent-escape
         "p:ss",       # a colon in the password must stay in the password
-    ])
+    ])  # fmt: skip
     def test_awkward_passwords_cannot_break_out_of_the_authority(self, password):
         raw = f"alice:{password}"
         if any(c.isspace() for c in raw):
@@ -192,14 +196,18 @@ class TestEnsureDbConnection:
         mock_profiles = MagicMock()
         mock_database = MagicMock()
 
-        with patch.dict("sys.modules", {
-            "common": MagicMock(),
-            "common.config": MagicMock(),
-            "common.config.Profile": MagicMock(profiles=mock_profiles),
-            "common.database": MagicMock(),
-            "common.database.Database": MagicMock(database=mock_database),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "common": MagicMock(),
+                "common.config": MagicMock(),
+                "common.config.Profile": MagicMock(profiles=mock_profiles),
+                "common.database": MagicMock(),
+                "common.database.Database": MagicMock(database=mock_database),
+            },
+        ):
             import importlib
+
             importlib.reload(archive)
 
             archive._ensure_db_connection()
@@ -212,14 +220,18 @@ class TestEnsureDbConnection:
         mock_profiles = MagicMock()
         mock_database = MagicMock()
 
-        with patch.dict("sys.modules", {
-            "common": MagicMock(),
-            "common.config": MagicMock(),
-            "common.config.Profile": MagicMock(profiles=mock_profiles),
-            "common.database": MagicMock(),
-            "common.database.Database": MagicMock(database=mock_database),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "common": MagicMock(),
+                "common.config": MagicMock(),
+                "common.config.Profile": MagicMock(profiles=mock_profiles),
+                "common.database": MagicMock(),
+                "common.database.Database": MagicMock(database=mock_database),
+            },
+        ):
             import importlib
+
             importlib.reload(archive)
 
             archive._ensure_db_connection()
@@ -232,14 +244,18 @@ class TestEnsureDbConnection:
     def test_noop_when_commonwise_missing(self):
         # Force ImportError on any `import common...` even though the package
         # may happen to be installed in the test environment.
-        with patch.dict("sys.modules", {
-            "common": None,
-            "common.config": None,
-            "common.config.Profile": None,
-            "common.database": None,
-            "common.database.Database": None,
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "common": None,
+                "common.config": None,
+                "common.config.Profile": None,
+                "common.database": None,
+                "common.database.Database": None,
+            },
+        ):
             import importlib
+
             importlib.reload(archive)
 
             archive._ensure_db_connection()
@@ -320,11 +336,7 @@ class TestWriteEnvCfg:
         awe = tmp_path / ".awe"
         awe.mkdir()
         cfg = awe / "Environment.cfg"
-        cfg.write_text(
-            "[global]\n"
-            "database_user : A\n"
-            "data_server : remote.example.com\n"
-        )
+        cfg.write_text("[global]\ndatabase_user : A\ndata_server : remote.example.com\n")
         with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
             archive.write_env_cfg(**_FIVE)
         text = cfg.read_text()
@@ -349,10 +361,7 @@ class TestWriteEnvCfg:
         awe = tmp_path / ".awe"
         awe.mkdir()
         cfg = awe / "Environment.cfg"
-        cfg.write_text(
-            "[global]\n"
-            "database_user = OLDUSER\n"
-        )
+        cfg.write_text("[global]\ndatabase_user = OLDUSER\n")
         with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
             archive.write_env_cfg(**_FIVE)
         text = cfg.read_text()
@@ -389,10 +398,7 @@ class TestReadEnvCfg:
         awe = tmp_path / ".awe"
         awe.mkdir()
         (awe / "Environment.cfg").write_text(
-            "[other]\n"
-            "database_user : LEAKED\n"
-            "[global]\n"
-            "database_user : CORRECT\n"
+            "[other]\ndatabase_user : LEAKED\n[global]\ndatabase_user : CORRECT\n"
         )
         with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
             values = archive.read_env_cfg()
@@ -413,6 +419,7 @@ class TestReadEnvCfg:
 class TestApplyDbCredentials:
     def test_sets_environment_variables(self):
         import os
+
         archive.apply_db_credentials(dict(_FIVE))
         for key, value in _FIVE.items():
             assert os.environ[key] == value
@@ -424,7 +431,8 @@ class TestApplyDbCredentials:
         env_dict = {"database_user": "stale", "other_key": "untouched"}
         fake_module = MagicMock(Env=env_dict)
         with patch.dict(
-            "sys.modules", {"common.config.Environment": fake_module},
+            "sys.modules",
+            {"common.config.Environment": fake_module},
         ):
             archive.apply_db_credentials(dict(_FIVE))
         # Same dict object, updated in place (Profile binds Env by name).
@@ -452,9 +460,11 @@ class TestApplyDbCredentials:
 class TestEnsureCredentialsApplied:
     def test_keyring_first(self, monkeypatch):
         import os
+
         calls = []
         monkeypatch.setattr(
-            credentials, "get_db_credentials",
+            credentials,
+            "get_db_credentials",
             lambda: calls.append(1) or dict(_FIVE),
         )
         archive._ensure_credentials_applied()
@@ -464,7 +474,8 @@ class TestEnsureCredentialsApplied:
     def test_runs_once_per_process(self, monkeypatch):
         calls = []
         monkeypatch.setattr(
-            credentials, "get_db_credentials",
+            credentials,
+            "get_db_credentials",
             lambda: calls.append(1) or dict(_FIVE),
         )
         archive._ensure_credentials_applied()
@@ -472,7 +483,9 @@ class TestEnsureCredentialsApplied:
         assert calls == [1]
 
     def test_legacy_file_fallback_when_keyring_unavailable(
-        self, monkeypatch, tmp_path,
+        self,
+        monkeypatch,
+        tmp_path,
     ):
         import os
 
@@ -535,12 +548,7 @@ class TestScrubEnvCfg:
         awe = tmp_path / ".awe"
         awe.mkdir()
         cfg = awe / "Environment.cfg"
-        cfg.write_text(
-            "[global]\n"
-            "database_user : SCRUBME\n"
-            "[other]\n"
-            "database_user : KEEPME\n"
-        )
+        cfg.write_text("[global]\ndatabase_user : SCRUBME\n[other]\ndatabase_user : KEEPME\n")
         with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
             archive.scrub_env_cfg()
         text = cfg.read_text()
@@ -565,9 +573,7 @@ class TestScrubEnvCfg:
         with patch("metis_test_runner.archive.Path.home", return_value=tmp_path):
             archive.write_env_cfg(**_FIVE)
             assert archive.scrub_env_cfg() is not None
-            assert archive.read_env_cfg() == {
-                k: "" for k in archive.ENV_CFG_FIELDS
-            }
+            assert archive.read_env_cfg() == {k: "" for k in archive.ENV_CFG_FIELDS}
 
 
 # ---------------------------------------------------------------------------
@@ -585,15 +591,19 @@ class TestQueryArchive:
         mock_dataitem = MagicMock()
         mock_dataitem.select_all.return_value = [mock_item]
 
-        with patch.dict("sys.modules", {
-            **_DB_MOCKS,
-            **_IMPORT_MOCKS,
-            "metiswise": MagicMock(),
-            "metiswise.main": MagicMock(),
-            "metiswise.main.dataitem": MagicMock(DataItem=mock_dataitem),
-            "metiswise.main.pro": MagicMock(),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                **_DB_MOCKS,
+                **_IMPORT_MOCKS,
+                "metiswise": MagicMock(),
+                "metiswise.main": MagicMock(),
+                "metiswise.main.dataitem": MagicMock(DataItem=mock_dataitem),
+                "metiswise.main.pro": MagicMock(),
+            },
+        ):
             import importlib
+
             importlib.reload(archive)
 
             items = archive.query_archive()
@@ -615,14 +625,18 @@ class TestQueryArchive:
             def select_all(cls):
                 return [mock_item]
 
-        with patch.dict("sys.modules", {
-            **_DB_MOCKS,
-            **_IMPORT_MOCKS,
-            "metiswise": MagicMock(),
-            "metiswise.main": MagicMock(),
-            "metiswise.main.dataitem": MagicMock(DataItem=_DataItem),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                **_DB_MOCKS,
+                **_IMPORT_MOCKS,
+                "metiswise": MagicMock(),
+                "metiswise.main": MagicMock(),
+                "metiswise.main.dataitem": MagicMock(DataItem=_DataItem),
+            },
+        ):
             import importlib
+
             importlib.reload(archive)
 
             items = archive.query_archive(category="MASTER_DARK")
@@ -645,14 +659,18 @@ class TestQueryArchive:
             def select_all(cls):
                 return [mock_item]
 
-        with patch.dict("sys.modules", {
-            **_DB_MOCKS,
-            **_IMPORT_MOCKS,
-            "metiswise": MagicMock(),
-            "metiswise.main": MagicMock(),
-            "metiswise.main.dataitem": MagicMock(DataItem=_DataItem),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                **_DB_MOCKS,
+                **_IMPORT_MOCKS,
+                "metiswise": MagicMock(),
+                "metiswise.main": MagicMock(),
+                "metiswise.main.dataitem": MagicMock(DataItem=_DataItem),
+            },
+        ):
             import importlib
+
             importlib.reload(archive)
 
             items = archive.query_archive(category="IFU_SCI_RAW")
@@ -666,19 +684,24 @@ class TestQueryArchive:
         class _DataItem:
             pass
 
-        with patch.dict("sys.modules", {
-            **_DB_MOCKS,
-            **_IMPORT_MOCKS,
-            "metiswise": MagicMock(),
-            "metiswise.main": MagicMock(),
-            "metiswise.main.dataitem": MagicMock(DataItem=_DataItem),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                **_DB_MOCKS,
+                **_IMPORT_MOCKS,
+                "metiswise": MagicMock(),
+                "metiswise.main": MagicMock(),
+                "metiswise.main.dataitem": MagicMock(DataItem=_DataItem),
+            },
+        ):
             import importlib
+
             importlib.reload(archive)
 
             logs = []
             items = archive.query_archive(
-                category="NONEXISTENT", on_log=logs.append,
+                category="NONEXISTENT",
+                on_log=logs.append,
             )
             assert items == []
             assert any("Unknown category" in msg for msg in logs)
@@ -701,14 +724,18 @@ class TestQueryArchive:
             def select_all(cls):
                 return [mock_item]
 
-        with patch.dict("sys.modules", {
-            **_DB_MOCKS,
-            **_IMPORT_MOCKS,
-            "metiswise": MagicMock(),
-            "metiswise.main": MagicMock(),
-            "metiswise.main.dataitem": MagicMock(DataItem=_DataItem),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                **_DB_MOCKS,
+                **_IMPORT_MOCKS,
+                "metiswise": MagicMock(),
+                "metiswise.main": MagicMock(),
+                "metiswise.main.dataitem": MagicMock(DataItem=_DataItem),
+            },
+        ):
             import importlib
+
             importlib.reload(archive)
 
             items = archive.query_archive(category="LINEARITY_2RG")
@@ -739,14 +766,18 @@ class TestDownloadFile:
 
         dest_dir = tmp_path / "downloads"
 
-        with patch.dict("sys.modules", {
-            **_DB_MOCKS,
-            **_IMPORT_MOCKS,
-            "metiswise": MagicMock(),
-            "metiswise.main": MagicMock(),
-            "metiswise.main.dataitem": MagicMock(DataItem=mock_dataitem),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                **_DB_MOCKS,
+                **_IMPORT_MOCKS,
+                "metiswise": MagicMock(),
+                "metiswise.main": MagicMock(),
+                "metiswise.main.dataitem": MagicMock(DataItem=mock_dataitem),
+            },
+        ):
             import importlib
+
             importlib.reload(archive)
 
             result = archive.download_file("data.fits", dest_dir)
@@ -763,14 +794,18 @@ class TestDownloadFile:
 
         dest_dir = tmp_path / "downloads"
 
-        with patch.dict("sys.modules", {
-            **_DB_MOCKS,
-            **_IMPORT_MOCKS,
-            "metiswise": MagicMock(),
-            "metiswise.main": MagicMock(),
-            "metiswise.main.dataitem": MagicMock(DataItem=mock_dataitem),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                **_DB_MOCKS,
+                **_IMPORT_MOCKS,
+                "metiswise": MagicMock(),
+                "metiswise.main": MagicMock(),
+                "metiswise.main.dataitem": MagicMock(DataItem=mock_dataitem),
+            },
+        ):
             import importlib
+
             importlib.reload(archive)
 
             result = archive.download_file("missing.fits", dest_dir)
@@ -797,23 +832,28 @@ class TestUploadFile:
     flow with mocked DataItem / Raw / Pro."""
 
     def _patch_modules(self, dataitem, raw, pro=None):
-        return patch.dict("sys.modules", {
-            **_DB_MOCKS,
-            **_IMPORT_MOCKS,
-            "metiswise": MagicMock(),
-            "metiswise.main": MagicMock(),
-            "metiswise.main.dataitem": MagicMock(DataItem=dataitem),
-            "metiswise.main.raw": MagicMock(Raw=raw),
-            "metiswise.main.pro": pro if pro is not None else MagicMock(),
-        })
+        return patch.dict(
+            "sys.modules",
+            {
+                **_DB_MOCKS,
+                **_IMPORT_MOCKS,
+                "metiswise": MagicMock(),
+                "metiswise.main": MagicMock(),
+                "metiswise.main.dataitem": MagicMock(DataItem=dataitem),
+                "metiswise.main.raw": MagicMock(Raw=raw),
+                "metiswise.main.pro": pro if pro is not None else MagicMock(),
+            },
+        )
 
     def test_missing_file_returns_false(self, tmp_path):
         logs: list[str] = []
         with self._patch_modules(MagicMock(), MagicMock()):
             import importlib
+
             importlib.reload(archive)
             result = archive.upload_file(
-                tmp_path / "nope.fits", on_log=logs.append,
+                tmp_path / "nope.fits",
+                on_log=logs.append,
             )
             assert result is False
             assert any("not found" in m.lower() for m in logs)
@@ -830,6 +870,7 @@ class TestUploadFile:
         logs: list[str] = []
         with self._patch_modules(mock_dataitem, mock_raw):
             import importlib
+
             importlib.reload(archive)
             result = archive.upload_file(fits, on_log=logs.append)
             assert result is True
@@ -851,6 +892,7 @@ class TestUploadFile:
         logs: list[str] = []
         with self._patch_modules(mock_dataitem, mock_raw):
             import importlib
+
             importlib.reload(archive)
             result = archive.upload_file(fits, on_log=logs.append)
             assert result is True
@@ -866,11 +908,13 @@ class TestUploadFile:
 
         class _DataItem:
             pass
+
         _DataItem.filename = MagicMock()
         _DataItem.filename.__eq__ = MagicMock(return_value=[])
 
         class _Pro(_DataItem):
             class_from_procatg: dict = {}
+
             @classmethod
             def get_persistent_properties(cls):
                 return []
@@ -883,8 +927,13 @@ class TestUploadFile:
                 self.pathname = ""
                 self.stored = False
                 self.committed = False
-            def store(self): self.stored = True
-            def commit(self): self.committed = True
+
+            def store(self):
+                self.stored = True
+
+            def commit(self):
+                self.committed = True
+
         _Pro.class_from_procatg["FAKE_MASTER"] = FAKE_MASTER
 
         pro_mod = MagicMock()
@@ -895,6 +944,7 @@ class TestUploadFile:
         mock_raw = MagicMock()
         with self._patch_modules(_DataItem, mock_raw, pro=pro_mod):
             import importlib
+
             importlib.reload(archive)
             result = archive.upload_file(fits)
             assert result is True
@@ -909,21 +959,26 @@ class TestUploadFile:
         upstream ``get_optional_dataitem_from_filename`` returns ``None`` for
         provenance raws that aren't yet in the archive."""
         fits = tmp_path / "master.fits"
-        _write_fits(fits, {
-            "HIERARCH ESO PRO CATG": "FAKE_MASTER",
-            "HIERARCH ESO PRO REC1 RAW1 NAME": "missing1.fits",
-            "HIERARCH ESO PRO REC1 RAW1 CATG": "FAKE_RAW",
-            "HIERARCH ESO PRO REC1 RAW2 NAME": "missing2.fits",
-            "HIERARCH ESO PRO REC1 RAW2 CATG": "FAKE_RAW",
-        })
+        _write_fits(
+            fits,
+            {
+                "HIERARCH ESO PRO CATG": "FAKE_MASTER",
+                "HIERARCH ESO PRO REC1 RAW1 NAME": "missing1.fits",
+                "HIERARCH ESO PRO REC1 RAW1 CATG": "FAKE_RAW",
+                "HIERARCH ESO PRO REC1 RAW2 NAME": "missing2.fits",
+                "HIERARCH ESO PRO REC1 RAW2 CATG": "FAKE_RAW",
+            },
+        )
 
         class _DataItem:
             pass
+
         _DataItem.filename = MagicMock()
         _DataItem.filename.__eq__ = MagicMock(return_value=[])
 
         class _Pro(_DataItem):
             class_from_procatg: dict = {}
+
             @classmethod
             def get_persistent_properties(cls):
                 return []
@@ -942,27 +997,39 @@ class TestUploadFile:
                 self.pathname = ""
                 self.stored = False
                 self.committed = False
+
             @property
-            def raws(self): return self._raws
+            def raws(self):
+                return self._raws
+
             @raws.setter
             def raws(self, v):
                 self._raws = _StrictList(v)
+
             @property
-            def calibs(self): return self._calibs
+            def calibs(self):
+                return self._calibs
+
             @calibs.setter
             def calibs(self, v):
                 self._calibs = _StrictList(v)
-            def store(self): self.stored = True
-            def commit(self): self.committed = True
+
+            def store(self):
+                self.stored = True
+
+            def commit(self):
+                self.committed = True
+
         _Pro.class_from_procatg["FAKE_MASTER"] = FAKE_MASTER
 
         def fake_provenance(hdr):
-            return [(
-                [("missing1.fits", "FAKE_RAW", None),
-                 ("missing2.fits", "FAKE_RAW", None)],
-                [],
-                [],
-            )]
+            return [
+                (
+                    [("missing1.fits", "FAKE_RAW", None), ("missing2.fits", "FAKE_RAW", None)],
+                    [],
+                    [],
+                )
+            ]
 
         pro_mod = MagicMock()
         pro_mod.Pro = _Pro
@@ -971,6 +1038,7 @@ class TestUploadFile:
 
         with self._patch_modules(_DataItem, MagicMock(), pro=pro_mod):
             import importlib
+
             importlib.reload(archive)
             logs: list[str] = []
             result = archive.upload_file(fits, on_log=logs.append)
@@ -981,21 +1049,26 @@ class TestUploadFile:
     def test_pro_upload_with_resolved_provenance(self, tmp_path):
         """Real provenance DataItems pass through — only None gets filtered."""
         fits = tmp_path / "master.fits"
-        _write_fits(fits, {
-            "HIERARCH ESO PRO CATG": "FAKE_MASTER",
-            "HIERARCH ESO PRO REC1 RAW1 NAME": "here.fits",
-            "HIERARCH ESO PRO REC1 RAW1 CATG": "FAKE_RAW",
-            "HIERARCH ESO PRO REC1 RAW2 NAME": "missing.fits",
-            "HIERARCH ESO PRO REC1 RAW2 CATG": "FAKE_RAW",
-        })
+        _write_fits(
+            fits,
+            {
+                "HIERARCH ESO PRO CATG": "FAKE_MASTER",
+                "HIERARCH ESO PRO REC1 RAW1 NAME": "here.fits",
+                "HIERARCH ESO PRO REC1 RAW1 CATG": "FAKE_RAW",
+                "HIERARCH ESO PRO REC1 RAW2 NAME": "missing.fits",
+                "HIERARCH ESO PRO REC1 RAW2 CATG": "FAKE_RAW",
+            },
+        )
 
         class _DataItem:
             pass
+
         _DataItem.filename = MagicMock()
         _DataItem.filename.__eq__ = MagicMock(return_value=[])
 
         class _Pro(_DataItem):
             class_from_procatg: dict = {}
+
             @classmethod
             def get_persistent_properties(cls):
                 return []
@@ -1006,20 +1079,27 @@ class TestUploadFile:
         class FAKE_MASTER(_Pro):
             def __init__(self):
                 self.pathname = ""
-            def store(self): pass
-            def commit(self): pass
+
+            def store(self):
+                pass
+
+            def commit(self):
+                pass
+
             def __setattr__(self, k, v):
                 assigned[k] = v
                 object.__setattr__(self, k, v)
+
         _Pro.class_from_procatg["FAKE_MASTER"] = FAKE_MASTER
 
         def fake_provenance(hdr):
-            return [(
-                [("here.fits", "FAKE_RAW", None),
-                 ("missing.fits", "FAKE_RAW", None)],
-                [],
-                [],
-            )]
+            return [
+                (
+                    [("here.fits", "FAKE_RAW", None), ("missing.fits", "FAKE_RAW", None)],
+                    [],
+                    [],
+                )
+            ]
 
         def fake_get_optional(name):
             return real_di if name == "here.fits" else None
@@ -1031,13 +1111,16 @@ class TestUploadFile:
 
         with self._patch_modules(_DataItem, MagicMock(), pro=pro_mod):
             import importlib
+
             importlib.reload(archive)
             result = archive.upload_file(fits)
             assert result is True
+            # fmt: off
             assert assigned["raws"] == [real_di]         # None filtered
             assert assigned["raw1"] is real_di           # positional preserved
             assert assigned["raw2"] is None              # missing -> None OK
             assert assigned["raw9"] is None              # padded
+            # fmt: on
             importlib.reload(archive)
 
     def test_pro_upload_unknown_procatg(self, tmp_path):
@@ -1047,6 +1130,7 @@ class TestUploadFile:
 
         class _DataItem:
             pass
+
         _DataItem.filename = MagicMock()
         _DataItem.filename.__eq__ = MagicMock(return_value=[])
 
@@ -1061,6 +1145,7 @@ class TestUploadFile:
         logs: list[str] = []
         with self._patch_modules(_DataItem, MagicMock(), pro=pro_mod):
             import importlib
+
             importlib.reload(archive)
             result = archive.upload_file(fits, on_log=logs.append)
             assert result is False
@@ -1074,6 +1159,7 @@ class TestUploadFile:
 
         class _DataItem:
             pass
+
         _DataItem.filename = MagicMock()
         _DataItem.filename.__eq__ = MagicMock(return_value=[])
 
@@ -1084,12 +1170,17 @@ class TestUploadFile:
                 constructed.append(filename)
                 self.stored = False
                 self.committed = False
-            def store(self): self.stored = True
-            def commit(self): self.committed = True
+
+            def store(self):
+                self.stored = True
+
+            def commit(self):
+                self.committed = True
 
         mock_raw = MagicMock()
         with self._patch_modules(_DataItem, mock_raw):
             import importlib
+
             importlib.reload(archive)
             result = archive.upload_file(fits, class_name="LM_FLAT_LAMP_RAW")
             assert result is True
@@ -1104,12 +1195,14 @@ class TestUploadFile:
 
         class _DataItem:
             pass
+
         _DataItem.filename = MagicMock()
         _DataItem.filename.__eq__ = MagicMock(return_value=[])
 
         logs: list[str] = []
         with self._patch_modules(_DataItem, MagicMock()):
             import importlib
+
             importlib.reload(archive)
             result = archive.upload_file(fits, on_log=logs.append)
             assert result is False
@@ -1122,15 +1215,19 @@ class TestUploadFile:
 
         class _DataItem:
             pass
+
         _DataItem.filename = MagicMock()
         _DataItem.filename.__eq__ = MagicMock(return_value=[])
 
         logs: list[str] = []
         with self._patch_modules(_DataItem, MagicMock()):
             import importlib
+
             importlib.reload(archive)
             result = archive.upload_file(
-                fits, class_name="DOES_NOT_EXIST", on_log=logs.append,
+                fits,
+                class_name="DOES_NOT_EXIST",
+                on_log=logs.append,
             )
             assert result is False
             assert any("Unknown DataItem class" in m for m in logs)
@@ -1150,6 +1247,7 @@ class TestUploadFile:
         logs: list[str] = []
         with self._patch_modules(mock_dataitem, mock_raw):
             import importlib
+
             importlib.reload(archive)
             result = archive.upload_file(fits, on_log=logs.append)
             assert result is False
@@ -1174,6 +1272,7 @@ class TestUploadFile:
         logs: list[str] = []
         with self._patch_modules(mock_dataitem, mock_raw):
             import importlib
+
             importlib.reload(archive)
             archive.upload_file(fits, on_log=logs.append)
             fail_lines = [m for m in logs if "Upload failed" in m]
@@ -1193,11 +1292,17 @@ class TestIdentifyMissingCalibrations:
 
     def test_no_gaps_when_all_present(self):
         all_tags = {
-            "DETLIN_IFU_RAW", "DARK_IFU_RAW", "IFU_DISTORTION_RAW",
-            "IFU_WAVE_RAW", "IFU_RSRF_RAW", "IFU_STD_RAW",
+            "DETLIN_IFU_RAW",
+            "DARK_IFU_RAW",
+            "IFU_DISTORTION_RAW",
+            "IFU_WAVE_RAW",
+            "IFU_RSRF_RAW",
+            "IFU_STD_RAW",
         }
         missing = archive.identify_missing_calibrations(
-            "metis.metis_ifu_wkf", all_tags, has_science=False,
+            "metis.metis_ifu_wkf",
+            all_tags,
+            has_science=False,
         )
         assert missing == []
 
@@ -1227,13 +1332,17 @@ class TestIdentifyMissingCalibrations:
 
     def test_empty_data_tags(self):
         missing = archive.identify_missing_calibrations(
-            "metis.metis_ifu_wkf", set(), has_science=False,
+            "metis.metis_ifu_wkf",
+            set(),
+            has_science=False,
         )
         assert missing == []
 
     def test_unknown_workflow(self):
         missing = archive.identify_missing_calibrations(
-            "metis.nonexistent_wkf", {"FOO"}, has_science=False,
+            "metis.nonexistent_wkf",
+            {"FOO"},
+            has_science=False,
         )
         assert missing == []
 
@@ -1251,17 +1360,25 @@ class TestIdentifyMissingCalibrations:
         )
         task_names = {t for t, _ in missing}
         assert task_names == {
-            "metis_ifu_lingain", "metis_ifu_dark", "metis_ifu_distortion",
-            "metis_ifu_wavecal", "metis_ifu_rsrf",
+            "metis_ifu_lingain",
+            "metis_ifu_dark",
+            "metis_ifu_distortion",
+            "metis_ifu_wavecal",
+            "metis_ifu_rsrf",
         }
         # ...and never the science task itself.
         assert not any("sci_reduce" in t for t in task_names)
 
     def test_science_only_still_empty_when_has_science_false(self):
         """has_science=False means the caller says there is no science frame."""
-        assert archive.identify_missing_calibrations(
-            "metis.metis_ifu_wkf", {"IFU_SCI_RAW"}, has_science=False,
-        ) == []
+        assert (
+            archive.identify_missing_calibrations(
+                "metis.metis_ifu_wkf",
+                {"IFU_SCI_RAW"},
+                has_science=False,
+            )
+            == []
+        )
 
     def test_science_plus_partial_calibs_fetches_only_the_gaps(self):
         missing = archive.identify_missing_calibrations(
@@ -1272,7 +1389,7 @@ class TestIdentifyMissingCalibrations:
         task_names = {t for t, _ in missing}
         assert "metis_lm_img_lingain" in task_names
         assert "metis_lm_img_dark" in task_names
-        assert "metis_lm_img_flat" not in task_names   # already covered
+        assert "metis_lm_img_flat" not in task_names  # already covered
 
     def test_science_tasks_ignored(self):
         missing = archive.identify_missing_calibrations(
@@ -1341,9 +1458,7 @@ class TestIdentifyMissingCalibrations:
             data_tags={"LM_FLAT_LAMP_RAW"},
             has_science=False,
         )
-        lingain_catgs = [
-            catg for task, catg in missing if task == "metis_lm_img_lingain"
-        ]
+        lingain_catgs = [catg for task, catg in missing if task == "metis_lm_img_lingain"]
         assert set(lingain_catgs) == {"LINEARITY_2RG", "GAIN_MAP_2RG"}
 
     def test_multi_output_lingain_partial_present(self):
@@ -1360,6 +1475,7 @@ class TestIdentifyMissingCalibrations:
 # fetch_missing_calibrations — orchestration
 # ---------------------------------------------------------------------------
 
+
 class TestFetchMissingCalibrations:
     """The function the CLI actually calls for --auto-fetch-calibrations.
 
@@ -1369,8 +1485,12 @@ class TestFetchMissingCalibrations:
     """
 
     IFU_CALIBS = {
-        "DETLIN_IFU_RAW", "DARK_IFU_RAW", "IFU_DISTORTION_RAW",
-        "IFU_WAVE_RAW", "IFU_RSRF_RAW", "IFU_STD_RAW",
+        "DETLIN_IFU_RAW",
+        "DARK_IFU_RAW",
+        "IFU_DISTORTION_RAW",
+        "IFU_WAVE_RAW",
+        "IFU_RSRF_RAW",
+        "IFU_STD_RAW",
     }
 
     def _patch(self, monkeypatch, *, items, downloaded=Ellipsis):
@@ -1394,7 +1514,10 @@ class TestFetchMissingCalibrations:
         calls = self._patch(monkeypatch, items=[{"filename": "x.fits"}])
         logs = []
         out = archive.fetch_missing_calibrations(
-            "metis.metis_ifu_wkf", self.IFU_CALIBS, False, tmp_path,
+            "metis.metis_ifu_wkf",
+            self.IFU_CALIBS,
+            False,
+            tmp_path,
             on_log=logs.append,
         )
         assert out == []
@@ -1404,7 +1527,10 @@ class TestFetchMissingCalibrations:
     def test_downloads_each_missing_master(self, tmp_path, monkeypatch):
         calls = self._patch(monkeypatch, items=[{"filename": "m.fits"}])
         out = archive.fetch_missing_calibrations(
-            "metis.metis_ifu_wkf", {"IFU_RSRF_RAW"}, False, tmp_path,
+            "metis.metis_ifu_wkf",
+            {"IFU_RSRF_RAW"},
+            False,
+            tmp_path,
         )
         assert len(out) == len(calls["queried"]) == len(calls["downloaded"])
         assert out and all(p == tmp_path / "m.fits" for p in out)
@@ -1413,13 +1539,18 @@ class TestFetchMissingCalibrations:
         """Ties the has_science fix to the user-visible behaviour."""
         calls = self._patch(monkeypatch, items=[{"filename": "m.fits"}])
         out = archive.fetch_missing_calibrations(
-            "metis.metis_ifu_wkf", {"IFU_SCI_RAW"}, True, tmp_path,
+            "metis.metis_ifu_wkf",
+            {"IFU_SCI_RAW"},
+            True,
+            tmp_path,
         )
         # One download per (task, PRO.CATG) pair — a task may produce several.
         expected = archive.identify_missing_calibrations(
-            "metis.metis_ifu_wkf", {"IFU_SCI_RAW"}, True,
+            "metis.metis_ifu_wkf",
+            {"IFU_SCI_RAW"},
+            True,
         )
-        assert len(expected) > 5          # more masters than calibration tasks
+        assert len(expected) > 5  # more masters than calibration tasks
         assert len(out) == len(expected)
         assert calls["queried"] == [pc for _, pc in expected]
         # Queried by PRO.CATG (the master), never by the raw tag.
@@ -1429,7 +1560,10 @@ class TestFetchMissingCalibrations:
         calls = self._patch(monkeypatch, items=[])
         logs = []
         out = archive.fetch_missing_calibrations(
-            "metis.metis_ifu_wkf", {"IFU_RSRF_RAW"}, False, tmp_path,
+            "metis.metis_ifu_wkf",
+            {"IFU_RSRF_RAW"},
+            False,
+            tmp_path,
             on_log=logs.append,
         )
         assert out == []
@@ -1439,15 +1573,24 @@ class TestFetchMissingCalibrations:
     def test_failed_download_is_not_counted(self, tmp_path, monkeypatch):
         self._patch(monkeypatch, items=[{"filename": "m.fits"}], downloaded=None)
         out = archive.fetch_missing_calibrations(
-            "metis.metis_ifu_wkf", {"IFU_RSRF_RAW"}, False, tmp_path,
+            "metis.metis_ifu_wkf",
+            {"IFU_RSRF_RAW"},
+            False,
+            tmp_path,
         )
         assert out == []
 
     def test_unknown_workflow_is_a_noop(self, tmp_path, monkeypatch):
         calls = self._patch(monkeypatch, items=[{"filename": "m.fits"}])
-        assert archive.fetch_missing_calibrations(
-            "metis.nope", {"FOO"}, False, tmp_path,
-        ) == []
+        assert (
+            archive.fetch_missing_calibrations(
+                "metis.nope",
+                {"FOO"},
+                False,
+                tmp_path,
+            )
+            == []
+        )
         assert calls["queried"] == []
 
 
@@ -1456,6 +1599,7 @@ class TestTaskProductsConsistency:
 
     def test_every_task_products_key_is_a_real_task(self):
         from metis_test_runner.run_metis import WORKFLOW_TASK_CHAIN
+
         real = {t for chain in WORKFLOW_TASK_CHAIN.values() for t, _, _ in chain}
         unknown = sorted(set(archive.TASK_PRODUCTS) - real)
         assert unknown == [], f"TASK_PRODUCTS names no-longer-existent tasks: {unknown}"
@@ -1467,11 +1611,15 @@ class TestTaskProductsConsistency:
         pins the current gap rather than letting it grow unnoticed.
         """
         from metis_test_runner.run_metis import WORKFLOW_TASK_CHAIN
-        uncoverable = sorted({
-            t for chain in WORKFLOW_TASK_CHAIN.values()
-            for t, _, meta in chain
-            if meta != "science" and t not in archive.TASK_PRODUCTS
-        })
+
+        uncoverable = sorted(
+            {
+                t
+                for chain in WORKFLOW_TASK_CHAIN.values()
+                for t, _, meta in chain
+                if meta != "science" and t not in archive.TASK_PRODUCTS
+            }
+        )
         assert uncoverable == [
             "metis_ifu_std_reduce",
             "metis_lm_lss_adc_slitloss",
@@ -1483,6 +1631,7 @@ class TestTaskProductsConsistency:
 # write_env_cfg — permissions, atomicity, injection
 # ---------------------------------------------------------------------------
 
+
 class TestEnvCfgFilePermissions:
     """The file holds a password in cleartext, so mode matters on every path,
     not just on creation."""
@@ -1491,8 +1640,11 @@ class TestEnvCfgFilePermissions:
         cfg = tmp_path / ".awe" / "Environment.cfg"
         monkeypatch.setattr(archive, "env_cfg_path", lambda: cfg)
         fields = {
-            "database_user": "u", "database_password": "pw", "project": "P",
-            "database_tablespacename": "ts", "database_name": "db",
+            "database_user": "u",
+            "database_password": "pw",
+            "project": "P",
+            "database_tablespacename": "ts",
+            "database_name": "db",
         }
         fields.update(over)
         archive.write_env_cfg(**fields)
@@ -1525,11 +1677,14 @@ class TestEnvCfgFilePermissions:
         cfg = self._write(tmp_path, monkeypatch)
         assert stat.S_IMODE(cfg.parent.stat().st_mode) == 0o700
 
-    @pytest.mark.parametrize("evil", [
-        "pw\ndata_protocol : http",     # downgrade the transport to cleartext
-        "pw\r\ndata_server : evil.test",
-        "pw\rinjected : 1",
-    ])
+    @pytest.mark.parametrize(
+        "evil",
+        [
+            "pw\ndata_protocol : http",  # downgrade the transport to cleartext
+            "pw\r\ndata_server : evil.test",
+            "pw\rinjected : 1",
+        ],
+    )
     def test_newline_in_a_value_is_rejected(self, tmp_path, monkeypatch, evil):
         with pytest.raises(ValueError, match="newline"):
             self._write(tmp_path, monkeypatch, database_password=evil)
@@ -1568,8 +1723,7 @@ class TestWriteTextAtomic:
     def test_original_survives_a_failed_write(self, tmp_path, monkeypatch):
         target = tmp_path / "f.txt"
         target.write_text("original")
-        monkeypatch.setattr(archive.os, "replace",
-                            lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
+        monkeypatch.setattr(archive.os, "replace", lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
         with pytest.raises(OSError):
             paths.write_text_atomic(target, "new")
         assert target.read_text() == "original"
@@ -1617,7 +1771,7 @@ class TestDownloadAtomicity:
         dest_dir = tmp_path / "out"
 
         def exploding_copy(s, d):
-            Path(d).write_bytes(b"trunc")     # partial write, then die
+            Path(d).write_bytes(b"trunc")  # partial write, then die
             raise OSError("connection reset")
 
         out = self._run(monkeypatch, src, dest_dir, copy=exploding_copy)
@@ -1631,7 +1785,9 @@ class TestDownloadAtomicity:
         src.write_bytes(b"x" * 64)
         dest_dir = tmp_path / "out"
         out = self._run(
-            monkeypatch, src, dest_dir,
+            monkeypatch,
+            src,
+            dest_dir,
             copy=lambda s, d: Path(d).write_bytes(b"short"),
         )
         assert out is None

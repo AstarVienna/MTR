@@ -55,7 +55,8 @@ def ensurepip_command_if_needed(python_exe: str = sys.executable) -> list[str] |
     """
     probe = subprocess.run(
         [python_exe, "-m", "pip", "--version"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if probe.returncode == 0:
         return None
@@ -102,14 +103,15 @@ def resolve_runtime_env(runner: str = "default") -> dict[str, str]:
     env_file = paths.env_file()
     if env_file.exists():
         from dotenv import dotenv_values
-        env.update({k: v for k, v in dotenv_values(env_file).items()
-                    if v is not None and k not in SECRET_ENV_KEYS})
+
+        env.update(
+            {k: v for k, v in dotenv_values(env_file).items() if v is not None and k not in SECRET_ENV_KEYS}
+        )
 
     return env
 
 
-def runner_prefix(runner: str, container: str | None,
-                  interactive: bool = False) -> list[str]:
+def runner_prefix(runner: str, container: str | None, interactive: bool = False) -> list[str]:
     """Return the command prefix that targets *runner*.
 
     Empty for ``default`` / ``native`` (run locally); for ``docker`` / ``podman``
@@ -118,9 +120,6 @@ def runner_prefix(runner: str, container: str | None,
     """
     if runner in ("docker", "podman"):
         if not container:
-            raise ValueError(
-                f"--runner {runner} requires --container NAME "
-                "(or the METIS_CONTAINER env var)."
-            )
+            raise ValueError(f"--runner {runner} requires --container NAME (or the METIS_CONTAINER env var).")
         return [runner, "exec", "-it" if interactive else "-i", container]
     return []

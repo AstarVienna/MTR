@@ -69,6 +69,7 @@ INPUT_EXTS = (".yaml", ".yml", ".csv")
 UMBRELLA_WORKFLOW = "metis.metis_wkf"
 
 # Primary key: properties.tech value in YAML block
+# fmt: off
 TECH_TO_WORKFLOW = {
     "IMAGE,LM": "metis.metis_lm_img_wkf",
     "IMAGE,N":  "metis.metis_n_img_wkf",
@@ -82,8 +83,10 @@ TECH_TO_WORKFLOW = {
     "PUP,LM":   "metis.metis_pupil_imaging_wkf",
     "PUP,N":    "metis.metis_pupil_imaging_wkf",
 }
+# fmt: on
 
 # Fallback key: mode value in YAML block
+# fmt: off
 MODE_TO_WORKFLOW = {
     "img_lm":     "metis.metis_lm_img_wkf",
     "wcu_img_lm": "metis.metis_lm_img_wkf",
@@ -95,6 +98,7 @@ MODE_TO_WORKFLOW = {
     "lms":        "metis.metis_ifu_wkf",
     "wcu_lms":    "metis.metis_ifu_wkf",
 }
+# fmt: on
 
 # ---------------------------------------------------------------------------
 # Task chain tables
@@ -110,6 +114,7 @@ MODE_TO_WORKFLOW = {
 # Only tasks with a raw-file main input are listed here; intermediate tasks
 # whose main input is a previous task's product are omitted because they run
 # automatically when their upstream task is targeted.
+# fmt: off
 WORKFLOW_TASK_CHAIN = {
     "metis.metis_ifu_wkf": [
         ("metis_ifu_lingain",    "DETLIN_IFU_RAW",      None),
@@ -182,10 +187,12 @@ WORKFLOW_TASK_CHAIN = {
         ("metis_pupil_imaging",  "LM_PUPIL_RAW",     "science"),
     ],
 }
+# fmt: on
 
 # Reverse lookup: (dpr.catg, dpr.type, dpr.tech) → EDPS classification tag.
 # Used to classify FITS files by their ESO DPR headers when --no-sim is given.
 # Derived from metis_classification.py.
+# fmt: off
 DPR_TO_TAG = {
     # LM IMG
     ("CALIB",     "DETLIN",          "IMAGE,LM"): "DETLIN_2RG_RAW",
@@ -232,6 +239,7 @@ DPR_TO_TAG = {
     # Pupil
     ("TECHNICAL", "PUPIL",           "PUP,LM"):   "LM_PUPIL_RAW",
 }
+# fmt: on
 
 
 def _edps_properties_path() -> Path:
@@ -357,8 +365,9 @@ def scan_fits_inputs(fits_dir):
                 sub_workflows.add(wf)
 
     if unreadable:
-        print(f"  Warning: {len(unreadable)} FITS file(s) could not be read "
-              f"and were ignored:", file=sys.stderr)
+        print(
+            f"  Warning: {len(unreadable)} FITS file(s) could not be read and were ignored:", file=sys.stderr
+        )
         for line in unreadable[:10]:
             print(f"    {line}", file=sys.stderr)
         if len(unreadable) > 10:
@@ -382,8 +391,7 @@ def infer_workflow(input_files):
     ``do.catg`` values found across all YAML blocks; these equal the EDPS
     classification tag names for the generated FITS files.
     """
-    yaml_files = [p for p in input_files
-                  if Path(p).suffix.lower() in (".yaml", ".yml")]
+    yaml_files = [p for p in input_files if Path(p).suffix.lower() in (".yaml", ".yml")]
     if not yaml_files:
         raise ValueError(
             "No YAML files provided; workflow cannot be inferred from CSV "
@@ -458,9 +466,11 @@ def classify_fits_file(path):
     try:
         with afits.open(path, memmap=True) as hdul:
             hdr = hdul[0].header
+            # fmt: off
             catg = hdr.get("HIERARCH ESO DPR CATG", "").strip()
             typ  = hdr.get("HIERARCH ESO DPR TYPE", "").strip()
             tech = hdr.get("HIERARCH ESO DPR TECH", "").strip()
+            # fmt: on
             pro_catg = hdr.get("HIERARCH ESO PRO CATG", "").strip()
     except Exception:
         return None
@@ -497,9 +507,7 @@ def infer_workflow_from_fits(fits_dir):
     try:
         from astropy.io import fits as afits
     except ImportError as exc:
-        raise ValueError(
-            "astropy is required to infer workflow from FITS headers."
-        ) from exc
+        raise ValueError("astropy is required to infer workflow from FITS headers.") from exc
 
     techs = []
     for f in Path(fits_dir).rglob("*.fits"):
@@ -610,6 +618,7 @@ def infer_edps_targets_for_workflows(data_tags, has_science, sub_workflows):
 # Simulation driver script builder
 # ---------------------------------------------------------------------------
 
+
 def _resolve_inst_pkgs_path(args, runner):
     """Resolve the ScopeSim instrument-packages path for *runner*.
 
@@ -619,8 +628,7 @@ def _resolve_inst_pkgs_path(args, runner):
     an explicit --inst-pkgs (ScopeSim resolves ./inst_pkgs inside the container).
     """
     if args.inst_pkgs:
-        return args.inst_pkgs if runner in ("docker", "podman") \
-            else str(Path(args.inst_pkgs).resolve())
+        return args.inst_pkgs if runner in ("docker", "podman") else str(Path(args.inst_pkgs).resolve())
     if runner == "default":
         return str(paths.inst_pkgs_dir())
     if runner == "native":
@@ -628,9 +636,18 @@ def _resolve_inst_pkgs_path(args, runner):
     return None
 
 
-def _build_sim_script(out_dir, do_calib, do_static, n_cores, input_list,
-                      inst_pkgs_path=None, sims_root=None,
-                      static_calibs_dir=None, do_sim=True, write_yaml=False):
+def _build_sim_script(
+    out_dir,
+    do_calib,
+    do_static,
+    n_cores,
+    input_list,
+    inst_pkgs_path=None,
+    sims_root=None,
+    static_calibs_dir=None,
+    do_sim=True,
+    write_yaml=False,
+):
     """Return the simulation driver script as a string.
 
     When *inst_pkgs_path* is given (default and native runners) the script
@@ -664,9 +681,7 @@ def _build_sim_script(out_dir, do_calib, do_static, n_cores, input_list,
         # path; some environments (CI, sandboxed users) have a read-only
         # ~/.cache. metis_simulations.sources calls scipy.datasets.face() at
         # import time, which would otherwise fail with PermissionError.
-        "_os.environ.setdefault("
-        "'SCIPY_DATASETS_DIR', "
-        "_os.path.join(_tempfile.gettempdir(), 'scipy-data'))",
+        "_os.environ.setdefault('SCIPY_DATASETS_DIR', _os.path.join(_tempfile.gettempdir(), 'scipy-data'))",
         f"sys.path.insert(0, {path_entry!r})",
         "",
     ]
@@ -697,7 +712,7 @@ def _build_sim_script(out_dir, do_calib, do_static, n_cores, input_list,
             "    _inst_dir.mkdir(parents=True, exist_ok=True)",
             "    sim.download_packages('METIS', release='2026-04-17')",
             "    sim.download_packages('ELT', release='2025-10-26')",
-            "    sim.download_packages('Armazones', release='2023-07-11')"
+            "    sim.download_packages('Armazones', release='2023-07-11')",
         ]
     lines += [
         "",
@@ -796,6 +811,7 @@ def _build_sim_script(out_dir, do_calib, do_static, n_cores, input_list,
 # Runner-aware subprocess helpers
 # ---------------------------------------------------------------------------
 
+
 def _check_default_env(runner):
     """Validate that the default runner can be used.
 
@@ -807,9 +823,7 @@ def _check_default_env(runner):
     if runner != "default":
         return
     if not (paths.pipeline_dir() / ".git").exists():
-        raise FileNotFoundError(
-            f"{paths.pipeline_dir()} not found — run the Install tab in the MTR GUI"
-        )
+        raise FileNotFoundError(f"{paths.pipeline_dir()} not found — run the Install tab in the MTR GUI")
 
 
 def _default_subprocess_env() -> dict[str, str]:
@@ -834,8 +848,7 @@ def _run_simulation(runner, container, sim_code, sims_cwd):
     """
     if runner in ("docker", "podman"):
         return subprocess.run(
-            [runner, "exec", "-i", "-w", str(sims_cwd), container,
-             "python", "-"],
+            [runner, "exec", "-i", "-w", str(sims_cwd), container, "python", "-"],
             input=sim_code.encode(),
         ).returncode
 
@@ -844,7 +857,8 @@ def _run_simulation(runner, container, sim_code, sims_cwd):
     # delete=False is deliberate: the file must outlive this block so the
     # subprocess can execute it; the finally below removes it.
     tmp = tempfile.NamedTemporaryFile(  # noqa: SIM115
-        mode="w", suffix="_run_sim.py", delete=False)
+        mode="w", suffix="_run_sim.py", delete=False
+    )
     tmp.write(sim_code)
     tmp.close()
     try:
@@ -874,6 +888,7 @@ def _edps_base_cmd(runner, container, edps_port):
 # ---------------------------------------------------------------------------
 # EDPS association_preference runtime override
 # ---------------------------------------------------------------------------
+
 
 def _set_association_preference(value: str) -> str | None:
     """Patch ``association_preference`` in ``~/.edps/application.properties``.
@@ -917,28 +932,35 @@ def _apply_prefer_masters(runner: str) -> str | None:
     Returns the value to restore afterwards, or ``None`` if nothing changed.
     """
     if runner in ("docker", "podman"):
-        print(f"  Warning: --prefer-masters is ignored for --runner {runner}. "
-              "It patches ~/.edps/application.properties on the host, but EDPS "
-              "runs inside the container with its own configuration.")
+        print(
+            f"  Warning: --prefer-masters is ignored for --runner {runner}. "
+            "It patches ~/.edps/application.properties on the host, but EDPS "
+            "runs inside the container with its own configuration."
+        )
         return None
 
     original = _set_association_preference(_PREFER_MASTERS_VALUE)
     if original is None:
-        print("  Warning: no 'association_preference=' line found in "
-              f"{_edps_properties_path()} — --prefer-masters had no effect.")
+        print(
+            "  Warning: no 'association_preference=' line found in "
+            f"{_edps_properties_path()} — --prefer-masters had no effect."
+        )
     elif original == _PREFER_MASTERS_VALUE:
-        print("  Note: association_preference was already "
-              f"'{_PREFER_MASTERS_VALUE}' (the Install tab sets it), so "
-              "--prefer-masters changes nothing for this run.")
+        print(
+            "  Note: association_preference was already "
+            f"'{_PREFER_MASTERS_VALUE}' (the Install tab sets it), so "
+            "--prefer-masters changes nothing for this run."
+        )
     else:
-        print(f"  Overriding association_preference: {original} → "
-              f"{_PREFER_MASTERS_VALUE} (restored after the run)")
+        print(
+            f"  Overriding association_preference: {original} → "
+            f"{_PREFER_MASTERS_VALUE} (restored after the run)"
+        )
     return original
 
 
 @contextlib.contextmanager
-def edps_session(edps_cmd, cwd, env, *, prefer_masters: bool = False,
-                 runner: str = "default"):
+def edps_session(edps_cmd, cwd, env, *, prefer_masters: bool = False, runner: str = "default"):
     """Own the global EDPS state for the duration of a pipeline run.
 
     Both things this guards are process-global and live in the user's ``$HOME``:
@@ -967,8 +989,7 @@ def edps_session(edps_cmd, cwd, env, *, prefer_masters: bool = False,
             print(f"  Warning: could not restore association_preference: {exc}")
         print("=== Stopping EDPS server ===")
         try:
-            subprocess.run(edps_cmd + ["-s"], cwd=cwd, env=env,
-                           capture_output=True, timeout=15)
+            subprocess.run(edps_cmd + ["-s"], cwd=cwd, env=env, capture_output=True, timeout=15)
         except Exception as exc:
             print(f"  Warning: could not stop the EDPS server: {exc}")
 
@@ -1027,9 +1048,7 @@ def _parse_line_range(s):
     malformed input (no colon, non-integer, non-positive, or ``start > end``).
     """
     if ":" not in s:
-        raise argparse.ArgumentTypeError(
-            f"expected START:END (e.g. 6:12, 6:, :12), got {s!r}"
-        )
+        raise argparse.ArgumentTypeError(f"expected START:END (e.g. 6:12, 6:, :12), got {s!r}")
     start_s, end_s = s.split(":", 1)
 
     def _bound(token, name):
@@ -1039,21 +1058,15 @@ def _parse_line_range(s):
         try:
             value = int(token)
         except ValueError:
-            raise argparse.ArgumentTypeError(
-                f"{name} must be an integer, got {token!r}"
-            ) from None
+            raise argparse.ArgumentTypeError(f"{name} must be an integer, got {token!r}") from None
         if value < 1:
-            raise argparse.ArgumentTypeError(
-                f"{name} must be >= 1, got {value}"
-            )
+            raise argparse.ArgumentTypeError(f"{name} must be >= 1, got {value}")
         return value
 
     start = _bound(start_s, "start")
     end = _bound(end_s, "end")
     if start is not None and end is not None and start > end:
-        raise argparse.ArgumentTypeError(
-            f"start ({start}) must not exceed end ({end})"
-        )
+        raise argparse.ArgumentTypeError(f"start ({start}) must not exceed end ({end})")
     return (start, end)
 
 
@@ -1107,154 +1120,187 @@ def _slice_csv(path, line_range, out_dir):
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def parse_args(argv=None):
     p = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument(
-        "input_files", nargs="*", metavar="INPUT",
+        "input_files",
+        nargs="*",
+        metavar="INPUT",
         help="One or more observation-block files (.yaml, .yml, or .csv); "
-             "YAML and CSV may be mixed. Not required with --no-sim.",
+        "YAML and CSV may be mixed. Not required with --no-sim.",
     )
     p.add_argument(
-        "--csv-lines", metavar="START:END", type=_parse_line_range, default=None,
+        "--csv-lines",
+        metavar="START:END",
+        type=_parse_line_range,
+        default=None,
         help="Restrict CSV inputs to a range of 1-based file lines "
-             "(e.g. 6:12, 6: for line 6 to end, :12 for start to line 12). "
-             "The header block (column-name row + component/description/type "
-             "rows) is always kept. Applies to .csv inputs only; ignored with "
-             "--no-sim. [default: all rows]",
+        "(e.g. 6:12, 6: for line 6 to end, :12 for start to line 12). "
+        "The header block (column-name row + component/description/type "
+        "rows) is always kept. Applies to .csv inputs only; ignored with "
+        "--no-sim. [default: all rows]",
     )
     p.add_argument(
-        "-o", "--output", metavar="DIR",
+        "-o",
+        "--output",
+        metavar="DIR",
         default=os.environ.get("METIS_OUTPUT_DIR"),
-        help="Root output directory [default: ./output/<timestamp>] "
-             "(env: METIS_OUTPUT_DIR)",
+        help="Root output directory [default: ./output/<timestamp>] (env: METIS_OUTPUT_DIR)",
     )
     # NB: no nargs="?" on either flag. A bare `--calib` would swallow the
     # following positional (`--calib obs1.yaml` -> "invalid int value"), which
     # is exactly how the documented example used to fail.
     p.add_argument(
-        "--calib", type=_frame_count, default=1, metavar="N",
+        "--calib",
+        type=_frame_count,
+        default=1,
+        metavar="N",
         help="Auto-generate N calibration frames (dark/flat) per unique config, "
-             "inferred from input content. Forwarded to metis_simulations as "
-             "doCalib, which sets nObs per calibration config. "
-             "--calib 0 (or --no-calib) disables. [default: 1]",
+        "inferred from input content. Forwarded to metis_simulations as "
+        "doCalib, which sets nObs per calibration config. "
+        "--calib 0 (or --no-calib) disables. [default: 1]",
     )
     p.add_argument(
-        "--no-calib", dest="calib", action="store_const", const=0,
+        "--no-calib",
+        dest="calib",
+        action="store_const",
+        const=0,
         help="Shorthand for --calib 0.",
     )
     # Unlike --calib this is a pure on/off switch: MTR hardcodes doStatic=False
     # in the generated sim script and only ever tests `if args.static`, so there
     # is no frame count to pass through.
     p.add_argument(
-        "--static", type=_frame_count, choices=(0, 1), default=1,
+        "--static",
+        type=_frame_count,
+        choices=(0, 1),
+        default=1,
         help="Ensure static calibration prototypes (PERSISTENCE_MAP_*, "
-             "ATM_PROFILE, REF_STD_CAT, …) exist in a shared cache directory "
-             "and pass it to EDPS. Files are generated once and reused across "
-             "runs. --static 0 (or --no-static) disables. [default: 1]",
+        "ATM_PROFILE, REF_STD_CAT, …) exist in a shared cache directory "
+        "and pass it to EDPS. Files are generated once and reused across "
+        "runs. --static 0 (or --no-static) disables. [default: 1]",
     )
     p.add_argument(
-        "--no-static", dest="static", action="store_const", const=0,
+        "--no-static",
+        dest="static",
+        action="store_const",
+        const=0,
         help="Shorthand for --static 0.",
     )
     p.add_argument(
-        "--cores", type=int, default=4, metavar="N",
+        "--cores",
+        type=int,
+        default=4,
+        metavar="N",
         help="CPU cores for parallel simulations [default: 4]",
     )
     p.add_argument(
-        "--no-sim", action="store_true",
+        "--no-sim",
+        action="store_true",
         help="Skip simulations; run pipeline on existing FITS data. "
-             "The FITS source defaults to <output>/sim/ but can be overridden "
-             "with --pipeline-input.",
+        "The FITS source defaults to <output>/sim/ but can be overridden "
+        "with --pipeline-input.",
     )
     p.add_argument(
-        "--pipeline-input", metavar="DIR", action="append",
-        default=([os.environ["METIS_PIPELINE_INPUT"]]
-                 if os.environ.get("METIS_PIPELINE_INPUT") else None),
+        "--pipeline-input",
+        metavar="DIR",
+        action="append",
+        default=([os.environ["METIS_PIPELINE_INPUT"]] if os.environ.get("METIS_PIPELINE_INPUT") else None),
         help="Directory containing FITS files to use as pipeline input. "
-             "May be specified multiple times. Only used with --no-sim. "
-             "When omitted, defaults to <output>/sim/. "
-             "(env: METIS_PIPELINE_INPUT)",
+        "May be specified multiple times. Only used with --no-sim. "
+        "When omitted, defaults to <output>/sim/. "
+        "(env: METIS_PIPELINE_INPUT)",
     )
     p.add_argument(
-        "--no-pipeline", action="store_true",
+        "--no-pipeline",
+        action="store_true",
         help="Run simulations only; skip EDPS pipeline",
     )
     p.add_argument(
-        "--csv-to-yaml", action="store_true",
+        "--csv-to-yaml",
+        action="store_true",
         help="Dry run: translate CSV input(s) to YAML via METIS_Simulations "
-             "(testRun+writeYaml). Writes <name>.yaml next to each CSV and skips "
-             "simulation and the EDPS pipeline. Only CSV inputs are affected.",
+        "(testRun+writeYaml). Writes <name>.yaml next to each CSV and skips "
+        "simulation and the EDPS pipeline. Only CSV inputs are affected.",
     )
     p.add_argument(
         "--runner",
         choices=["default", "native", "docker", "podman"],
         default=os.environ.get("METIS_RUNNER", "default"),
         help="Execution mode: default runs subprocesses inside MTR's own "
-             "pipx/venv and loads the Install-tab .env; native calls tools "
-             "directly from PATH (bare-metal or inside a container); "
-             "docker/podman exec commands into a running container "
-             "(env: METIS_RUNNER)",
+        "pipx/venv and loads the Install-tab .env; native calls tools "
+        "directly from PATH (bare-metal or inside a container); "
+        "docker/podman exec commands into a running container "
+        "(env: METIS_RUNNER)",
     )
     p.add_argument(
-        "--container", metavar="NAME",
+        "--container",
+        metavar="NAME",
         default=os.environ.get("METIS_CONTAINER"),
-        help="Container name or ID for --runner=docker/podman "
-             "(env: METIS_CONTAINER)",
+        help="Container name or ID for --runner=docker/podman (env: METIS_CONTAINER)",
     )
     p.add_argument(
-        "--simulations-dir", metavar="DIR",
+        "--simulations-dir",
+        metavar="DIR",
         default=os.environ.get("METIS_SIMULATIONS_DIR"),
         help="Path to the METIS_Simulations repository. For docker/podman "
-             "runners this must be the path *inside* the container "
-             "[default: ./METIS_Simulations for default/native, "
-             "/home/metis/METIS_Simulations for docker/podman] "
-             "(env: METIS_SIMULATIONS_DIR)",
+        "runners this must be the path *inside* the container "
+        "[default: ./METIS_Simulations for default/native, "
+        "/home/metis/METIS_Simulations for docker/podman] "
+        "(env: METIS_SIMULATIONS_DIR)",
     )
     p.add_argument(
-        "--inst-pkgs", metavar="DIR",
+        "--inst-pkgs",
+        metavar="DIR",
         default=os.environ.get("METIS_INST_PKGS"),
         help="Path to the ScopeSim instrument packages directory "
-             "(Armazones, ELT, METIS, …). "
-             "For the default runner this defaults to the user data dir "
-             "(~/.local/share/metis-test-runner/inst_pkgs). "
-             "For the native runner this defaults to ./inst_pkgs relative to "
-             "the current working directory — ScopeSim will download packages "
-             "there on first use. "
-             "For docker/podman runners supply the container-internal path; "
-             "if omitted ScopeSim resolves ./inst_pkgs inside the container. "
-             "(env: METIS_INST_PKGS)",
+        "(Armazones, ELT, METIS, …). "
+        "For the default runner this defaults to the user data dir "
+        "(~/.local/share/metis-test-runner/inst_pkgs). "
+        "For the native runner this defaults to ./inst_pkgs relative to "
+        "the current working directory — ScopeSim will download packages "
+        "there on first use. "
+        "For docker/podman runners supply the container-internal path; "
+        "if omitted ScopeSim resolves ./inst_pkgs inside the container. "
+        "(env: METIS_INST_PKGS)",
     )
     p.add_argument(
-        "--auto-fetch-calibrations", action="store_true",
+        "--auto-fetch-calibrations",
+        action="store_true",
         help="Automatically download missing master calibration files from "
-             "the remote METIS archive before running the pipeline. "
-             "Requires MetisWISE to be installed and ~/.awe/Environment.cfg "
-             "to hold valid credentials (see Archive tab).",
+        "the remote METIS archive before running the pipeline. "
+        "Requires MetisWISE to be installed and ~/.awe/Environment.cfg "
+        "to hold valid credentials (see Archive tab).",
     )
     p.add_argument(
-        "--prefer-masters", action="store_true",
+        "--prefer-masters",
+        action="store_true",
         help="Set EDPS association_preference to 'master_per_quality_level' "
-             "for this run, preferring master calibrations over reduced raw "
-             "data. Only useful when EDPS was configured outside MTR: the "
-             "Install tab already pins this value, so on a standard install "
-             "the flag changes nothing. Ignored for --runner docker/podman, "
-             "where EDPS reads the container's own configuration.",
+        "for this run, preferring master calibrations over reduced raw "
+        "data. Only useful when EDPS was configured outside MTR: the "
+        "Install tab already pins this value, so on a standard install "
+        "the flag changes nothing. Ignored for --runner docker/podman, "
+        "where EDPS reads the container's own configuration.",
     )
     p.add_argument(
-        "--version", action="version",
+        "--version",
+        action="version",
         version=f"%(prog)s {__version__}",
     )
     # The examples live inside the installed package, so after a pipx install
     # there is no ./examples in the working directory to point at.
     p.add_argument(
-        "--examples-dir", action="store_true",
+        "--examples-dir",
+        action="store_true",
         help="Print the directory holding the bundled example inputs, and exit.",
     )
     p.add_argument(
-        "--copy-examples", metavar="DIR",
+        "--copy-examples",
+        metavar="DIR",
         help="Copy the bundled example inputs into DIR, and exit.",
     )
 
@@ -1284,6 +1330,7 @@ def parse_args(argv=None):
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main(argv=None):
     args = parse_args(argv)
@@ -1326,12 +1373,12 @@ def main(argv=None):
     # For docker/podman the path is resolved inside the container, so we skip
     # the existence check and default to the upstream image layout.
     if runner in ("docker", "podman"):
-        sims_root = Path(args.simulations_dir) if args.simulations_dir \
-                    else Path("/home/metis/METIS_Simulations")
+        sims_root = (
+            Path(args.simulations_dir) if args.simulations_dir else Path("/home/metis/METIS_Simulations")
+        )
         sims_cwd = sims_root
     else:
-        sims_root = Path(args.simulations_dir).resolve() if args.simulations_dir \
-                    else paths.simulations_dir()
+        sims_root = Path(args.simulations_dir).resolve() if args.simulations_dir else paths.simulations_dir()
         sims_cwd = sims_root
         if not (sims_root / "metis_simulations").is_dir():
             sys.exit(
@@ -1348,8 +1395,7 @@ def main(argv=None):
     # In --no-sim mode YAML/CSV content is ignored — tags and sub-workflows
     # come from the FITS headers in --pipeline-input, so a leftover input from
     # a previous simulate+run cannot mislead the pipeline step here.
-    print(f"  Runner    : {runner}"
-          + (f" (container: {args.container})" if args.container else ""))
+    print(f"  Runner    : {runner}" + (f" (container: {args.container})" if args.container else ""))
     workflow = UMBRELLA_WORKFLOW
     has_science = False
     yaml_tags = set()
@@ -1357,17 +1403,13 @@ def main(argv=None):
 
     if input_files and not args.no_sim:
         by_ext = Counter(p.suffix.lower() for p in input_files)
-        breakdown = ", ".join(
-            f"{n} {ext.lstrip('.').upper()}"
-            for ext, n in sorted(by_ext.items())
-        )
+        breakdown = ", ".join(f"{n} {ext.lstrip('.').upper()}" for ext, n in sorted(by_ext.items()))
         print(f"Analysing input file(s)  ({breakdown}) …")
         for p in input_files:
             kind = "YAML" if p.suffix.lower() in (".yaml", ".yml") else "CSV"
             print(f"    [{kind:<4}] {p}")
 
-        yaml_subset = [p for p in input_files
-                       if p.suffix.lower() in (".yaml", ".yml")]
+        yaml_subset = [p for p in input_files if p.suffix.lower() in (".yaml", ".yml")]
         csv_only = all(p.suffix.lower() == ".csv" for p in input_files)
 
         if args.no_pipeline:
@@ -1380,8 +1422,7 @@ def main(argv=None):
             # headers after Step 1 (see the pipeline step below). EDPS always
             # runs the umbrella workflow, so a single sub-workflow is never
             # needed up front.
-            print("  Workflow      : (auto-detected from simulated FITS; "
-                  "CSV-only run)")
+            print("  Workflow      : (auto-detected from simulated FITS; CSV-only run)")
             print("  Data tags     : (will be inferred from FITS headers)")
         else:
             yaml_tags, has_science, yaml_sub_workflows = scan_yaml_inputs(yaml_subset)
@@ -1396,17 +1437,18 @@ def main(argv=None):
             print(f"  Data tags     : {sorted(yaml_tags) or '(none found)'}")
     else:
         if input_files:
-            print(f"  Note          : ignoring {len(input_files)} input file(s) "
-                  "in --no-sim mode")
+            print(f"  Note          : ignoring {len(input_files)} input file(s) in --no-sim mode")
         print(f"  Workflow      : {workflow}")
         print("  Sub-workflows : (will be inferred from FITS headers)")
 
     # Create output directories
     ts = datetime.now().strftime("%Y%m%dT%H%M%S")
+    # fmt: off
     output_root = Path(args.output).resolve() if args.output \
                   else Path.cwd() / "output" / ts
     sim_out  = output_root / "sim"
     pipe_out = output_root / "pipeline"
+    # fmt: on
 
     # When pipeline-only with an explicit input directory, use that as the
     # FITS source instead of <output>/sim/.
@@ -1448,8 +1490,7 @@ def main(argv=None):
         for p in input_files:
             if p.suffix.lower() == ".csv":
                 sliced = _slice_csv(p, args.csv_lines, sliced_dir)
-                print(f"  CSV slice     : {p.name} lines "
-                      f"{start or 1}-{end or 'EOF'} → {sliced}")
+                print(f"  CSV slice     : {p.name} lines {start or 1}-{end or 'EOF'} → {sliced}")
                 sim_input_files.append(sliced)
             else:
                 sim_input_files.append(p)
@@ -1459,11 +1500,11 @@ def main(argv=None):
     # -----------------------------------------------------------------------
     if args.csv_to_yaml:
         if not any(p.suffix.lower() == ".csv" for p in input_files):
-            print("  Note: --csv-to-yaml only affects CSV inputs; "
-                  "no .csv given, nothing to translate.")
+            print("  Note: --csv-to-yaml only affects CSV inputs; no .csv given, nothing to translate.")
         # metis_simulations imports (and builds METIS OpticalTrains) before the
         # translation runs, so it still needs the real instrument-packages path
         # — only the per-frame simulate() calls are skipped (testRun+writeYaml).
+        # fmt: off
         sim_code = _build_sim_script(
             out_dir            = str(sim_out),
             do_calib           = 0,
@@ -1475,6 +1516,7 @@ def main(argv=None):
             static_calibs_dir  = str(static_calibs_dir),
             write_yaml         = True,
         )
+        # fmt: on
         print("=== Translating CSV input(s) to YAML (no simulation) ===")
         rc = _run_simulation(runner, args.container, sim_code, sims_cwd)
         if rc != 0:
@@ -1487,6 +1529,7 @@ def main(argv=None):
     # -----------------------------------------------------------------------
     if not args.no_sim:
         inst_pkgs_path = _resolve_inst_pkgs_path(args, runner)
+        # fmt: off
         sim_code = _build_sim_script(
             out_dir            = str(sim_out),
             do_calib           = args.calib,
@@ -1497,6 +1540,7 @@ def main(argv=None):
             sims_root          = sims_root,
             static_calibs_dir  = str(static_calibs_dir),
         )
+        # fmt: on
 
         print("=== Running simulations ===")
         rc = _run_simulation(runner, args.container, sim_code, sims_cwd)
@@ -1510,8 +1554,10 @@ def main(argv=None):
     # statics that would normally be produced alongside the sim are never
     # generated. Run the same sim script with do_sim=False (which keeps only
     # the static calib block) when the shared cache is empty.
-    elif not args.no_pipeline and args.static \
-            and not (static_calibs_dir / "PERSISTENCE_MAP_LM.fits").is_file():
+    elif (
+        not args.no_pipeline and args.static and not (static_calibs_dir / "PERSISTENCE_MAP_LM.fits").is_file()
+    ):
+        # fmt: off
         sim_code = _build_sim_script(
             out_dir            = str(sim_out),
             do_calib           = 0,
@@ -1523,6 +1569,7 @@ def main(argv=None):
             static_calibs_dir  = str(static_calibs_dir),
             do_sim             = False,
         )
+        # fmt: on
         print("=== Generating static calibration prototypes ===")
         rc = _run_simulation(runner, args.container, sim_code, sims_cwd)
         if rc != 0:
@@ -1574,15 +1621,15 @@ def main(argv=None):
                 all_fetched.extend(fetched)
             except Exception as exc:
                 failed.append(wf)
-                print(f"  Warning: auto-fetch for {wf} failed ({exc}); "
-                      "continuing without")
+                print(f"  Warning: auto-fetch for {wf} failed ({exc}); continuing without")
         # Distinguish "checked, nothing missing" from "could not check".
         if not fetch_sub_workflows:
-            print("  Skipped: could not identify any sub-workflow from the "
-                  "input set, so there is nothing to check against.")
+            print(
+                "  Skipped: could not identify any sub-workflow from the "
+                "input set, so there is nothing to check against."
+            )
         elif failed and not all_missing:
-            print(f"  Could not check {len(failed)} workflow(s); "
-                  "calibration state is unknown")
+            print(f"  Could not check {len(failed)} workflow(s); calibration state is unknown")
         elif not all_missing:
             print("  All required calibrations already present")
         elif all_fetched:
@@ -1602,8 +1649,11 @@ def main(argv=None):
             # of sub-workflows their DPR.TECH headers imply.  EDPS itself
             # picks the right files per workflow from the shared input dir,
             # so we just need to cover every workflow whose raws are present.
-            input_dirs = ([str(Path(d).resolve()) for d in args.pipeline_input]
-                          if args.pipeline_input else [str(sim_out)])
+            input_dirs = (
+                [str(Path(d).resolve()) for d in args.pipeline_input]
+                if args.pipeline_input
+                else [str(sim_out)]
+            )
             fits_tags = set()
             active_sub_workflows = set()
             for d in input_dirs:
@@ -1641,32 +1691,31 @@ def main(argv=None):
                 if not active_sub_workflows:
                     active_sub_workflows = fits_wfs
                 if data_tags:
-                    print(f"  Data tags     : {sorted(data_tags)}  "
-                          "(inferred from simulated FITS)")
+                    print(f"  Data tags     : {sorted(data_tags)}  (inferred from simulated FITS)")
                 if active_sub_workflows:
-                    print(f"  Sub-workflows : {sorted(active_sub_workflows)}  "
-                          "(inferred from simulated FITS)")
+                    print(f"  Sub-workflows : {sorted(active_sub_workflows)}  (inferred from simulated FITS)")
                 has_science = any(
                     meta == "science" and tag in data_tags
                     for wf in active_sub_workflows
                     for _, tag, meta in WORKFLOW_TASK_CHAIN.get(wf, [])
                 )
             if not active_sub_workflows:
-                sys.exit(
-                    "Error: could not identify any METIS sub-workflow from the "
-                    "simulated FITS headers."
-                )
+                sys.exit("Error: could not identify any METIS sub-workflow from the simulated FITS headers.")
 
         target_flags = infer_edps_targets_for_workflows(
-            data_tags, has_science, active_sub_workflows,
+            data_tags,
+            has_science,
+            active_sub_workflows,
         )
         if target_flags:
             print(f"  EDPS target     : {' '.join(target_flags)}")
         else:
             print("  EDPS target     : (none inferred; EDPS will use workflow default)")
 
+        # fmt: off
         edps_port = read_edps_port()
         edps_cmd  = _edps_base_cmd(runner, args.container, edps_port)
+        # fmt: on
         # EDPS and PyEsorex write log files to their cwd.  For local runners
         # cwd to pipe_out (host-accessible via the MTR bind mount) so the logs
         # land there; for docker/podman the container resolves cwd internally.
@@ -1688,26 +1737,34 @@ def main(argv=None):
         # this context manager, so a Ctrl-C or a failure during the warm-up
         # cannot leave the config patched or the server running.
         pipeline_rc = 1
-        with edps_session(edps_cmd, edps_cwd, edps_env,
-                          prefer_masters=args.prefer_masters, runner=runner):
+        with edps_session(edps_cmd, edps_cwd, edps_env, prefer_masters=args.prefer_masters, runner=runner):
             print("=== Starting EDPS server ===")
             print("=== Listing Workflows    ===")
-            rc = subprocess.run(edps_cmd + ["-lw"], cwd=edps_cwd,
-                                env=edps_env).returncode
+            rc = subprocess.run(edps_cmd + ["-lw"], cwd=edps_cwd, env=edps_env).returncode
             if rc != 0:
                 sys.exit(f"Error: EDPS server failed to start (exit code {rc}).")
 
             print("=== Running EDPS pipeline ===")
-            full_cmd = edps_cmd + [
-                "-w", workflow,
-            ] + edps_inputs + [
-                "-o", str(pipe_out),
-            ] + target_flags
+            full_cmd = (
+                edps_cmd
+                + [
+                    "-w",
+                    workflow,
+                ]
+                + edps_inputs
+                + [
+                    "-o",
+                    str(pipe_out),
+                ]
+                + target_flags
+            )
             # Echo it: this is the hardest part of a run to reproduce by hand
             # and was the one thing never printed.
             print(f"  $ {' '.join(full_cmd)}")
             pipeline_rc = subprocess.run(
-                full_cmd, cwd=edps_cwd, env=edps_env,
+                full_cmd,
+                cwd=edps_cwd,
+                env=edps_env,
             ).returncode
         if pipeline_rc != 0:
             sys.exit(f"Error: pipeline step failed (exit code {pipeline_rc}).")
