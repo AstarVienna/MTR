@@ -895,19 +895,19 @@ class InstallWorker(QThread):
             # whatever venv the user installed MTR into).
             self._run(self._pip_deps_command(), cwd=REPO_ROOT)
 
-            self._step("Installing pymetis (eso-pymetis, editable)…")
-            # metiswise 0.0.4 (Archive tab) depends on ``eso-pymetis``, which is
-            # just the pip build of the ``pymetis`` we already clone above.
+            self._step("Installing pymetis (editable)…")
+            # metiswise (Archive tab) depends on ``pymetis`` (``eso-pymetis`` in
+            # 0.0.4), which is just the pip build of the clone above.
             # Install the clone editable with --no-deps so that:
             #   (a) ``pymetis`` is importable in-process (metiswise imports it), and
-            #   (b) the Archive-tab metiswise install finds ``eso-pymetis`` already
+            #   (b) the Archive-tab metiswise install finds ``pymetis`` already
             #       satisfied — avoiding a 2nd pymetis copy and the clash between
-            #       eso-pymetis's pycpl==1.0.3.post4 pin and the newer pycpl the
+            #       pymetis's pycpl==1.0.3.post11 pin and the newer pycpl the
             #       step above just resolved.
             # --no-deps keeps the pycpl/edps/pyesorex versions installed above
             # authoritative.
-            # TODO: remove/revisit if metiswise drops the eso-pymetis dependency
-            # or eso-pymetis stops pinning pycpl.
+            # TODO: remove/revisit if metiswise drops the pymetis dependency
+            # or pymetis stops pinning pycpl.
             self._run(
                 [sys.executable, "-m", "pip", "install", "--editable",
                  str(TARGET_A / "metisp" / "pymetis"), "--no-deps"],
@@ -1340,11 +1340,12 @@ class UninstallWorker(QThread):
 
     # Top-level packages the Install tab installs: the pipeline deps plus the
     # two editable installs, by their distribution names (the pymetis clone
-    # registers as ``eso-pymetis``; METIS_Simulations as ``metis_simulations``).
+    # registers as ``pymetis``, or ``eso-pymetis`` for refs before 2026-07-13;
+    # METIS_Simulations as ``metis_simulations``).
     PIPELINE_PACKAGES = [
         "pycpl", "edps", "pyesorex", "adari_core",
         "scopesim", "scopesim_templates",
-        "eso-pymetis", "metis_simulations",
+        "pymetis", "eso-pymetis", "metis_simulations",
     ]
 
     def run(self) -> None:

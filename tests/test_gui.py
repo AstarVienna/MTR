@@ -1055,6 +1055,17 @@ class TestUninstallEdpsCleanup:
 
 
 # ---------------------------------------------------------------------------
+# UninstallWorker.PIPELINE_PACKAGES — distribution names
+# ---------------------------------------------------------------------------
+
+class TestUninstallPackages:
+    def test_removes_both_pymetis_names(self):
+        # The clone registers as ``pymetis`` since 2026-07-13, ``eso-pymetis`` before.
+        from metis_test_runner.gui import UninstallWorker
+        assert {"pymetis", "eso-pymetis"} <= set(UninstallWorker.PIPELINE_PACKAGES)
+
+
+# ---------------------------------------------------------------------------
 # UninstallWorker._remove_data_dir — whole-tree removal
 # ---------------------------------------------------------------------------
 

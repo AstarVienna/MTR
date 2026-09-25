@@ -6,6 +6,10 @@
 - The Archive tab installs `metiswise>=0.0.4` from the entropynaut index
   instead of the v0.0.4 GitHub tag tarball, now that the index publishes it.
 
+### Fixed
+- Uninstall now removes the editable pymetis clone, which upstream renamed from
+  `eso-pymetis` to `pymetis` on 2026-07-13. Both names are uninstalled.
+
 ## 0.5.0 — 2026-09-19
 
 ### Fixed

@@ -117,7 +117,7 @@ class TestInstallMetisWiseCommand:
 
     def test_metiswise_command_is_no_deps_index_requirement(self):
         (_, mw_cmd), _ = archive.install_metiswise_command("u:p")
-        # --no-deps keeps eso-pymetis's stale pycpl pin out of the resolver.
+        # --no-deps keeps pymetis's stale pycpl pin out of the resolver.
         assert "--no-deps" in mw_cmd
         # Resolved from the entropynaut index, not a GitHub tarball.
         assert mw_cmd[-1] == "metiswise>=0.0.4"

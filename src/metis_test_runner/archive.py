@@ -55,7 +55,7 @@ def metiswise_available() -> bool:
 # credentialed entropynaut index.
 METISWISE_REQUIREMENT = "metiswise>=0.0.4"
 
-# metiswise 0.0.4's runtime dependencies, MINUS ``eso-pymetis`` (provided as an
+# metiswise's runtime dependencies, MINUS ``pymetis`` (provided as an
 # editable install of the cloned pymetis by the Install tab) and MINUS its
 # jupyter/sphinx/pytest/coverage/mock/build dev/notebook deps (which the
 # archive client does not need).  We install these first, with normal
@@ -119,21 +119,21 @@ def install_metiswise_command(
 
       1. Install metiswise's runtime deps (``_METISWISE_RUNTIME_DEPS``) with
          normal resolution.  None of these depend on ``pycpl`` or
-         ``eso-pymetis``, so this neither downgrades pycpl nor pulls a second
+         ``pymetis``, so this neither downgrades pycpl nor pulls a second
          pymetis copy.
       2. Install metiswise itself with ``--no-deps``.
 
-    Why ``--no-deps`` for metiswise: metiswise 0.0.4 declares ``eso-pymetis``,
-    and the cloned eso-pymetis the Install tab installs editable pins
-    ``pycpl==1.0.3.post4``.  A normal ``pip install metiswise`` would let that
-    pin downgrade whichever pycpl the Install tab just resolved — which we must
-    keep, because only the newer ivh releases ship prebuilt wheels for the macOS
-    versions our users run (post4 would force a source build that fails there).
-    ``--no-deps`` keeps pip from ever seeing eso-pymetis's pycpl pin.
+    Why ``--no-deps`` for metiswise: metiswise declares ``pymetis``
+    (``eso-pymetis`` in 0.0.4), and the cloned pymetis the Install tab installs
+    editable pins ``pycpl==1.0.3.post11``.  A normal ``pip install metiswise``
+    would let that pin downgrade the newer pycpl the Install tab deliberately
+    resolved, and a bare ``pymetis`` would also match the unrelated
+    graph-partitioning package on PyPI.  ``--no-deps`` keeps pip from ever
+    seeing pymetis's pycpl pin.
 
     TODO: the Install tab deliberately installs a newer pycpl than upstream
-    pymetis pins (``==1.0.3.post11``), and the entropynaut-published eso-pymetis
-    likely still carries post4.  Once both catch up, collapse this back into a
+    pymetis pins (``==1.0.3.post11``), and the entropynaut-published pymetis
+    likely carries the same pin.  Once both catch up, collapse this back into a
     single ``pip install <metiswise>`` with normal resolution.
     """
     env_overrides = {
@@ -174,7 +174,7 @@ def _ensure_metiswise_imports() -> None:
       - ``metiswise.main.drld`` imports ``metis_drld`` (a declared metiswise
         dependency, installed from the entropynaut index), and
       - ``raw``/``pro`` import ``pymetis`` (provided by the editable
-        ``eso-pymetis`` the Install tab installs from the METIS_Pipeline
+        ``pymetis`` the Install tab installs from the METIS_Pipeline
         clone).
     So this is now a plain import — no git clone, no ``sys.path`` munging.
 
