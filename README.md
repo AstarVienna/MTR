@@ -64,6 +64,10 @@ Refs apply to that run only: omit them to go back to each default branch. A clon
 with local changes is confirmed interactively, or needs `--discard-changes` when
 not on a terminal. `mtr-install` needs `git`.
 
+On ARM Linux (aarch64) MTR installs without the GUI, since the pinned PyQt6 has no
+build there, and `mtr-install` compiles `synphot` from source, which needs a C
+compiler and Python headers (e.g. `sudo apt install gcc python3-dev`).
+
 
 ## The GUI
 
@@ -458,6 +462,7 @@ shell runs inside the named container. These replace the old
 MTR/
 ├── src/metis_test_runner/
 │   ├── gui.py              # Graphical front-end (PyQt6) — primary entry point
+│   ├── launcher.py         # `mtr` entry point: starts the GUI or explains why not
 │   ├── run_metis.py        # Headless CLI (used directly or wrapped by the GUI)
 │   ├── installer.py        # Install/uninstall logic; mtr-install / mtr-uninstall
 │   ├── archive.py          # MetisWISE archive integration

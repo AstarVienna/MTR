@@ -35,10 +35,13 @@ dependencies = [
     #     QT_QPA_PLATFORM=wayland mtr --smoke-test
     # and record here which versions/compositors were tested.
     #
-    # Known cost of the pin: 6.6.0 predates Python 3.13, so 3.13 users may get
-    # no matching wheel even though the project claims 3.13 support.
-    "PyQt6==6.6.0",
-    "PyQt6-Qt6==6.6.0",
+    # Known cost of the pin: 6.6.0's wheels are abi3, so every supported Python
+    # works (3.13 verified), but they exist only for Linux x86_64, macOS and
+    # Windows x86_64. Linux aarch64 gets none (the first are PyQt6 6.7.1 and
+    # PyQt6-Qt6 6.7.2), so the marker skips Qt there: MTR installs headless
+    # (mtr-install / mtr-cli), and `mtr` explains why there is no GUI.
+    "PyQt6==6.6.0; sys_platform != 'linux' or platform_machine != 'aarch64'",
+    "PyQt6-Qt6==6.6.0; sys_platform != 'linux' or platform_machine != 'aarch64'",
     "PyYAML>=6.0",
     "platformdirs>=4.0",
     "python-dotenv>=1.0",
@@ -63,7 +66,7 @@ dev = [
 ]
 
 [project.scripts]
-mtr       = "metis_test_runner.gui:main"
+mtr       = "metis_test_runner.launcher:main"
 mtr-cli   = "metis_test_runner.run_metis:cli"
 mtr-exec  = "metis_test_runner.direct:exec_main"
 mtr-shell = "metis_test_runner.direct:shell_main"
@@ -71,7 +74,7 @@ mtr-install   = "metis_test_runner.installer:install_main"
 mtr-uninstall = "metis_test_runner.installer:uninstall_main"
 
 [project.gui-scripts]
-mtr-gui = "metis_test_runner.gui:main"
+mtr-gui = "metis_test_runner.launcher:main"
 
 [project.urls]
 Homepage  = "https://github.com/AstarVienna/MTR"

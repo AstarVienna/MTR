@@ -11,6 +11,14 @@
   Qt-free `installer.py`, which the GUI now uses too, so neither command needs
   Qt's graphics libraries (libGL, libEGL, libX11). Refs are per run and are not
   shared with the Install tab's saved selections.
+- **MTR installs on ARM Linux, without the GUI.** The pinned PyQt6 6.6.0 has no
+  Linux aarch64 build, so pip could not install MTR there at all. PyQt6 is now
+  skipped on that platform only (an environment marker; every other platform
+  installs exactly as before), and the headless commands work.
+- **`mtr` explains why the GUI cannot start** instead of printing a traceback:
+  PyQt6 not installed (ARM Linux), or a Qt system library missing (e.g. a
+  server without libGL/libEGL). `mtr-install` likewise says when `git` is
+  missing.
 
 ### Changed
 - The Archive tab installs `metiswise>=0.0.4` from the entropynaut index
