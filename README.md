@@ -498,7 +498,7 @@ servers, Raspberry Pi).
 **What went wrong:** MTR pins PyQt6 6.6.0 for the GUI, which has no build for ARM
 Linux, so pip could not install MTR at all.
 
-**Fixed after 0.5.0:** on ARM Linux MTR installs without PyQt6. The headless
+**Fixed in 0.6.0:** on ARM Linux MTR installs without PyQt6. The headless
 commands (`mtr-install`, `mtr-cli`, `mtr-uninstall`) work; `mtr` explains that
 there is no GUI.
 
@@ -519,7 +519,7 @@ before installing MTR.
 it, leaving `~/.edps/` and `~/EDPS_data/` behind, with `workflow_dir` pointing at
 the deleted `METIS_Pipeline` clone.
 
-**Fixed after 0.5.0:** MTR now marks the config it writes (the first line starts
+**Fixed in 0.6.0:** MTR now marks the config it writes (the first line starts
 with `# Written by metis-test-runner`) and replaces it on re-install instead of
 backing it up.
 
@@ -652,7 +652,7 @@ works within one filesystem. With an output folder on another filesystem (a
 different disk, a network mount, or `/tmp` when it is a tmpfs), EDPS logs
 `Building dataset package failed due to [Errno 18] Invalid cross-device link` in
 `<output>/pipeline/edps.log` and carries on. The products are still in
-`~/EDPS_data`. After 0.5.0, MTR checks this before the simulation starts and
+`~/EDPS_data`. Since 0.6.0, MTR checks this before the simulation starts and
 stops with the message above, and warns if a run still ends with no products;
 0.5.0 and earlier ran to the end and printed "Done" for the empty folder.
 
