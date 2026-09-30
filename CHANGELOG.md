@@ -37,6 +37,12 @@
   were logged in red, but the run still ended with "Uninstall complete". It now
   reports "finished with errors", and running it from the data directory itself
   says so instead of blaming `METIS_DATA_DIR`.
+- **An output folder on another filesystem no longer yields an empty result.**
+  EDPS hardlinks its products from `~/EDPS_data` into the output folder, which
+  fails across filesystems (e.g. `mtr-cli` run from `/tmp` or a scratch disk).
+  EDPS only logged that, so the run printed "Done" for an empty folder. The
+  run now stops before the simulation with an explanation, and warns if it
+  still ends with no products.
 - Uninstall now removes the editable pymetis clone, which upstream renamed from
   `eso-pymetis` to `pymetis` on 2026-07-13. Both names are uninstalled.
 

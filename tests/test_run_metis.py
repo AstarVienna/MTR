@@ -1946,3 +1946,127 @@ class TestPreferMastersIsHonest:
         with rm.edps_session(["edps"], None, None, prefer_masters=True, runner="docker"):
             pass
         assert "ignored" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Hardlinked products across filesystems (EDPS mode=link)
+# ---------------------------------------------------------------------------
+
+
+class TestHardlinkMismatch:
+    """EDPS only logs a cross-device hardlink failure, so MTR checks up front."""
+
+    def _props(self, tmp_path, monkeypatch, body):
+        props = tmp_path / "application.properties"
+        props.write_text(body)
+        monkeypatch.setattr(rm, "_edps_properties_path", lambda: props)
+        return props
+
+    @staticmethod
+    def _split_devices(monkeypatch, store):
+        # Anything under *store* is "another filesystem".
+        monkeypatch.setattr(rm, "_device", lambda p: 1 if store in (p, *p.parents) else 2)
+
+    def test_different_filesystems_are_reported(self, tmp_path, monkeypatch):
+        store = tmp_path / "EDPS_data"
+        self._props(tmp_path, monkeypatch, f"[executor]\nbase_dir={store}\n[packager]\nmode=link\n")
+        self._split_devices(monkeypatch, store)
+        msg = rm.hardlink_mismatch(tmp_path / "out" / "pipeline")
+        assert "different filesystems" in msg
+        assert str(store) in msg and "-o DIR" in msg
+
+    def test_same_filesystem_is_fine(self, tmp_path, monkeypatch):
+        store = tmp_path / "EDPS_data"
+        self._props(tmp_path, monkeypatch, f"[executor]\nbase_dir={store}\n[packager]\nmode=link\n")
+        assert rm.hardlink_mismatch(tmp_path / "out" / "pipeline") is None
+
+    @pytest.mark.parametrize("packager", ["[packager]\nmode=copy\n", "[packager]\nmode=symlink\n", ""])
+    def test_only_link_mode_matters(self, tmp_path, monkeypatch, packager):
+        # No mode= at all means EDPS's default, copy.
+        store = tmp_path / "EDPS_data"
+        self._props(tmp_path, monkeypatch, f"[executor]\nbase_dir={store}\n{packager}")
+        self._split_devices(monkeypatch, store)
+        assert rm.hardlink_mismatch(tmp_path / "out" / "pipeline") is None
+
+    def test_relative_base_dir_is_resolved_against_the_output(self, tmp_path, monkeypatch):
+        self._props(tmp_path, monkeypatch, "[executor]\nbase_dir=.\n[packager]\nmode=link\n")
+        self._split_devices(monkeypatch, tmp_path / "elsewhere")
+        assert rm.hardlink_mismatch(tmp_path / "out" / "pipeline") is None
+
+    def test_missing_or_unreadable_config_is_skipped(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(rm, "_edps_properties_path", lambda: tmp_path / "nope")
+        assert rm.hardlink_mismatch(tmp_path / "out") is None
+        self._props(tmp_path, monkeypatch, "mode=link\n")  # no [section] header
+        assert rm.hardlink_mismatch(tmp_path / "out") is None
+
+
+class TestHasProducts:
+    def test_missing_or_empty_output(self, tmp_path):
+        assert not rm.has_products(tmp_path / "nope")
+        assert not rm.has_products(tmp_path)
+
+    def test_edps_logs_are_not_products(self, tmp_path):
+        (tmp_path / "edps.log").write_text("x")
+        (tmp_path / "edps.log.1").write_text("x")
+        assert not rm.has_products(tmp_path)
+
+    def test_nested_product(self, tmp_path):
+        (tmp_path / "metis_det_dark" / "2026").mkdir(parents=True)
+        (tmp_path / "metis_det_dark" / "2026" / "MASTER_DARK.fits").write_bytes(b"")
+        assert rm.has_products(tmp_path)
+
+
+class TestReportProducts:
+    def test_done_when_products_exist(self, tmp_path, capsys):
+        (tmp_path / "MASTER_DARK.fits").write_bytes(b"")
+        rm.report_products(tmp_path, "default")
+        assert "Done. Pipeline products are in" in capsys.readouterr().out
+
+    def test_warns_and_points_at_the_log_when_empty(self, tmp_path, capsys):
+        (tmp_path / "edps.log").write_text("Building dataset package failed\n")
+        rm.report_products(tmp_path, "native")
+        err = capsys.readouterr().err
+        assert "holds no products" in err and "edps.log" in err
+
+    @pytest.mark.parametrize("runner", ["docker", "podman"])
+    def test_container_hint_is_about_the_bind_mount(self, tmp_path, capsys, runner):
+        rm.report_products(tmp_path, runner)
+        assert "bind-mounted" in capsys.readouterr().err
+
+
+class TestMainHardlinkPreflight:
+    def _argv(self, tmp_path, *extra):
+        sims = tmp_path / "sims"
+        (sims / "metis_simulations").mkdir(parents=True)
+        yaml_in = rm.paths.examples_dir() / "small_test.yaml"
+        out = tmp_path / "out"
+        return [
+            "--runner",
+            "native",
+            "--simulations-dir",
+            str(sims),
+            "-o",
+            str(out),
+            *extra,
+            str(yaml_in),
+        ], out
+
+    def test_mismatch_stops_before_the_simulation(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(rm, "hardlink_mismatch", lambda pipe_out: "cross-device")
+        monkeypatch.setattr(rm, "_run_simulation", MagicMock(side_effect=AssertionError("simulated")))
+        argv, out = self._argv(tmp_path)
+        with pytest.raises(SystemExit) as exc:
+            main(argv)
+        assert "cross-device" in str(exc.value)
+        assert not out.exists()
+
+    def test_not_checked_without_the_pipeline(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(rm, "hardlink_mismatch", MagicMock(side_effect=AssertionError("checked")))
+
+        class Stop(Exception):
+            pass
+
+        monkeypatch.setattr(rm, "_run_simulation", MagicMock(side_effect=Stop))
+        argv, _out = self._argv(tmp_path, "--no-pipeline")
+        with pytest.raises(Stop):
+            main(argv)

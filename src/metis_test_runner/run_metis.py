@@ -39,6 +39,7 @@ with -m science.
 """
 
 import argparse
+import configparser
 import contextlib
 import os
 import re
@@ -245,6 +246,64 @@ DPR_TO_TAG = {
 def _edps_properties_path() -> Path:
     """Location of the EDPS configuration MTR reads and patches."""
     return Path.home() / ".edps" / "application.properties"
+
+
+def _device(path: Path) -> int:
+    """Filesystem id of *path*, or of its nearest existing parent."""
+    return next(p for p in (path, *path.parents) if p.exists()).stat().st_dev
+
+
+def hardlink_mismatch(pipe_out: Path) -> str | None:
+    """Explain why EDPS cannot hardlink products into *pipe_out*, or None.
+
+    MTR configures EDPS with ``mode=link``: products are hardlinked from its
+    store (``base_dir``) into the run's output folder. Across filesystems that
+    fails with EXDEV, which EDPS only logs, so the run "succeeds" with an empty
+    output folder.
+    """
+    props = _edps_properties_path()
+    cfg = configparser.ConfigParser(interpolation=None)
+    try:
+        cfg.read(props)
+    except (configparser.Error, OSError, UnicodeDecodeError):
+        return None
+    # Fallbacks are EDPS's own defaults for keys the file does not set.
+    if cfg.get("packager", "mode", fallback="copy").strip() != "link":
+        return None
+    base_dir = Path(cfg.get("executor", "base_dir", fallback=".").strip())
+    if not base_dir.is_absolute():
+        # EDPS resolves it against its working directory, which is pipe_out.
+        base_dir = pipe_out / base_dir
+    try:
+        if _device(base_dir) == _device(pipe_out):
+            return None
+    except (OSError, StopIteration):
+        return None
+    return (
+        f"EDPS hardlinks its products from {base_dir} into {pipe_out} (mode=link "
+        f"in {props}), but they are on different filesystems, so the output "
+        "folder would stay empty. Use an output folder on the same filesystem "
+        "(-o DIR or METIS_OUTPUT_DIR), or set mode=copy or mode=symlink in that file."
+    )
+
+
+def has_products(pipe_out: Path) -> bool:
+    """True if *pipe_out* holds anything besides EDPS's own log."""
+    return pipe_out.is_dir() and any(
+        p.is_file() and not p.name.startswith("edps.log") for p in pipe_out.rglob("*")
+    )
+
+
+def report_products(pipe_out: Path, runner: str) -> None:
+    """Say where the products are, or warn that a successful run left none."""
+    if has_products(pipe_out):
+        print(f"\nDone. Pipeline products are in: {pipe_out}")
+        return
+    if runner in ("docker", "podman"):
+        hint = "Check that this directory is bind-mounted into the container at the same path."
+    else:
+        hint = f"Check EDPS's log ({pipe_out / 'edps.log'}) for errors."
+    print(f"\nWarning: EDPS finished, but {pipe_out} holds no products. {hint}", file=sys.stderr)
 
 
 def read_edps_port(default: int = 5000) -> int:
@@ -1459,6 +1518,12 @@ def main(argv=None):
                 sys.exit(f"Error: pipeline input directory not found: {indir}")
         sim_out = Path(args.pipeline_input[0]).resolve()
 
+    # Fail before a long simulation rather than after it with an empty output.
+    if not args.no_pipeline and not args.csv_to_yaml and runner in ("default", "native"):
+        problem = hardlink_mismatch(pipe_out)
+        if problem:
+            sys.exit(f"Error: {problem}")
+
     if not args.no_sim:
         sim_out.mkdir(parents=True, exist_ok=True)
     pipe_out.mkdir(parents=True, exist_ok=True)
@@ -1769,7 +1834,10 @@ def main(argv=None):
         if pipeline_rc != 0:
             sys.exit(f"Error: pipeline step failed (exit code {pipeline_rc}).")
 
-    print(f"\nDone. Pipeline products are in: {pipe_out}")
+    if args.no_pipeline:
+        print(f"\nDone. Pipeline products are in: {pipe_out}")
+    else:
+        report_products(pipe_out, runner)
 
 
 def cli() -> None:
