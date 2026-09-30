@@ -24,6 +24,11 @@
   replaces it on re-install; a hand-edited or unmarked config is still backed
   up as yours. Configs from older versions carry no marker; README →
   Troubleshooting explains how to clean them up.
+- **Uninstall no longer reports success when the data directory survives.**
+  A refused removal (see README → Troubleshooting) or files it could not delete
+  were logged in red, but the run still ended with "Uninstall complete". It now
+  reports "finished with errors", and running it from the data directory itself
+  says so instead of blaming `METIS_DATA_DIR`.
 - Uninstall now removes the editable pymetis clone, which upstream renamed from
   `eso-pymetis` to `pymetis` on 2026-07-13. Both names are uninstalled.
 

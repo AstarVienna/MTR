@@ -91,12 +91,16 @@ def _assert_safe_to_remove(target: Path) -> None:
     resolved = target.resolve()
     if resolved.is_symlink() or not resolved.is_dir():
         raise RuntimeError(f"Refusing to remove {resolved}: not a real directory")
-    forbidden = {Path("/"), Path.home().resolve(), Path.cwd().resolve()}
-    forbidden |= set(Path.home().resolve().parents)
-    if resolved in forbidden or len(resolved.parts) < 3:
+    home = Path.home().resolve()
+    if resolved in {Path("/"), home, *home.parents} or len(resolved.parts) < 3:
         raise RuntimeError(
             f"Refusing to remove {resolved}: this does not look like an MTR "
             "data directory. Check METIS_DATA_DIR."
+        )
+    if resolved == Path.cwd().resolve():
+        raise RuntimeError(
+            f"Refusing to remove {resolved}: it is the current working directory. "
+            "Run the uninstall from another directory."
         )
 
 
@@ -949,7 +953,8 @@ class Uninstaller:
         # ── delete the user data directory ────────────────────────────────
         self._step(f"Removing the METIS data directory  →  {REPO_ROOT}")
         try:
-            self._remove_data_dir()
+            if not self._remove_data_dir():
+                ok = False
         except Exception as exc:
             ok = False
             self._log(f"✗ Failed to remove data directory: {exc}\n", "red")
@@ -1003,9 +1008,13 @@ class Uninstaller:
     def _run(self, cmd: list, timeout: int = 300) -> None:
         stream_subprocess(cmd, on_line=self._log, timeout=timeout)
 
-    def _remove_data_dir(self) -> None:
+    def _remove_data_dir(self) -> bool:
         """Delete the whole user data dir, plus an externally-relocated
-        simulations clone if one exists outside the data dir."""
+        simulations clone if one exists outside the data dir.
+
+        Returns False if anything was refused or left behind.
+        """
+        ok = True
         targets = [REPO_ROOT]
         # If METIS_SIMULATIONS_DIR points outside the data dir, removing
         # REPO_ROOT won't catch the clone — remove it explicitly.
@@ -1018,6 +1027,7 @@ class Uninstaller:
             try:
                 _assert_safe_to_remove(target)
             except RuntimeError as exc:
+                ok = False
                 self._log(f"✗ {exc}\n", "red")
                 continue
             failures: list[str] = []
@@ -1026,6 +1036,7 @@ class Uninstaller:
                 onexc=lambda _f, path, exc, _acc=failures: _acc.append(f"{path}: {exc}"),
             )
             if failures:
+                ok = False
                 self._log(
                     f"✗ Could not fully remove {target} ({len(failures)} item(s) left):\n",
                     "red",
@@ -1034,6 +1045,7 @@ class Uninstaller:
                     self._log(f"    {line}\n", "red")
             else:
                 self._log(f"Removed {target}\n", "")
+        return ok
 
     def _cleanup_edps(self) -> None:
         """If the install backed up a pre-existing config, restore it; otherwise

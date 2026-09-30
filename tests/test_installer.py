@@ -539,7 +539,7 @@ class TestUninstallRemoveDataDir:
         (data / "inst_pkgs").mkdir()
         monkeypatch.setattr(installer, "REPO_ROOT", data)
         monkeypatch.setattr(installer, "TARGET_B", sims)
-        self._make_worker()._remove_data_dir()
+        assert self._make_worker()._remove_data_dir() is True
         assert not data.exists()
 
     def test_also_removes_externally_relocated_simulations(self, tmp_path, monkeypatch):
@@ -553,7 +553,7 @@ class TestUninstallRemoveDataDir:
         external_sims.mkdir(parents=True)
         monkeypatch.setattr(installer, "REPO_ROOT", data)
         monkeypatch.setattr(installer, "TARGET_B", external_sims)
-        self._make_worker()._remove_data_dir()
+        assert self._make_worker()._remove_data_dir() is True
         assert not data.exists()
         assert not external_sims.exists()
 
@@ -564,7 +564,7 @@ class TestUninstallRemoveDataDir:
         monkeypatch.setattr(installer, "REPO_ROOT", data)
         monkeypatch.setattr(installer, "TARGET_B", data / "METIS_Simulations")
         # Should not raise even though nothing exists.
-        self._make_worker()._remove_data_dir()
+        assert self._make_worker()._remove_data_dir() is True
         assert not data.exists()
 
     def test_refuses_to_remove_home(self, tmp_path, monkeypatch):
@@ -576,7 +576,7 @@ class TestUninstallRemoveDataDir:
         monkeypatch.setenv("HOME", str(home))
         monkeypatch.setattr(installer, "REPO_ROOT", home)
         monkeypatch.setattr(installer, "TARGET_B", home / "METIS_Simulations")
-        self._make_worker()._remove_data_dir()
+        assert self._make_worker()._remove_data_dir() is False
         assert (home / "precious").exists()
 
     def test_refuses_to_remove_root(self, monkeypatch):
@@ -584,7 +584,7 @@ class TestUninstallRemoveDataDir:
 
         monkeypatch.setattr(installer, "REPO_ROOT", Path("/"))
         monkeypatch.setattr(installer, "TARGET_B", Path("/"))
-        self._make_worker()._remove_data_dir()
+        assert self._make_worker()._remove_data_dir() is False
         assert Path("/").exists()
 
     def test_refuses_shallow_paths(self, monkeypatch):
@@ -592,7 +592,7 @@ class TestUninstallRemoveDataDir:
 
         monkeypatch.setattr(installer, "REPO_ROOT", Path("/tmp"))
         monkeypatch.setattr(installer, "TARGET_B", Path("/tmp"))
-        self._make_worker()._remove_data_dir()
+        assert self._make_worker()._remove_data_dir() is False
         assert Path("/tmp").exists()
 
     def test_refuses_a_symlinked_data_dir(self, tmp_path, monkeypatch):
@@ -604,8 +604,55 @@ class TestUninstallRemoveDataDir:
         link.symlink_to(real, target_is_directory=True)
         monkeypatch.setattr(installer, "REPO_ROOT", link)
         monkeypatch.setattr(installer, "TARGET_B", link)
-        self._make_worker()._remove_data_dir()
+        assert self._make_worker()._remove_data_dir() is False
         assert (real / "keep").exists()
+
+    def test_refuses_the_current_directory_and_says_so(self, tmp_path, monkeypatch):
+        # Easy over SSH: `cd` into the data dir, then run mtr-uninstall.
+        from metis_test_runner import installer
+
+        data = tmp_path / "data"
+        data.mkdir()
+        monkeypatch.setattr(installer, "REPO_ROOT", data)
+        monkeypatch.setattr(installer, "TARGET_B", data / "METIS_Simulations")
+        monkeypatch.chdir(data)
+        logs = []
+        assert installer.Uninstaller(log=lambda text, _c: logs.append(text))._remove_data_dir() is False
+        assert data.exists()
+        assert any("current working directory" in line for line in logs)
+        assert not any("METIS_DATA_DIR" in line for line in logs)
+
+    def test_leftovers_count_as_failure(self, tmp_path, monkeypatch):
+        from metis_test_runner import installer
+
+        data = tmp_path / "data"
+        data.mkdir()
+        monkeypatch.setattr(installer, "REPO_ROOT", data)
+        monkeypatch.setattr(installer, "TARGET_B", data / "METIS_Simulations")
+
+        def busy_rmtree(path, onexc):
+            onexc(None, str(path / "busy.fits"), OSError("Device or resource busy"))
+
+        monkeypatch.setattr(installer.shutil, "rmtree", busy_rmtree)
+        assert self._make_worker()._remove_data_dir() is False
+
+    def test_run_reports_a_refused_removal_as_an_error(self, tmp_path, monkeypatch):
+        from metis_test_runner import credentials, installer
+
+        data = tmp_path / "data"
+        data.mkdir()
+        monkeypatch.setattr(installer, "REPO_ROOT", data)
+        monkeypatch.setattr(installer, "TARGET_B", data / "METIS_Simulations")
+        monkeypatch.chdir(data)
+        monkeypatch.setattr(installer.Uninstaller, "_ensure_pip", lambda self: None)
+        monkeypatch.setattr(installer.Uninstaller, "_run", lambda self, cmd, timeout=300: None)
+        monkeypatch.setattr(installer.Uninstaller, "_cleanup_edps", lambda self: None)
+        monkeypatch.setattr(credentials, "delete_pip_credentials", lambda: None)
+        monkeypatch.setattr(credentials, "delete_db_credentials", lambda: None)
+        logs = []
+        assert installer.Uninstaller(log=lambda text, _c: logs.append(text)).run() is False
+        assert any("finished with errors" in line for line in logs)
+        assert not any("Uninstall complete" in line for line in logs)
 
 
 # ---------------------------------------------------------------------------
