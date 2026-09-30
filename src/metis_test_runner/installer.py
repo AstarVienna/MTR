@@ -9,6 +9,7 @@ which headless servers often lack.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import re
 import shutil
@@ -47,6 +48,32 @@ REPOS = (
     ("pipeline", "METIS_Pipeline", REPO_A_URL, TARGET_A),
     ("simulations", "METIS_Simulations", REPO_B_URL, TARGET_B),
 )
+
+
+# ---------------------------------------------------------------------------
+# EDPS config ownership
+# ---------------------------------------------------------------------------
+#
+# ~/.edps/application.properties is either the user's own (back it up once,
+# restore it on Uninstall) or MTR's (just replace it). MTR's copy carries a
+# marker with a checksum of the rest of the file, so a hand-edited MTR config
+# counts as the user's. A config from an MTR predating the marker is
+# indistinguishable from a personal one and is treated as such.
+
+_EDPS_MARKER = "# Written by metis-test-runner (install bookkeeping, keep this line) sha256="
+_EDPS_MARKER_RE = re.compile(r"\A# Written by metis-test-runner\b.*\bsha256=([0-9a-f]{64})\n")
+
+
+def _mark_edps_config(text: str) -> str:
+    """*text* with MTR's ownership marker (re)written as its first line."""
+    body = _EDPS_MARKER_RE.sub("", text, count=1)
+    return f"{_EDPS_MARKER}{hashlib.sha256(body.encode()).hexdigest()}\n{body}"
+
+
+def _is_pristine_mtr_config(text: str) -> bool:
+    """True if *text* is an EDPS config MTR wrote and nobody has edited since."""
+    m = _EDPS_MARKER_RE.match(text)
+    return bool(m) and hashlib.sha256(text[m.end() :].encode()).hexdigest() == m.group(1)
 
 
 # ---------------------------------------------------------------------------
@@ -743,15 +770,22 @@ class Installer:
                 )
 
     def _backup_edps_config(self) -> None:
-        """Back up an existing application.properties, once.
+        """Back up the user's own application.properties, once.
 
-        Only the *first* backup is the user's own file: on a re-install the
-        file in place is MTR's own, so overwriting the backup with it would
-        destroy the original for good (and Uninstall would then "restore"
-        MTR's config as if it were theirs).
+        MTR's own, unedited config is simply replaced: backing it up would make
+        Uninstall "restore" it as if it were the user's. Only the *first*
+        backup is kept, so a re-install never overwrites the user's original.
         """
         props = Path.home() / ".edps" / "application.properties"
         if not props.exists():
+            return
+        try:
+            ours = _is_pristine_mtr_config(props.read_text())
+        except (OSError, UnicodeDecodeError):
+            ours = False
+        if ours:
+            props.unlink()
+            self._log(f"Replacing MTR's own {props}\n", "")
             return
         backup = props.with_name("application.properties_backup")
         if backup.exists():
@@ -841,7 +875,7 @@ class Installer:
                     f"{props} has no '{key}=' line to patch — EDPS config "
                     f"format may have changed; re-run EDPS initialisation."
                 )
-        paths.write_text_atomic(props, text)
+        paths.write_text_atomic(props, _mark_edps_config(text))
         self._log(f"Patched {props}\n", "")
 
 

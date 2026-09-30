@@ -87,6 +87,23 @@ class TestPatchEdpsConfig:
         self._make_worker()._patch_edps_config()
         assert "port=4444" in props.read_text()
 
+    def test_marks_the_config_as_mtrs(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        props = self._seed(tmp_path, self.FULL_PROPS)
+        self._make_worker()._patch_edps_config()
+        text = props.read_text()
+        assert text.startswith("# Written by metis-test-runner")
+        assert installer._is_pristine_mtr_config(text)
+
+    def test_repatching_keeps_a_single_marker(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        props = self._seed(tmp_path, self.FULL_PROPS)
+        self._make_worker()._patch_edps_config()
+        self._make_worker()._patch_edps_config()
+        text = props.read_text()
+        assert text.count("# Written by metis-test-runner") == 1
+        assert installer._is_pristine_mtr_config(text)
+
     def test_patches_workflow_dir(self, tmp_path, monkeypatch):
         from metis_test_runner.installer import TARGET_A
 
@@ -269,6 +286,64 @@ class TestBackupEdpsConfig:
             worker._backup_edps_config()
             props.write_text(content)  # MTR rewrites it
         assert backup.read_text() == "port=1111\n"
+
+    def test_mtrs_own_config_is_replaced_not_backed_up(self, tmp_path, monkeypatch):
+        # The re-install case for a user who never had an EDPS config: backing
+        # MTR's file up would make Uninstall "restore" it as theirs.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        props = self._seed(tmp_path, installer._mark_edps_config("port=4444\n"))
+        self._make_worker()._backup_edps_config()
+        assert not props.exists()
+        assert not props.with_name("application.properties_backup").exists()
+
+    def test_mtrs_own_config_leaves_the_users_backup_alone(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        props = self._seed(tmp_path, installer._mark_edps_config("port=4444\n"))
+        backup = props.with_name("application.properties_backup")
+        backup.write_text("port=1111\n")
+        self._make_worker()._backup_edps_config()
+        assert not props.exists()
+        assert backup.read_text() == "port=1111\n"
+
+    def test_hand_edited_mtr_config_counts_as_the_users(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        edited = installer._mark_edps_config("port=4444\n").replace("4444", "5555")
+        props = self._seed(tmp_path, edited)
+        self._make_worker()._backup_edps_config()
+        assert props.with_name("application.properties_backup").read_text() == edited
+
+
+class TestEdpsConfigLifecycle:
+    """install → re-install → uninstall, with EDPS's first run simulated."""
+
+    def _install(self, home):
+        worker = installer.Installer()
+        worker._backup_edps_config()
+        props = home / ".edps" / "application.properties"
+        if not props.exists():  # what `edps` does on its first run
+            props.parent.mkdir(exist_ok=True)
+            props.write_text(TestPatchEdpsConfig.FULL_PROPS)
+            (home / "EDPS_data").mkdir(exist_ok=True)
+        worker._patch_edps_config()
+
+    def test_without_a_personal_config_uninstall_removes_everything(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        self._install(tmp_path)
+        self._install(tmp_path)
+        assert not (tmp_path / ".edps" / "application.properties_backup").exists()
+        installer.Uninstaller()._cleanup_edps()
+        assert not (tmp_path / ".edps").exists()
+        assert not (tmp_path / "EDPS_data").exists()
+
+    def test_a_personal_config_survives_reinstalls_and_is_restored(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        props = tmp_path / ".edps" / "application.properties"
+        props.parent.mkdir()
+        props.write_text("port=1111\n")
+        self._install(tmp_path)
+        self._install(tmp_path)
+        installer.Uninstaller()._cleanup_edps()
+        assert props.read_text() == "port=1111\n"
 
 
 # ---------------------------------------------------------------------------

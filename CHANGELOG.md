@@ -17,6 +17,13 @@
   instead of the v0.0.4 GitHub tag tarball, now that the index publishes it.
 
 ### Fixed
+- **Uninstall no longer leaves MTR's EDPS config behind.** If you had no EDPS
+  config of your own, a re-install backed up MTR's config as if it were yours,
+  and Uninstall "restored" it, leaving `~/.edps` and `~/EDPS_data` pointing at
+  the deleted clone. MTR now marks the config it writes with a checksum and
+  replaces it on re-install; a hand-edited or unmarked config is still backed
+  up as yours. Configs from older versions carry no marker; README →
+  Troubleshooting explains how to clean them up.
 - Uninstall now removes the editable pymetis clone, which upstream renamed from
   `eso-pymetis` to `pymetis` on 2026-07-13. Both names are uninstalled.
 
