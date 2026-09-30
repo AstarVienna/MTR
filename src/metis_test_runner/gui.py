@@ -4,7 +4,7 @@
 Three-tab graphical front-end:
   Install  — pip-installs every METIS pipeline dependency into MTR's own venv
              and clones the simulation/pipeline repos into the user data dir
-             (logic in installer.py)
+             (logic in installer.py; headless: mtr-install / mtr-uninstall)
   Run      — wraps run_metis.py with a file-picker and options UI
   Archive  — install MetisWISE and upload/download FITS files
 """

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+- **`mtr-install` / `mtr-uninstall`** — headless equivalents of the Install
+  tab's buttons, for servers reached over SSH. `--pipeline-ref` /
+  `--simulations-ref` pick a branch, tag or commit, `--list-refs` shows the
+  current checkouts and available refs, `--discard-changes` / `--yes` replace
+  the confirmation dialogs. The install logic moved out of `gui.py` into the
+  Qt-free `installer.py`, which the GUI now uses too, so neither command needs
+  Qt's graphics libraries (libGL, libEGL, libX11). Refs are per run and are not
+  shared with the Install tab's saved selections.
+
 ### Changed
 - The Archive tab installs `metiswise>=0.0.4` from the entropynaut index
   instead of the v0.0.4 GitHub tag tarball, now that the index publishes it.

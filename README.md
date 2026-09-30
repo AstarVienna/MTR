@@ -48,6 +48,22 @@ the *Runner* on the Run tab to `native` (tools on `PATH`) or `docker` / `podman`
 If the GUI will not start, you are probably missing a Qt system library; see
 **System dependencies**.
 
+**No display (a server over SSH)?** `mtr-install` does the Install tab's work,
+and `mtr-cli` then runs. Neither needs Qt's graphics libraries:
+
+```bash
+pipx install metis-test-runner
+mtr-install                                   # same steps as Install / Update
+mtr-install --list-refs                       # current checkouts + available branches/tags
+mtr-install --pipeline-ref develop --simulations-ref v0.4.2   # branch, tag or full SHA
+mtr-cli --copy-examples ~/mtr-examples && mtr-cli ~/mtr-examples/LMS_RAD_06.yaml
+mtr-uninstall                                 # same as Uninstall (--yes skips the prompt)
+```
+
+Refs apply to that run only: omit them to go back to each default branch. A clone
+with local changes is confirmed interactively, or needs `--discard-changes` when
+not on a terminal. `mtr-install` needs `git`.
+
 
 ## The GUI
 
@@ -82,6 +98,9 @@ installs such as MetisWISE are preserved. *Uninstall* reverses all of it.
 Leave **Repository version (advanced)** blank to track each repository's default
 branch. Set it to install a specific branch, tag or commit instead — for people
 developing *on* those repositories.
+
+Both buttons have headless equivalents, `mtr-install` and `mtr-uninstall`; see
+the [Quickstart](#quickstart).
 
 ### Archive tab
 
@@ -216,7 +235,7 @@ Regardless of whether you drive the runner from the GUI or the CLI, the underlyi
 
 **Option A — pipx install** (runner `default`, the default)
 
-The Install tab takes care of this automatically. It pip-installs all pipeline
+The Install tab (or `mtr-install`) takes care of this automatically. It pip-installs all pipeline
 dependencies (`pycpl`, `edps`, `pyesorex`, `adari_core`, `scopesim`,
 `scopesim_templates`) into the same isolated venv that hosts MTR, clones
 `METIS_Pipeline` and `METIS_Simulations` into the user data directory
@@ -312,7 +331,7 @@ covariance matrix."*
 <details>
 <summary><b>Command-line reference (`mtr-cli`) — all options and worked examples</b></summary>
 
-`mtr-cli` is the headless interface that the GUI drives under the hood. It is useful for scripting, CI jobs, and SSH sessions without a display. It accepts the same options as the GUI.
+`mtr-cli` is the headless interface that the GUI drives under the hood. It is useful for scripting, CI jobs, and SSH sessions without a display (set those up with `mtr-install`). It accepts the same options as the GUI.
 
 ```bash
 mtr-cli [OPTIONS] input1.yaml [input2.csv ...]
@@ -440,6 +459,7 @@ MTR/
 ├── src/metis_test_runner/
 │   ├── gui.py              # Graphical front-end (PyQt6) — primary entry point
 │   ├── run_metis.py        # Headless CLI (used directly or wrapped by the GUI)
+│   ├── installer.py        # Install/uninstall logic; mtr-install / mtr-uninstall
 │   ├── archive.py          # MetisWISE archive integration
 │   ├── credentials.py      # OS-keyring storage for archive credentials
 │   ├── direct.py           # mtr-exec / mtr-shell direct environment access

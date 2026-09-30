@@ -67,6 +67,8 @@ mtr       = "metis_test_runner.gui:main"
 mtr-cli   = "metis_test_runner.run_metis:cli"
 mtr-exec  = "metis_test_runner.direct:exec_main"
 mtr-shell = "metis_test_runner.direct:shell_main"
+mtr-install   = "metis_test_runner.installer:install_main"
+mtr-uninstall = "metis_test_runner.installer:uninstall_main"
 
 [project.gui-scripts]
 mtr-gui = "metis_test_runner.gui:main"

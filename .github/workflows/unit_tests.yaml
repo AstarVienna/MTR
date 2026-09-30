@@ -105,6 +105,8 @@ jobs:
           fi
           mtr-exec --help
           mtr-shell --help
+          mtr-install --help
+          mtr-uninstall --help
 
   package:
     name: Build & verify distribution

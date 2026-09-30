@@ -1,12 +1,14 @@
-"""Qt-free install / uninstall logic behind the GUI's Install tab.
+"""Qt-free install / uninstall logic, shared by the GUI and ``mtr-install``.
 
-The Install tab runs :class:`Installer` / :class:`Uninstaller` on a QThread.
-Nothing here may import PyQt6: QtGui links libGL/libEGL/libX11, which headless
-servers often lack.
+The GUI's Install tab runs :class:`Installer` / :class:`Uninstaller` on a
+QThread; the ``mtr-install`` / ``mtr-uninstall`` console scripts run them in the
+foreground. Nothing here may import PyQt6: QtGui links libGL/libEGL/libX11,
+which headless servers often lack.
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import shutil
@@ -18,11 +20,11 @@ import traceback
 from collections.abc import Callable
 from pathlib import Path
 
-from . import paths
+from . import __version__, paths
 from .env import ensurepip_command_if_needed, resolve_runtime_env
 from .indexes import ESO_INDEX, PYCPL_INDEX
 
-#: ``log(text, colour)`` — the GUI passes a signal's ``emit``.
+#: ``log(text, colour)`` — the GUI passes a signal's ``emit``, the CLI prints.
 LogFn = Callable[[str, str], None]
 
 # ---------------------------------------------------------------------------
@@ -563,7 +565,8 @@ class Installer:
         if not re.fullmatch(r"[0-9a-fA-F]{4,40}", ref):
             raise RuntimeError(
                 f"'{ref}' is not a branch or tag in {url}. Check the spelling, "
-                f"or use the ↻ button to reload the ref list."
+                f"or reload the ref list (the Install tab's ↻ button, or "
+                f"`mtr-install --list-refs`)."
             )
         self._log(
             f"'{ref}' cannot be fetched directly — falling back to a full "
@@ -667,7 +670,8 @@ class Installer:
         if cp.returncode != 0:
             raise RuntimeError(
                 f"'{ref}' is not a branch, tag or commit in {url}. Check the "
-                f"spelling, or use the ↻ button to reload the ref list."
+                f"spelling, or reload the ref list (the Install tab's ↻ button, "
+                f"or `mtr-install --list-refs`)."
             )
         want = cp.stdout.strip()
         if self._already_at(target, ref, want):
@@ -1048,7 +1052,7 @@ def remote_refs(url: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Confirmation texts for the Install tab's dialogs
+# Confirmation texts — shared by the GUI dialogs and the CLI prompts
 # ---------------------------------------------------------------------------
 
 
@@ -1082,3 +1086,177 @@ def uninstall_summary() -> str:
         "• delete stored archive credentials from the OS keyring\n\n"
         "Transitive sub-dependencies are not removed. Continue?"
     )
+
+
+# ---------------------------------------------------------------------------
+# Command line: mtr-install / mtr-uninstall
+# ---------------------------------------------------------------------------
+#
+# Headless counterparts of the Install tab's two buttons, for servers reached
+# over SSH. Refs are stateless: they apply to one run and are never read from
+# or written to the GUI's saved settings (which would need Qt).
+
+_ANSI_CODES = {"cyan": "36", "green": "32", "yellow": "33", "red": "31"}
+
+
+def _console_log(text: str, colour: str) -> None:
+    """Print a log chunk, coloured only on a terminal and unless NO_COLOR is set."""
+    code = _ANSI_CODES.get(colour)
+    if code and sys.stdout.isatty() and not os.environ.get("NO_COLOR"):
+        text = f"\x1b[{code}m{text}\x1b[0m"
+    sys.stdout.write(text)
+    sys.stdout.flush()
+
+
+def _interactive() -> bool:
+    return sys.stdin.isatty()
+
+
+def _confirm(question: str) -> bool:
+    """y/N prompt; EOF counts as no."""
+    try:
+        return input(f"{question} [y/N] ").strip().lower() in ("y", "yes")
+    except EOFError:
+        return False
+
+
+def _collect_force(discard_changes: bool) -> set[Path] | None:
+    """Targets whose local changes may be discarded, or None to abort.
+
+    CLI counterpart of ``InstallTab._confirm_discard``: every dirty clone is
+    checked, whether or not its ref changes, because ``checkout -f`` discards
+    tracked edits either way.
+    """
+    force: set[Path] = set()
+    for _key, label, _url, target in REPOS:
+        try:
+            entries = _dirty_files(target)
+        except RuntimeError as exc:
+            question = f"Could not determine whether {label} ({target}) has local changes:\n\n{exc}\n\nContinue anyway?"
+            if _interactive() and _confirm(question):
+                continue
+            print(f"mtr-install: could not check {target} for local changes: {exc}", file=sys.stderr)
+            return None
+        if not entries:
+            continue
+        if not discard_changes:
+            if not _interactive():
+                print(
+                    f"mtr-install: {label} ({target}) has uncommitted changes. Commit or stash "
+                    f"them, or re-run with --discard-changes to discard them.",
+                    file=sys.stderr,
+                )
+                return None
+            if not _confirm(discard_summary(label, target, entries)):
+                return None
+        force.add(target)
+    return force
+
+
+def _list_refs() -> int:
+    for _key, label, url, target in REPOS:
+        print(f"{label}  ({target})")
+        print(f"  currently: {_describe_head(target)}")
+        try:
+            refs = remote_refs(url)
+        except RuntimeError as exc:
+            print(f"  available: unknown — offline? ({exc})")
+            continue
+        print("  available:")
+        for ref in refs:
+            print(f"    {ref}")
+    return 0
+
+
+def _install_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="mtr-install",
+        description="Headless equivalent of the GUI's Install tab: clone or update "
+        "METIS_Pipeline and METIS_Simulations into MTR's data directory, pip-install "
+        "the pipeline dependencies into MTR's own venv, and configure EDPS. "
+        "Safe to re-run: existing clones are updated, not re-cloned.",
+        epilog="Example: mtr-install --pipeline-ref develop --simulations-ref v0.4.2",
+    )
+    for key, label, _url, _target in REPOS:
+        p.add_argument(
+            f"--{key}-ref",
+            metavar="REF",
+            default="",
+            help=f"{label} branch, tag or full 40-character commit SHA. Omitted: the "
+            "default branch — a checked-out branch is fast-forwarded, a clone on a "
+            "tag/commit returns to the default branch.",
+        )
+    p.add_argument(
+        "--discard-changes",
+        action="store_true",
+        help="Discard uncommitted changes in the clones without asking (gitignored "
+        "files are kept). Otherwise you are asked, or the install aborts when not on "
+        "a terminal.",
+    )
+    p.add_argument(
+        "--list-refs",
+        action="store_true",
+        help="Show what each clone is checked out at and the branches/tags available upstream, then exit.",
+    )
+    p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    return p
+
+
+def _install(argv: list[str] | None) -> int:
+    p = _install_parser()
+    args = p.parse_args(argv)
+    if not shutil.which("git"):
+        print(
+            "mtr-install: git is not installed; install it first (e.g. `sudo apt install git`).",
+            file=sys.stderr,
+        )
+        return 1
+    if args.list_refs:
+        return _list_refs()
+    try:
+        refs = {target: _validate_ref(getattr(args, f"{key}_ref")) for key, _label, _url, target in REPOS}
+    except ValueError as exc:
+        p.error(str(exc))
+    force = _collect_force(args.discard_changes)
+    if force is None:
+        print("mtr-install: aborted.", file=sys.stderr)
+        return 2
+    return 0 if Installer(refs=refs, force=force, log=_console_log).run() else 1
+
+
+def _uninstall(argv: list[str] | None) -> int:
+    p = argparse.ArgumentParser(
+        prog="mtr-uninstall",
+        description="Headless equivalent of the GUI's Uninstall button. "
+        + uninstall_summary().split("\n\n")[0],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("-y", "--yes", action="store_true", help="Do not ask for confirmation.")
+    p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    args = p.parse_args(argv)
+    if not args.yes:
+        if not _interactive():
+            print("mtr-uninstall: not on a terminal; re-run with --yes to confirm.", file=sys.stderr)
+            return 2
+        if not _confirm(uninstall_summary()):
+            print("mtr-uninstall: aborted.", file=sys.stderr)
+            return 2
+    return 0 if Uninstaller(log=_console_log).run() else 1
+
+
+def install_main(argv: list[str] | None = None) -> int:
+    """Entry point for the ``mtr-install`` console script."""
+    try:
+        return _install(argv)
+    except KeyboardInterrupt:
+        print("\nAborted.", file=sys.stderr)
+        return 130
+
+
+def uninstall_main(argv: list[str] | None = None) -> int:
+    """Entry point for the ``mtr-uninstall`` console script."""
+    try:
+        return _uninstall(argv)
+    except KeyboardInterrupt:
+        print("\nAborted.", file=sys.stderr)
+        return 130

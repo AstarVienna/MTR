@@ -1,6 +1,6 @@
 """
 Unit tests for installer.py — the Qt-free install/uninstall logic behind the
-GUI's Install tab.
+GUI's Install tab and the ``mtr-install`` / ``mtr-uninstall`` commands.
 
 Nothing here needs a QApplication: that the module imports and runs without
 PyQt6 is the point (see TestNoQt).
@@ -1258,7 +1258,7 @@ class TestStreamSubprocess:
 
 
 # ---------------------------------------------------------------------------
-# Headless guarantee — installer.py imports no PyQt6
+# Headless guarantee — no PyQt6 on the mtr-install / mtr-uninstall path
 # ---------------------------------------------------------------------------
 
 
@@ -1280,3 +1280,204 @@ class TestNoQt:
         )
         assert cp.returncode == 0, cp.stderr
         assert cp.stdout.strip() == "[]"
+
+
+# ---------------------------------------------------------------------------
+# mtr-install / mtr-uninstall command line
+# ---------------------------------------------------------------------------
+
+
+class _StubRunner:
+    """Stands in for Installer / Uninstaller; records how it was built."""
+
+    built: list = []
+    result = True
+
+    def __init__(self, **kw):
+        self.kw = kw
+        type(self).built.append(self)
+
+    def run(self):
+        if isinstance(self.result, BaseException):
+            raise self.result
+        return self.result
+
+
+@pytest.fixture
+def stub_installer(monkeypatch):
+    class Stub(_StubRunner):
+        built = []
+
+    monkeypatch.setattr(installer, "Installer", Stub)
+    monkeypatch.setattr(installer, "_dirty_files", lambda t: [])
+    monkeypatch.setattr(installer, "_interactive", lambda: False)
+    return Stub
+
+
+@pytest.fixture
+def stub_uninstaller(monkeypatch):
+    class Stub(_StubRunner):
+        built = []
+
+    monkeypatch.setattr(installer, "Uninstaller", Stub)
+    monkeypatch.setattr(installer, "_interactive", lambda: False)
+    return Stub
+
+
+def _answer(monkeypatch, reply):
+    """Make the process look interactive and feed *reply* to input()."""
+    monkeypatch.setattr(installer, "_interactive", lambda: True)
+
+    def fake_input(_prompt=""):
+        if reply is EOFError:
+            raise EOFError
+        return reply
+
+    monkeypatch.setattr("builtins.input", fake_input)
+
+
+class TestInstallCli:
+    def test_refs_are_passed_per_target(self, stub_installer):
+        rc = installer.install_main(["--pipeline-ref", "develop", "--simulations-ref", SHA])
+        assert rc == 0
+        (run,) = stub_installer.built
+        assert run.kw["refs"] == {installer.TARGET_A: "develop", installer.TARGET_B: SHA}
+        assert run.kw["force"] == set()
+        assert run.kw["log"] is installer._console_log
+
+    def test_omitted_refs_mean_default_branch(self, stub_installer):
+        assert installer.install_main([]) == 0
+        assert stub_installer.built[0].kw["refs"] == {installer.TARGET_A: "", installer.TARGET_B: ""}
+
+    def test_failed_install_exits_1(self, stub_installer):
+        stub_installer.result = False
+        assert installer.install_main([]) == 1
+
+    def test_ctrl_c_exits_130(self, stub_installer):
+        stub_installer.result = KeyboardInterrupt()
+        assert installer.install_main([]) == 130
+
+    def test_invalid_ref_is_a_usage_error(self, stub_installer, capsys):
+        with pytest.raises(SystemExit) as exc:
+            installer.install_main(["--pipeline-ref", "my branch"])
+        assert exc.value.code == 2
+        assert "not a valid branch" in capsys.readouterr().err
+        assert stub_installer.built == []
+
+    def test_dirty_clone_off_a_terminal_aborts(self, stub_installer, monkeypatch, capsys):
+        monkeypatch.setattr(installer, "_dirty_files", lambda t: [" M x.py"])
+        assert installer.install_main([]) == 2
+        assert "--discard-changes" in capsys.readouterr().err
+        assert stub_installer.built == []
+
+    def test_discard_changes_forces_only_the_dirty_clone(self, stub_installer, monkeypatch):
+        monkeypatch.setattr(
+            installer, "_dirty_files", lambda t: [" M x.py"] if t == installer.TARGET_A else []
+        )
+        assert installer.install_main(["--discard-changes"]) == 0
+        assert stub_installer.built[0].kw["force"] == {installer.TARGET_A}
+
+    @pytest.mark.parametrize("reply", ["y", "YES"])
+    def test_prompt_yes_forces(self, stub_installer, monkeypatch, reply):
+        monkeypatch.setattr(installer, "_dirty_files", lambda t: [" M x.py"])
+        _answer(monkeypatch, reply)
+        assert installer.install_main([]) == 0
+        assert stub_installer.built[0].kw["force"] == {installer.TARGET_A, installer.TARGET_B}
+
+    @pytest.mark.parametrize("reply", ["", "n", EOFError])
+    def test_prompt_no_or_eof_aborts(self, stub_installer, monkeypatch, reply):
+        monkeypatch.setattr(installer, "_dirty_files", lambda t: [" M x.py"])
+        _answer(monkeypatch, reply)
+        assert installer.install_main([]) == 2
+        assert stub_installer.built == []
+
+    def test_unknown_dirty_state_off_a_terminal_aborts(self, stub_installer, monkeypatch):
+        def boom(_t):
+            raise RuntimeError("index corrupt")
+
+        monkeypatch.setattr(installer, "_dirty_files", boom)
+        # Even --discard-changes: it authorises discarding known changes, not
+        # skipping a check that could not run.
+        assert installer.install_main(["--discard-changes"]) == 2
+        assert stub_installer.built == []
+
+    def test_unknown_dirty_state_can_be_confirmed_interactively(self, stub_installer, monkeypatch):
+        def boom(_t):
+            raise RuntimeError("index corrupt")
+
+        monkeypatch.setattr(installer, "_dirty_files", boom)
+        _answer(monkeypatch, "y")
+        assert installer.install_main([]) == 0
+        assert stub_installer.built[0].kw["force"] == set()
+
+
+class TestGitMissing:
+    @pytest.mark.parametrize("argv", [[], ["--list-refs"]])
+    def test_says_so_instead_of_a_traceback(self, stub_installer, monkeypatch, capsys, argv):
+        monkeypatch.setattr(installer.shutil, "which", lambda name: None)
+        assert installer.install_main(argv) == 1
+        assert "git is not installed" in capsys.readouterr().err
+        assert stub_installer.built == []
+
+
+class TestListRefs:
+    def test_prints_current_checkout_and_remote_refs(self, stub_installer, monkeypatch, capsys):
+        monkeypatch.setattr(installer, "_describe_head", lambda t: "main @ abc12345")
+        monkeypatch.setattr(
+            installer, "_git", _fake_git({"ls-remote": _cp("a\trefs/heads/main\nb\trefs/tags/v1.0\n")})
+        )
+        assert installer.install_main(["--list-refs"]) == 0
+        out = capsys.readouterr().out
+        assert "METIS_Pipeline" in out and "METIS_Simulations" in out
+        assert "currently: main @ abc12345" in out
+        assert "    main\n    v1.0\n" in out
+        assert stub_installer.built == []
+
+    def test_offline_is_reported_not_fatal(self, stub_installer, monkeypatch, capsys):
+        monkeypatch.setattr(installer, "_describe_head", lambda t: "not cloned")
+        monkeypatch.setattr(
+            installer, "_git", _fake_git({"ls-remote": _cp("", 128, "fatal: unable to access")})
+        )
+        assert installer.install_main(["--list-refs"]) == 0
+        assert "offline? (fatal: unable to access)" in capsys.readouterr().out
+
+
+class TestUninstallCli:
+    def test_off_a_terminal_requires_yes(self, stub_uninstaller, capsys):
+        assert installer.uninstall_main([]) == 2
+        assert "--yes" in capsys.readouterr().err
+        assert stub_uninstaller.built == []
+
+    @pytest.mark.parametrize("result, rc", [(True, 0), (False, 1)])
+    def test_yes_runs_the_uninstaller(self, stub_uninstaller, result, rc):
+        stub_uninstaller.result = result
+        assert installer.uninstall_main(["--yes"]) == rc
+        assert stub_uninstaller.built[0].kw["log"] is installer._console_log
+
+    def test_prompt_yes_runs(self, stub_uninstaller, monkeypatch):
+        _answer(monkeypatch, "y")
+        assert installer.uninstall_main([]) == 0
+        assert len(stub_uninstaller.built) == 1
+
+    def test_prompt_no_aborts(self, stub_uninstaller, monkeypatch):
+        _answer(monkeypatch, "n")
+        assert installer.uninstall_main([]) == 2
+        assert stub_uninstaller.built == []
+
+
+class TestConsoleLog:
+    def test_plain_when_not_a_terminal(self, capsys):
+        installer._console_log("hello\n", "green")
+        assert capsys.readouterr().out == "hello\n"
+
+    def test_coloured_on_a_terminal(self, capsys, monkeypatch):
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+        installer._console_log("ok\n", "green")
+        assert capsys.readouterr().out == "\x1b[32mok\n\x1b[0m"
+
+    def test_no_color_wins(self, capsys, monkeypatch):
+        monkeypatch.setenv("NO_COLOR", "1")
+        monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+        installer._console_log("ok\n", "green")
+        assert capsys.readouterr().out == "ok\n"
