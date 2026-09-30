@@ -18,6 +18,7 @@ A graphical front-end for end-to-end testing of the [METIS instrument pipeline](
 - [Output layout](#output-layout)
 - [Reference](#reference) — install methods, system dependencies, runner modes,
   input formats, the `mtr-cli` option table, and direct environment access
+- [Troubleshooting](#troubleshooting) — problems from past versions and common pitfalls, with fixes
 - [Related repositories](#related-repositories)
 
 
@@ -177,9 +178,9 @@ mtr-cli ~/mtr-examples/LMS_RAD_06.yaml    # CLI equivalent
 > you would rather reference them in place than copy them.
 
 > **Tip:** MTR supports Python **3.12–3.13**. On a newer default `python3`
-> (e.g. 3.14) the ESO pipeline dependencies (`scopesim`, `pycpl`, …) have no
-> matching wheels yet, so the Install tab fails to build them. Pin MTR to a
+> (e.g. 3.14) `pipx install` finds no installable version at all; pin a
 > supported interpreter: `pipx install metis-test-runner --python python3.12`.
+> See [Troubleshooting](#troubleshooting).
 
 If you'd rather not install pipx, use Python's built-in venv module:
 
@@ -268,7 +269,7 @@ If the pipeline tools (`edps`, `python`, ScopeSim) are already on your PATH — 
 
 ScopeSim instrument packages (Armazones, ELT, METIS) will be downloaded into `./inst_pkgs/` in your current working directory on first use. Set the GUI's *Instrument packages* field (or `--inst-pkgs PATH`) to download or reuse packages from a fixed location instead.
 
-> **Tip:** always launch the GUI (or invoke `mtr-cli`) from the same directory — otherwise ScopeSim will download a fresh copy of the instrument packages into every new directory, cluttering your filesystem.
+> **Tip:** with the `native` runner, launch the GUI (or invoke `mtr-cli`) from the same directory, or set `--inst-pkgs` — otherwise ScopeSim downloads a fresh copy of the instrument packages into every new directory. The `default` runner keeps them in the user data directory.
 
 #### Reference
 
@@ -475,6 +476,206 @@ MTR/
 ├── tests/                  # Unit tests (pytest)
 └── pyproject.toml          # Project metadata (hatchling build backend)
 ```
+
+</details>
+
+
+## Troubleshooting
+
+Problems users have run into, and how to recover.
+
+### Problems from past versions
+
+Newest first. Each entry says which version fixed it, and how to clean up what
+an older version left behind.
+
+<details>
+<summary><b><code>pipx install</code> on ARM Linux: "No matching distribution found for PyQt6-Qt6==6.6.0"</b></summary>
+
+**Affects:** MTR 0.5.0 and earlier, on Linux aarch64 (e.g. Graviton or Ampere
+servers, Raspberry Pi).
+
+**What went wrong:** MTR pins PyQt6 6.6.0 for the GUI, which has no build for ARM
+Linux, so pip could not install MTR at all.
+
+**Fixed after 0.5.0:** on ARM Linux MTR installs without PyQt6. The headless
+commands (`mtr-install`, `mtr-cli`, `mtr-uninstall`) work; `mtr` explains that
+there is no GUI.
+
+**What to do:** upgrade, then run `mtr-install`. It builds `synphot` from source
+there, which needs a C compiler and Python headers
+(e.g. `sudo apt install gcc python3-dev`).
+
+</details>
+
+<details>
+<summary><b><code>~/.edps</code> is still there after Uninstall, or Install backs up an EDPS config you never had</b></summary>
+
+**Affects:** MTR 0.5.0 and earlier, if you had no EDPS configuration of your own
+before installing MTR.
+
+**What went wrong:** installing a second time backed up MTR's own
+`~/.edps/application.properties` as if it were yours. Uninstall then "restored"
+it, leaving `~/.edps/` and `~/EDPS_data/` behind, with `workflow_dir` pointing at
+the deleted `METIS_Pipeline` clone.
+
+**Fixed after 0.5.0:** MTR now marks the config it writes (the first line starts
+with `# Written by metis-test-runner`) and replaces it on re-install instead of
+backing it up.
+
+**What to do:** a config left behind by an older MTR has no marker, so it still
+counts as yours. Check which files MTR wrote:
+
+```bash
+grep workflow_dir ~/.edps/application.properties*
+```
+
+A `workflow_dir` pointing into `…/metis-test-runner/METIS_Pipeline/…` (or into
+your `METIS_DATA_DIR`) means MTR wrote that file. If none of the files is your
+own, remove them, then re-install if you still use MTR:
+
+```bash
+rm -r ~/.edps ~/EDPS_data   # or wherever base_dir= in the config points
+mtr-install                 # or the Install tab
+```
+
+If `application.properties_backup` holds your own settings, keep it: Uninstall
+restores it.
+
+</details>
+
+<details>
+<summary><b>Uninstall "restored" MTR's EDPS config instead of your own</b></summary>
+
+**Affects:** MTR 0.3.0 to 0.4.5, if you had your own EDPS configuration and
+installed MTR more than once.
+
+**What went wrong:** each install backed up the file in place. From the second
+install on, that was MTR's own config, which overwrote the backup of yours.
+
+**Fixed in 0.5.0:** the first backup is kept.
+
+**What to do:** check the backup with the `grep` from the entry above. If it is
+MTR's, your original is gone from `~/.edps`. If you have another copy of it, put
+it in place of the backup and remove MTR's config, then re-install if you still
+use MTR:
+
+```bash
+cp /path/to/your/application.properties ~/.edps/application.properties_backup
+rm ~/.edps/application.properties
+mtr-install                 # Uninstall will now restore your copy
+```
+
+If you no longer use MTR, copy yours straight to `~/.edps/application.properties`
+instead. Without another copy there is nothing to restore; clean up as in the
+entry above.
+
+</details>
+
+<details>
+<summary><b>The EDPS server is still running after Stop or Ctrl-C</b></summary>
+
+**Affects:** MTR before 0.5.0.
+
+**What went wrong:** the Run tab's *Stop* killed the run outright, and a
+Ctrl-C early in a run skipped the cleanup, so the EDPS server on port 4444 kept
+running. The next run reuses a running server instead of starting a fresh one,
+so it keeps the configuration and job bookkeeping it started with.
+
+**Fixed in 0.5.0:** both now stop the server.
+
+**What to do:** stop the leftover server:
+
+```bash
+mtr-exec -- edps -P 4444 -s
+```
+
+If the interrupted run used `--prefer-masters` with an EDPS config you set up
+outside MTR, also check `association_preference=` in
+`~/.edps/application.properties`: that override could be left in place.
+
+</details>
+
+<details>
+<summary><b><code>No module named pip</code> when installing, uninstalling or installing MetisWISE</b></summary>
+
+**Affects:** MTR 0.4.2 and earlier, installed with pipx.
+
+**What went wrong:** pipx creates app venvs without pip, and MTR runs
+`python -m pip` inside its own venv.
+
+**Fixed in 0.4.3:** MTR bootstraps pip first.
+
+**What to do:** `pipx upgrade metis-test-runner`, then run the install again.
+
+</details>
+
+### Common pitfalls
+
+<details>
+<summary><b><code>pipx install</code>: "Could not find a version that satisfies the requirement metis-test-runner"</b></summary>
+
+**What goes wrong:** every MTR release requires Python 3.12 or 3.13, and pipx
+uses its own default interpreter, which may be newer (e.g. 3.14).
+
+**What to do:** name a supported interpreter:
+
+```bash
+pipx install metis-test-runner --python python3.12
+pipx reinstall metis-test-runner --python python3.12   # if it is already installed
+```
+
+</details>
+
+<details>
+<summary><b>Uninstall: "Refusing to remove …"</b></summary>
+
+**What goes wrong:** as a safety check, Uninstall never deletes `/`, your home
+directory or any of its parents, a top-level directory such as `/data`, or the
+directory you are currently in. So it refuses when `METIS_DATA_DIR` points at
+one of those, or when you run it from the data directory itself (easy to do
+over SSH). The rest of the uninstall still runs, then it reports "finished with
+errors" and `mtr-uninstall` exits 1. MTR 0.5.0 and earlier reported "Uninstall
+complete" regardless, and blamed `METIS_DATA_DIR` in both cases.
+
+**What to do:** `cd ~` (or point `METIS_DATA_DIR` at a dedicated directory) and
+run the uninstall again. Re-running is safe: steps already done are skipped.
+
+</details>
+
+<details>
+<summary><b>"EDPS hardlinks its products … on different filesystems", or an empty output folder</b></summary>
+
+**What goes wrong:** MTR sets EDPS to *hardlink* products from its working store
+(`~/EDPS_data`) into the run's output folder, which saves disk space but only
+works within one filesystem. With an output folder on another filesystem (a
+different disk, a network mount, or `/tmp` when it is a tmpfs), EDPS logs
+`Building dataset package failed due to [Errno 18] Invalid cross-device link` in
+`<output>/pipeline/edps.log` and carries on. The products are still in
+`~/EDPS_data`. After 0.5.0, MTR checks this before the simulation starts and
+stops with the message above, and warns if a run still ends with no products;
+0.5.0 and earlier ran to the end and printed "Done" for the empty folder.
+
+**What to do:** keep the output folder on the same filesystem as `~/EDPS_data`.
+The GUI's default (inside the data directory) is; `mtr-cli` writes to
+`./output/` of the directory you run it from, so run it from under your home
+directory or pass `-o`. Otherwise change `mode=link` in
+`~/.edps/application.properties` to `mode=copy` (uses the disk space twice) or
+`mode=symlink` (links break if `~/EDPS_data` is cleaned up). A re-install resets
+it to `mode=link`.
+
+</details>
+
+<details>
+<summary><b>ScopeSim downloads the instrument packages again in every directory</b></summary>
+
+**What goes wrong:** with the `native` runner, and inside containers, ScopeSim
+looks for the instrument packages in `./inst_pkgs` of the current directory.
+The `default` runner keeps them in the user data directory and is not affected.
+
+**What to do:** always start from the same directory, or point
+`--inst-pkgs DIR` (the *Instrument packages* field in the Run tab, or
+`METIS_INST_PKGS`) at one shared copy.
 
 </details>
 

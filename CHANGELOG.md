@@ -19,6 +19,11 @@
   PyQt6 not installed (ARM Linux), or a Qt system library missing (e.g. a
   server without libGL/libEGL). `mtr-install` likewise says when `git` is
   missing.
+- **README Troubleshooting section**: problems from past versions (with how to
+  clean up after them) and common pitfalls. The README's Python-version and
+  instrument-package tips were corrected: on Python 3.14 `pipx install` itself
+  fails, and only the `native` runner re-downloads instrument packages per
+  directory.
 
 ### Changed
 - The Archive tab installs `metiswise>=0.0.4` from the entropynaut index
