@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **`METIS_PIPELINE_DIR`** — use your own METIS_Pipeline checkout instead of
+  the one the Install tab clones. See README → *Using your own METIS_Pipeline /
+  METIS_Simulations checkout*.
+
+### Changed
+- **A repository set via `METIS_PIPELINE_DIR` / `METIS_SIMULATIONS_DIR` is now
+  treated as the user's own.** Install / `mtr-install` runs no git in it
+  (and fails if it does not exist instead of cloning into it), refuses a ref
+  for it, and Uninstall no longer deletes it. Previously an external
+  `METIS_SIMULATIONS_DIR` was cloned into, updated, and removed by Uninstall.
+
 ## 0.6.0 — 2026-09-30
 
 ### Added

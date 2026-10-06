@@ -160,3 +160,38 @@ class TestSecretsNeverReachChildren:
         resolved = resolve_runtime_env("default")
         assert "database_password" not in resolved
         assert resolved["MTR_OK"] == "yes"
+
+
+class TestUserOwnedRepos:
+    def test_env_vars_select_the_repos(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("METIS_DATA_DIR", str(tmp_path / "data"))
+        monkeypatch.setenv("METIS_PIPELINE_DIR", str(tmp_path / "pipe"))
+        monkeypatch.delenv("METIS_SIMULATIONS_DIR", raising=False)
+        assert paths.pipeline_dir() == tmp_path / "pipe"
+        assert paths.user_owned_repos() == {tmp_path / "pipe": "METIS_PIPELINE_DIR"}
+
+    def test_none_by_default(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("METIS_DATA_DIR", str(tmp_path))
+        monkeypatch.delenv("METIS_PIPELINE_DIR", raising=False)
+        monkeypatch.delenv("METIS_SIMULATIONS_DIR", raising=False)
+        assert paths.pipeline_dir() == tmp_path / "METIS_Pipeline"
+        assert paths.user_owned_repos() == {}
+
+    def test_pipeline_present(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("METIS_DATA_DIR", str(tmp_path))
+        monkeypatch.delenv("METIS_PIPELINE_DIR", raising=False)
+        (tmp_path / "METIS_Pipeline").mkdir()
+        assert not paths.pipeline_present()  # managed clone needs .git
+        own = tmp_path / "own"
+        own.mkdir()
+        monkeypatch.setenv("METIS_PIPELINE_DIR", str(own))
+        assert paths.pipeline_present()  # user-owned: existing dir suffices
+        monkeypatch.setenv("METIS_PIPELINE_DIR", str(tmp_path / "absent"))
+        assert not paths.pipeline_present()
+
+    def test_runtime_env_follows_pipeline_dir(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("METIS_DATA_DIR", str(tmp_path / "data"))
+        monkeypatch.setenv("METIS_PIPELINE_DIR", str(tmp_path / "pipe"))
+        env = resolve_runtime_env("default")
+        assert env["PYCPL_RECIPE_DIR"] == f"{tmp_path / 'pipe'}/metisp/pyrecipes/"
+        assert f"{tmp_path / 'pipe'}/metisp/pymetis/src/" in env["PYTHONPATH"]

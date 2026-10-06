@@ -874,15 +874,18 @@ def _build_sim_script(
 def _check_default_env(runner):
     """Validate that the default runner can be used.
 
-    Confirms the MTR-managed pipeline clone exists at ``paths.pipeline_dir()``
-    (created by the GUI Install tab); otherwise points the user at it. The
+    Confirms the pipeline checkout exists at ``paths.pipeline_dir()`` (cloned
+    by the GUI Install tab, or set via METIS_PIPELINE_DIR); otherwise points the
+    user at it. The
     runtime environment itself is derived in :mod:`metis_test_runner.env`, so
     no ``.env`` file is required.
     """
     if runner != "default":
         return
-    if not (paths.pipeline_dir() / ".git").exists():
-        raise FileNotFoundError(f"{paths.pipeline_dir()} not found — run the Install tab in the MTR GUI")
+    if not paths.pipeline_present():
+        raise FileNotFoundError(
+            f"{paths.pipeline_dir()} not found — run the Install tab in the MTR GUI, or set METIS_PIPELINE_DIR"
+        )
 
 
 def _default_subprocess_env() -> dict[str, str]:
@@ -1419,13 +1422,13 @@ def main(argv=None):
             input_files.append(infile)
 
     # For the default runner, confirm the Install tab has produced the
-    # pipeline clone under paths.data_dir(). The runtime environment is derived
+    # pipeline clone (or METIS_PIPELINE_DIR points at the user's own). The runtime environment is derived
     # in env.resolve_runtime_env, so no .env file is needed. Other runners
     # don't need this check.
-    if runner == "default" and not (paths.pipeline_dir() / ".git").exists():
+    if runner == "default" and not paths.pipeline_present():
         sys.exit(
             f"Error: {paths.pipeline_dir()} not found.\n"
-            "Run the Install tab in the MTR GUI before invoking the default runner."
+            "Run the Install tab in the MTR GUI (or set METIS_PIPELINE_DIR) before invoking the default runner."
         )
 
     # Locate METIS_Simulations

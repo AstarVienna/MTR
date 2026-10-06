@@ -63,6 +63,7 @@ from PyQt6.QtWidgets import (
 from . import paths
 from .env import ensurepip_command_if_needed, resolve_runtime_env
 from .installer import (
+    EXTERNAL,
     REPO_ROOT,
     REPOS,
     TARGET_A,
@@ -124,7 +125,10 @@ def _installation_complete() -> bool:
 
     The runtime environment is derived from paths.py (see env.py), so this no
     longer depends on a generated .env — only the pipeline clone is required.
+    A user-owned checkout (METIS_PIPELINE_DIR) need not be a git repo.
     """
+    if TARGET_A in EXTERNAL:
+        return TARGET_A.is_dir()
     return (TARGET_A / ".git").exists()
 
 
@@ -736,7 +740,9 @@ class InstallTab(WorkerHost, QWidget):
             "<li>Initialise and configure EDPS on port 4444</li>"
             "</ol>"
             "Leave the version fields blank and re-running is safe — existing "
-            "repositories are fast-forwarded, not re-cloned."
+            "repositories are fast-forwarded, not re-cloned. A repository set via "
+            "<code>METIS_PIPELINE_DIR</code> / <code>METIS_SIMULATIONS_DIR</code> "
+            "is your own checkout: it is used as-is and never updated or deleted."
         )
         desc.setWordWrap(True)
         desc.setTextFormat(Qt.TextFormat.RichText)
@@ -787,7 +793,7 @@ class InstallTab(WorkerHost, QWidget):
         self.ref_status: dict[str, QLabel] = {}
         self.ref_buttons: dict[str, QPushButton] = {}
 
-        for key, label, _url, _target in self.REPOS:
+        for key, label, _url, target in self.REPOS:
             combo = RefComboBox()
             combo.lineEdit().setPlaceholderText("default branch")
             self.ref_combos[key] = combo
@@ -809,6 +815,13 @@ class InstallTab(WorkerHost, QWidget):
             self.ref_status[key] = status
             lay.addWidget(status)
 
+            if target in EXTERNAL:
+                # The user's own checkout: MTR never runs git there.
+                combo.setEnabled(False)
+                btn.setEnabled(False)
+                combo.setToolTip(f"Set via {EXTERNAL[target]} — MTR does not change this checkout.")
+                status.setText(self._external_status(target))
+
         return grp
 
     # ── ref discovery ────────────────────────────────────────────────────────
@@ -817,6 +830,8 @@ class InstallTab(WorkerHost, QWidget):
         if SMOKE_TEST or not shutil.which("git"):
             return
         for key, _label, url, target in self.REPOS:
+            if target in EXTERNAL:
+                continue
             if only_missing and key in self._refs_loaded:
                 continue
             if key in self._ref_workers:
@@ -868,9 +883,16 @@ class InstallTab(WorkerHost, QWidget):
         if focused:
             edit.setCursorPosition(min(pos, len(typed)))
 
+    @staticmethod
+    def _external_status(target: Path) -> str:
+        return f"your own checkout ({EXTERNAL[target]}), not managed by MTR: {_describe_head(target)}"
+
     def _refresh_status_labels(self) -> None:
         for key, _label, _url, target in self.REPOS:
-            self.ref_status[key].setText(f"currently: {_describe_head(target)}")
+            if target in EXTERNAL:
+                self.ref_status[key].setText(self._external_status(target))
+            else:
+                self.ref_status[key].setText(f"currently: {_describe_head(target)}")
 
     # ── settings ─────────────────────────────────────────────────────────────
 
@@ -895,6 +917,7 @@ class InstallTab(WorkerHost, QWidget):
             refs = {
                 target: _validate_ref(self.ref_combos[key].currentText())
                 for key, _label, _url, target in self.REPOS
+                if target not in EXTERNAL
             }
         except ValueError as exc:
             QMessageBox.warning(self, "Invalid ref", str(exc))
@@ -923,6 +946,8 @@ class InstallTab(WorkerHost, QWidget):
         """
         force: set[Path] = set()
         for key, label, _url, target in self.REPOS:
+            if target in EXTERNAL:
+                continue
             try:
                 entries = _dirty_files(target)
             except RuntimeError as exc:

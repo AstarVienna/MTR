@@ -6,8 +6,11 @@ seam and so a future user-configurable Settings tab has one place to hook.
 
 Resolution order (highest first):
   1. METIS_DATA_DIR — relocate the whole tree
-  2. Per-asset env vars (METIS_SIMULATIONS_DIR, METIS_INST_PKGS)
+  2. Per-asset env vars (METIS_PIPELINE_DIR, METIS_SIMULATIONS_DIR, METIS_INST_PKGS)
   3. platformdirs default (~/.local/share/metis-test-runner on Linux)
+
+A repo set via METIS_PIPELINE_DIR / METIS_SIMULATIONS_DIR is the user's own
+checkout: MTR never clones, updates or deletes it (see user_owned_repos()).
 """
 
 from __future__ import annotations
@@ -28,13 +31,43 @@ def data_dir() -> Path:
     return d
 
 
+PIPELINE_ENV = "METIS_PIPELINE_DIR"
+SIMULATIONS_ENV = "METIS_SIMULATIONS_DIR"
+
+
 def pipeline_dir() -> Path:
-    return data_dir() / "METIS_Pipeline"
+    override = os.environ.get(PIPELINE_ENV)
+    return Path(override) if override else data_dir() / "METIS_Pipeline"
 
 
 def simulations_dir() -> Path:
-    override = os.environ.get("METIS_SIMULATIONS_DIR")
+    override = os.environ.get(SIMULATIONS_ENV)
     return Path(override) if override else data_dir() / "METIS_Simulations"
+
+
+def user_owned_repos() -> dict[Path, str]:
+    """Repo targets set via an env var, mapped to that variable's name.
+
+    These are the user's own checkouts: the installer never runs git in them
+    and the uninstaller never deletes them.
+    """
+    owned = {}
+    if os.environ.get(PIPELINE_ENV):
+        owned[pipeline_dir()] = PIPELINE_ENV
+    if os.environ.get(SIMULATIONS_ENV):
+        owned[simulations_dir()] = SIMULATIONS_ENV
+    return owned
+
+
+def pipeline_present() -> bool:
+    """True when there is a pipeline checkout to run against.
+
+    A user-owned checkout need not be a git repo, so it only has to exist.
+    """
+    d = pipeline_dir()
+    if os.environ.get(PIPELINE_ENV):
+        return d.is_dir()
+    return (d / ".git").exists()
 
 
 def inst_pkgs_dir() -> Path:

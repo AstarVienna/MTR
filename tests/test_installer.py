@@ -542,9 +542,8 @@ class TestUninstallRemoveDataDir:
         assert self._make_worker()._remove_data_dir() is True
         assert not data.exists()
 
-    def test_also_removes_externally_relocated_simulations(self, tmp_path, monkeypatch):
-        # METIS_SIMULATIONS_DIR can point outside the data dir; removing the
-        # data dir alone would leave that clone behind.
+    def test_keeps_user_owned_checkout_outside_data_dir(self, tmp_path, monkeypatch):
+        # METIS_SIMULATIONS_DIR / METIS_PIPELINE_DIR are the user's own checkouts.
         from metis_test_runner import installer
 
         data = tmp_path / "data"
@@ -553,9 +552,38 @@ class TestUninstallRemoveDataDir:
         external_sims.mkdir(parents=True)
         monkeypatch.setattr(installer, "REPO_ROOT", data)
         monkeypatch.setattr(installer, "TARGET_B", external_sims)
+        monkeypatch.setattr(installer, "EXTERNAL", {external_sims: "METIS_SIMULATIONS_DIR"})
         assert self._make_worker()._remove_data_dir() is True
         assert not data.exists()
-        assert not external_sims.exists()
+        assert external_sims.exists()
+
+    def test_keeps_user_owned_checkout_inside_data_dir(self, tmp_path, monkeypatch):
+        from metis_test_runner import installer
+
+        data = tmp_path / "data"
+        own = data / "mine" / "METIS_Pipeline"
+        (own / "metisp").mkdir(parents=True)
+        (data / "mine" / "other").mkdir()
+        (data / "METIS_Simulations").mkdir()
+        (data / ".env").write_text("X=1\n")
+        (data / "link").symlink_to(tmp_path)
+        monkeypatch.setattr(installer, "REPO_ROOT", data)
+        monkeypatch.setattr(installer, "EXTERNAL", {own: "METIS_PIPELINE_DIR"})
+        assert self._make_worker()._remove_data_dir() is True
+        assert (own / "metisp").is_dir()
+        # Only top-level entries are pruned, so mine/other survives with the checkout.
+        assert sorted(p.name for p in data.iterdir()) == ["mine"]
+        assert tmp_path.exists()  # the symlink was removed, not followed
+
+    def test_data_dir_that_is_a_user_owned_checkout_is_kept(self, tmp_path, monkeypatch):
+        from metis_test_runner import installer
+
+        data = tmp_path / "data"
+        data.mkdir()
+        monkeypatch.setattr(installer, "REPO_ROOT", data)
+        monkeypatch.setattr(installer, "EXTERNAL", {data: "METIS_PIPELINE_DIR"})
+        assert self._make_worker()._remove_data_dir() is True
+        assert data.exists()
 
     def test_noop_when_nothing_to_remove(self, tmp_path, monkeypatch):
         from metis_test_runner import installer
@@ -1250,6 +1278,36 @@ class TestCloneOrUpdateBlankRef:
         w._clone_or_update(URL, _repo(tmp_path))  # must not raise
 
 
+class TestCloneOrUpdateUserOwned:
+    def test_existing_checkout_runs_no_git(self, tmp_path, monkeypatch):
+        target = tmp_path / "own"
+        target.mkdir()
+        monkeypatch.setattr(installer, "EXTERNAL", {target: "METIS_PIPELINE_DIR"})
+        w = _worker()
+        invoked = _spy(w, monkeypatch)
+        git_calls = []
+        monkeypatch.setattr(installer, "_git", lambda args, **kw: git_calls.append(args) or _cp(""))
+        w._clone_or_update(URL, target, "main", force=True)
+        assert invoked == [] and git_calls == []
+
+    def test_missing_checkout_is_an_error(self, tmp_path, monkeypatch):
+        target = tmp_path / "absent"
+        monkeypatch.setattr(installer, "EXTERNAL", {target: "METIS_PIPELINE_DIR"})
+        w = _worker()
+        invoked = _spy(w, monkeypatch)
+        with pytest.raises(RuntimeError, match="METIS_PIPELINE_DIR"):
+            w._clone_or_update(URL, target)
+        assert invoked == []
+
+    def test_check_layout_blames_the_env_var(self, tmp_path, monkeypatch):
+        own = tmp_path / "own"
+        own.mkdir()
+        monkeypatch.setattr(installer, "TARGET_A", own)
+        monkeypatch.setattr(installer, "EXTERNAL", {own: "METIS_PIPELINE_DIR"})
+        with pytest.raises(RuntimeError, match="does not look like a current checkout"):
+            _worker()._check_layout()
+
+
 class TestMakeRoom:
     def test_clean_tree_is_never_reset_even_with_force(self, tmp_path, monkeypatch):
         w = _worker()
@@ -1540,6 +1598,37 @@ class TestGitMissing:
         assert installer.install_main(argv) == 1
         assert "git is not installed" in capsys.readouterr().err
         assert stub_installer.built == []
+
+
+class TestInstallCliUserOwned:
+    def test_ref_for_user_owned_repo_is_a_usage_error(self, stub_installer, monkeypatch, capsys):
+        monkeypatch.setattr(installer, "EXTERNAL", {installer.TARGET_A: "METIS_PIPELINE_DIR"})
+        with pytest.raises(SystemExit) as exc:
+            installer.install_main(["--pipeline-ref", "develop"])
+        assert exc.value.code == 2
+        assert "METIS_PIPELINE_DIR" in capsys.readouterr().err
+        assert stub_installer.built == []
+
+    def test_dirty_user_owned_repo_is_not_a_blocker(self, stub_installer, monkeypatch):
+        monkeypatch.setattr(installer, "EXTERNAL", {installer.TARGET_A: "METIS_PIPELINE_DIR"})
+        monkeypatch.setattr(
+            installer, "_dirty_files", lambda t: [" M x.py"] if t == installer.TARGET_A else []
+        )
+        assert installer.install_main([]) == 0
+        assert stub_installer.built[0].kw["force"] == set()
+
+    def test_list_refs_skips_user_owned_repo(self, stub_installer, monkeypatch, capsys):
+        monkeypatch.setattr(installer, "EXTERNAL", {installer.TARGET_A: "METIS_PIPELINE_DIR"})
+        monkeypatch.setattr(installer, "_describe_head", lambda t: "main @ abc12345")
+        calls = []
+        monkeypatch.setattr(installer, "_git", lambda args, **kw: calls.append(args) or _cp(""))
+        assert installer.install_main(["--list-refs"]) == 0
+        assert "your own checkout (METIS_PIPELINE_DIR)" in capsys.readouterr().out
+        assert len(calls) == 1  # only METIS_Simulations is queried
+
+    def test_uninstall_summary_names_kept_checkout(self, monkeypatch):
+        monkeypatch.setattr(installer, "EXTERNAL", {Path("/x/own"): "METIS_PIPELINE_DIR"})
+        assert "/x/own (METIS_PIPELINE_DIR) is kept" in installer.uninstall_summary()
 
 
 class TestListRefs:

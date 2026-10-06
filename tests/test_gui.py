@@ -942,6 +942,23 @@ class TestInstallTabStart:
         tab._start()
         assert fake.constructed == []
 
+    def test_user_owned_repo_is_left_alone(self, qapp, monkeypatch):
+        from PyQt6.QtWidgets import QMessageBox
+
+        monkeypatch.setattr(gui, "EXTERNAL", {gui.TARGET_A: "METIS_PIPELINE_DIR"})
+        tab = _install_tab(qapp)
+        fake = _stub_worker(monkeypatch)
+        asked = []
+        monkeypatch.setattr(gui, "_dirty_files", lambda t: [" M x.py"] if t == gui.TARGET_A else [])
+        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: asked.append(a))
+        assert not tab.ref_combos["pipeline_ref"].isEnabled()
+        assert not tab.ref_buttons["pipeline_ref"].isEnabled()
+        assert "METIS_PIPELINE_DIR" in tab.ref_status["pipeline_ref"].text()
+        tab._start()
+        assert asked == []  # its local changes are the user's business
+        assert gui.TARGET_A not in fake.constructed[0].refs
+        assert fake.constructed[0].force == set()
+
     def test_selected_refs_reach_the_worker(self, qapp, monkeypatch):
         from PyQt6.QtWidgets import QMessageBox
 

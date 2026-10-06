@@ -102,7 +102,8 @@ installs such as MetisWISE are preserved. *Uninstall* reverses all of it.
 
 Leave **Repository version (advanced)** blank to track each repository's default
 branch. Set it to install a specific branch, tag or commit instead — for people
-developing *on* those repositories.
+developing *on* those repositories. To use a checkout you already have instead,
+see [Using your own checkout](#using-your-own-metis_pipeline--metis_simulations-checkout).
 
 Both buttons have headless equivalents, `mtr-install` and `mtr-uninstall`; see
 the [Quickstart](#quickstart).
@@ -190,7 +191,7 @@ python -m venv ~/.venvs/mtr
 ~/.venvs/mtr/bin/mtr                 # or: source ~/.venvs/mtr/bin/activate && mtr
 ```
 
-On first launch, open the **Install** tab and click *Install / Update* to fetch the METIS_Pipeline, METIS_Simulations, and ESO pipeline dependencies into `~/.local/share/metis-test-runner/` (override with `METIS_DATA_DIR=/path`). All pipeline dependencies install into the same isolated venv that MTR itself lives in — they never leak into your system Python.
+On first launch, open the **Install** tab and click *Install / Update* to fetch the METIS_Pipeline, METIS_Simulations, and ESO pipeline dependencies into `~/.local/share/metis-test-runner/` (override with `METIS_DATA_DIR=/path`, or use your own checkouts — see [Using your own checkout](#using-your-own-metis_pipeline--metis_simulations-checkout)). All pipeline dependencies install into the same isolated venv that MTR itself lives in — they never leak into your system Python.
 
 </details>
 
@@ -376,6 +377,29 @@ PYESOREX_LOG_LEVEL=info
 ```
 
 The file is entirely optional — it is read if present and ignored if absent.
+
+### Using your own METIS_Pipeline / METIS_Simulations checkout
+
+To run against a checkout you already have (e.g. one you develop on), set these
+variables wherever MTR runs — for *Install / Update* as well as every later
+`mtr` / `mtr-cli` / `mtr-exec` — e.g. in your shell profile:
+
+```bash
+export METIS_PIPELINE_DIR=~/src/METIS_Pipeline        # fish: set -gx METIS_PIPELINE_DIR ~/src/METIS_Pipeline
+export METIS_SIMULATIONS_DIR=~/src/METIS_Simulations  # fish: set -gx METIS_SIMULATIONS_DIR ~/src/METIS_Simulations
+```
+
+Each variable is independent; set only one to let MTR manage the other repo.
+A repository set this way is **yours**, and MTR treats it as read-only:
+
+- The directory must already exist; *Install / Update* fails otherwise. It does
+  not have to be a git repository.
+- *Install / Update* runs no git commands in it — no clone, pull, checkout or
+  reset — and its version field (or `--pipeline-ref` / `--simulations-ref`) is
+  disabled. It still pip-installs the checkout in editable mode and points EDPS's
+  `workflow_dir` (and the runtime environment) at it.
+- *Uninstall* never deletes it, even if it lies inside the data directory. It
+  only removes the editable-install entries from MTR's venv.
 
 ### Examples
 

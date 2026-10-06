@@ -41,6 +41,9 @@ TARGET_A    = paths.pipeline_dir()
 TARGET_B    = paths.simulations_dir()
 REPO_A_URL  = "https://github.com/AstarVienna/METIS_Pipeline.git"
 REPO_B_URL  = "https://github.com/AstarVienna/METIS_Simulations.git"
+# Targets set via METIS_PIPELINE_DIR / METIS_SIMULATIONS_DIR → that env var.
+# The user's own checkouts: never cloned, updated or deleted by MTR.
+EXTERNAL    = paths.user_owned_repos()
 # fmt: on
 
 # (key, label, repo URL, clone target) for the two clones MTR manages.
@@ -525,7 +528,22 @@ class Installer:
         *force* permits discarding uncommitted local changes; the GUI collects
         that confirmation per-repo before the worker starts, and this method
         re-checks rather than trusting it, so it stays safe to call directly.
+
+        A user-owned target (see ``EXTERNAL``) is used as-is: no git at all.
         """
+        if target in EXTERNAL:
+            if not target.is_dir():
+                raise RuntimeError(
+                    f"{target} (set via {EXTERNAL[target]}) does not exist. Point "
+                    f"{EXTERNAL[target]} at an existing checkout, or unset it to "
+                    f"let MTR clone the repository."
+                )
+            self._log(
+                f"Using your own checkout at {target} ({EXTERNAL[target]}) — not cloned or updated.\n",
+                "yellow",
+            )
+            return
+
         try:
             ref = _validate_ref(ref)
         except ValueError as exc:
@@ -767,6 +785,13 @@ class Installer:
             TARGET_B / "pyproject.toml",
         ):
             if not needed.exists():
+                owner = next((t for t in EXTERNAL if t in needed.parents), None)
+                if owner is not None:
+                    raise RuntimeError(
+                        f"{needed} does not exist: {owner} (set via "
+                        f"{EXTERNAL[owner]}) does not look like a current checkout "
+                        f"of that repository."
+                    )
                 raise RuntimeError(
                     f"{needed} does not exist at the selected ref. That ref "
                     f"probably predates the current repository layout — pick "
@@ -1009,18 +1034,45 @@ class Uninstaller:
         stream_subprocess(cmd, on_line=self._log, timeout=timeout)
 
     def _remove_data_dir(self) -> bool:
-        """Delete the whole user data dir, plus an externally-relocated
-        simulations clone if one exists outside the data dir.
+        """Delete the whole user data dir, sparing user-owned checkouts.
+
+        A checkout set via METIS_PIPELINE_DIR / METIS_SIMULATIONS_DIR is never
+        removed. If one lies inside the data dir, only the data dir's other
+        entries are deleted.
 
         Returns False if anything was refused or left behind.
         """
         ok = True
+        for kept, var in EXTERNAL.items():
+            self._log(f"Keeping your own checkout {kept} ({var}).\n", "yellow")
+        root = REPO_ROOT.resolve() if REPO_ROOT.exists() else REPO_ROOT
+        inside = [t.resolve() for t in EXTERNAL if t.exists()]
+        inside = [t for t in inside if t == root or root in t.parents]
         targets = [REPO_ROOT]
-        # If METIS_SIMULATIONS_DIR points outside the data dir, removing
-        # REPO_ROOT won't catch the clone — remove it explicitly.
-        if TARGET_B != REPO_ROOT and REPO_ROOT not in TARGET_B.parents:
-            targets.append(TARGET_B)
+        if inside and REPO_ROOT.is_dir():
+            if root in inside:
+                self._log(f"{REPO_ROOT} is itself a user-owned checkout — not removed.\n", "yellow")
+                return ok
+            # Delete every entry except those that are, or contain, a kept
+            # checkout. Symlinks always go: unlinking never touches the target.
+            try:
+                _assert_safe_to_remove(REPO_ROOT)
+            except RuntimeError as exc:
+                self._log(f"✗ {exc}\n", "red")
+                return False
+
+            def holds_kept(e: Path) -> bool:
+                return not e.is_symlink() and any(
+                    e.resolve() == t or e.resolve() in t.parents for t in inside
+                )
+
+            targets = [e for e in REPO_ROOT.iterdir() if not holds_kept(e)]
         for target in targets:
+            if target != REPO_ROOT and (target.is_symlink() or not target.is_dir()):
+                # A file or link inside a data dir that holds a kept checkout.
+                target.unlink()
+                self._log(f"Removed {target}\n", "")
+                continue
             if not target.exists():
                 self._log(f"{target} does not exist — nothing to remove.\n", "")
                 continue
@@ -1124,12 +1176,14 @@ def discard_summary(label: str, target: Path, entries: list) -> str:
 
 
 def uninstall_summary() -> str:
+    kept = "".join(f"\nYour own checkout {t} ({var}) is kept." for t, var in EXTERNAL.items())
     return (
         "This will permanently:\n"
         "• pip-uninstall all pipeline and MetisWISE packages\n"
         f"• delete the entire data directory ({REPO_ROOT})\n"
         "• restore or remove the EDPS configuration\n"
-        "• delete stored archive credentials from the OS keyring\n\n"
+        "• delete stored archive credentials from the OS keyring\n"
+        f"{kept}\n\n"
         "Transitive sub-dependencies are not removed. Continue?"
     )
 
@@ -1175,6 +1229,8 @@ def _collect_force(discard_changes: bool) -> set[Path] | None:
     """
     force: set[Path] = set()
     for _key, label, _url, target in REPOS:
+        if target in EXTERNAL:
+            continue
         try:
             entries = _dirty_files(target)
         except RuntimeError as exc:
@@ -1203,6 +1259,9 @@ def _list_refs() -> int:
     for _key, label, url, target in REPOS:
         print(f"{label}  ({target})")
         print(f"  currently: {_describe_head(target)}")
+        if target in EXTERNAL:
+            print(f"  your own checkout ({EXTERNAL[target]}) — not managed by MTR")
+            continue
         try:
             refs = remote_refs(url)
         except RuntimeError as exc:
@@ -1263,6 +1322,11 @@ def _install(argv: list[str] | None) -> int:
         refs = {target: _validate_ref(getattr(args, f"{key}_ref")) for key, _label, _url, target in REPOS}
     except ValueError as exc:
         p.error(str(exc))
+    for key, _label, _url, target in REPOS:
+        if refs[target] and target in EXTERNAL:
+            p.error(
+                f"--{key}-ref cannot be used with {EXTERNAL[target]}: MTR does not change your own checkout."
+            )
     force = _collect_force(args.discard_changes)
     if force is None:
         print("mtr-install: aborted.", file=sys.stderr)
