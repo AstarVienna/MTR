@@ -13,6 +13,9 @@
   (and fails if it does not exist instead of cloning into it), refuses a ref
   for it, and Uninstall no longer deletes it. Previously an external
   `METIS_SIMULATIONS_DIR` was cloned into, updated, and removed by Uninstall.
+- **`--csv-to-yaml` refuses to overwrite an existing YAML** next to the CSV.
+  With `--csv-lines`, the YAML is now written next to the original CSV as
+  `<name>_lines<START>-<END>.yaml` instead of under `<output>/sliced_inputs/`.
 
 ## 0.6.0 — 2026-09-30
 

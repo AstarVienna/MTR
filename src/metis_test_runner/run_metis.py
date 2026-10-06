@@ -1178,6 +1178,15 @@ def _slice_csv(path, line_range, out_dir):
     return out_path
 
 
+def _csv_yaml_target(csv_path, line_range):
+    """Final --csv-to-yaml path: <stem>.yaml, or <stem>_lines<A>-<B>.yaml for a sliced CSV."""
+    csv_path = Path(csv_path)
+    if line_range is None:
+        return csv_path.with_suffix(".yaml")
+    start, end = line_range
+    return csv_path.with_name(f"{csv_path.stem}_lines{start or 1}-{end or 'end'}.yaml")
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -1204,7 +1213,8 @@ def parse_args(argv=None):
         "(e.g. 6:12, 6: for line 6 to end, :12 for start to line 12). "
         "The header block (column-name row + component/description/type "
         "rows) is always kept. Applies to .csv inputs only; ignored with "
-        "--no-sim. [default: all rows]",
+        "--no-sim. With --csv-to-yaml the YAML is written next to the CSV as "
+        "<name>_lines<START>-<END>.yaml. [default: all rows]",
     )
     p.add_argument(
         "-o",
@@ -1287,7 +1297,8 @@ def parse_args(argv=None):
         action="store_true",
         help="Dry run: translate CSV input(s) to YAML via METIS_Simulations "
         "(testRun+writeYaml). Writes <name>.yaml next to each CSV and skips "
-        "simulation and the EDPS pipeline. Only CSV inputs are affected.",
+        "simulation and the EDPS pipeline. Refuses to overwrite an existing "
+        "YAML. Only CSV inputs are affected.",
     )
     p.add_argument(
         "--runner",
@@ -1420,6 +1431,22 @@ def main(argv=None):
             )
         if infile not in input_files:
             input_files.append(infile)
+
+    # --csv-to-yaml never overwrites: METIS_Simulations opens the YAML with "w",
+    # so refuse before anything is created or run.
+    csv_line_range = args.csv_lines if not args.no_sim else None
+    if args.csv_to_yaml:
+        existing = [
+            t
+            for t in (_csv_yaml_target(p, csv_line_range) for p in input_files if p.suffix.lower() == ".csv")
+            if t.exists()
+        ]
+        if existing:
+            sys.exit(
+                "Error: refusing to overwrite existing YAML:\n"
+                + "".join(f"  {t}\n" for t in existing)
+                + "Rename or delete it, then re-run."
+            )
 
     # For the default runner, confirm the Install tab has produced the
     # pipeline clone (or METIS_PIPELINE_DIR points at the user's own). The runtime environment is derived
@@ -1589,7 +1616,21 @@ def main(argv=None):
         rc = _run_simulation(runner, args.container, sim_code, sims_cwd)
         if rc != 0:
             sys.exit(f"Error: CSV→YAML translation failed (exit code {rc}).")
-        print("\nDone. A .yaml file was written next to each CSV input.")
+        # A sliced CSV's YAML lands in sliced_inputs/; move it next to the original.
+        written = []
+        for orig, used in zip(input_files, sim_input_files, strict=True):
+            if orig.suffix.lower() != ".csv":
+                continue
+            produced = used.with_suffix(".yaml")
+            target = _csv_yaml_target(orig, csv_line_range)
+            if not produced.is_file():
+                sys.exit(f"Error: expected YAML was not written: {produced}")
+            if produced != target:
+                shutil.move(produced, target)
+            written.append(target)
+        print("\nDone. YAML written to:")
+        for t in written:
+            print(f"  {t}")
         return
 
     # -----------------------------------------------------------------------

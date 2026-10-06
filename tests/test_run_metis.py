@@ -27,6 +27,7 @@ from metis_test_runner.run_metis import (
     WORKFLOW_TASK_CHAIN,
     _build_sim_script,
     _check_default_env,
+    _csv_yaml_target,
     _default_subprocess_env,
     _edps_base_cmd,
     _parse_line_range,
@@ -2070,3 +2071,86 @@ class TestMainHardlinkPreflight:
         argv, _out = self._argv(tmp_path, "--no-pipeline")
         with pytest.raises(Stop):
             main(argv)
+
+
+class TestCsvYamlTarget:
+    def test_full_csv(self):
+        assert _csv_yaml_target(Path("/d/seq.csv"), None) == Path("/d/seq.yaml")
+
+    @pytest.mark.parametrize(
+        "rng, name",
+        [
+            ((6, 12), "seq_lines6-12.yaml"),
+            ((6, None), "seq_lines6-end.yaml"),
+            ((None, 12), "seq_lines1-12.yaml"),
+        ],
+    )
+    def test_sliced_csv(self, rng, name):
+        assert _csv_yaml_target(Path("/d/seq.csv"), rng) == Path("/d") / name
+
+
+class TestMainCsvToYaml:
+    def _argv(self, tmp_path, *extra):
+        sims = tmp_path / "sims"
+        (sims / "metis_simulations").mkdir(parents=True)
+        csv_in = tmp_path / "seq.csv"
+        csv_in.write_text(_AIT_CSV)
+        out = tmp_path / "out"
+        argv = [
+            "--runner",
+            "native",
+            "--simulations-dir",
+            str(sims),
+            "-o",
+            str(out),
+            "--csv-to-yaml",
+            *extra,
+            str(csv_in),
+        ]
+        return argv, out
+
+    @staticmethod
+    def _fake_translate(monkeypatch, produced):
+        """Emulate csvParser writing <input>.yaml next to the CSV it was given."""
+
+        def fake(runner, container, sim_code, sims_cwd):
+            assert str(produced.with_suffix(".csv")) in sim_code
+            produced.write_text("x: 1\n")
+            return 0
+
+        monkeypatch.setattr(rm, "_run_simulation", fake)
+
+    def test_refuses_existing_yaml(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(rm, "_run_simulation", MagicMock(side_effect=AssertionError("ran")))
+        argv, out = self._argv(tmp_path)
+        (tmp_path / "seq.yaml").write_text("keep: me\n")
+        with pytest.raises(SystemExit) as exc:
+            main(argv)
+        assert "refusing to overwrite" in str(exc.value)
+        assert str(tmp_path / "seq.yaml") in str(exc.value)
+        assert (tmp_path / "seq.yaml").read_text() == "keep: me\n"
+        assert not out.exists()
+
+    def test_refuses_existing_sliced_yaml(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(rm, "_run_simulation", MagicMock(side_effect=AssertionError("ran")))
+        argv, _out = self._argv(tmp_path, "--csv-lines", "6:8")
+        (tmp_path / "seq_lines6-8.yaml").write_text("keep: me\n")
+        with pytest.raises(SystemExit) as exc:
+            main(argv)
+        assert "seq_lines6-8.yaml" in str(exc.value)
+
+    def test_full_yaml_written_next_to_csv(self, tmp_path, monkeypatch):
+        argv, _out = self._argv(tmp_path)
+        self._fake_translate(monkeypatch, tmp_path / "seq.yaml")
+        main(argv)
+        assert (tmp_path / "seq.yaml").is_file()
+
+    def test_sliced_yaml_moved_next_to_original(self, tmp_path, monkeypatch):
+        argv, out = self._argv(tmp_path, "--csv-lines", "6:8")
+        (tmp_path / "seq.yaml").write_text("keep: me\n")  # full YAML doesn't block a sliced run
+        self._fake_translate(monkeypatch, out / "sliced_inputs" / "seq.yaml")
+        main(argv)
+        assert (tmp_path / "seq_lines6-8.yaml").is_file()
+        assert (tmp_path / "seq.yaml").read_text() == "keep: me\n"
+        assert not (out / "sliced_inputs" / "seq.yaml").exists()
+        assert (out / "sliced_inputs" / "seq.csv").is_file()
