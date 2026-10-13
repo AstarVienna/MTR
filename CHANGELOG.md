@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 — 2026-10-13
 
 ### Added
 - **`METIS_PIPELINE_DIR`** — use your own METIS_Pipeline checkout instead of
@@ -186,12 +186,12 @@
   and only then kills. A user-initiated stop is reported as stopped rather than
   as a failure exit code. *(Correction: this was not achieved. `run_metis` had
   no SIGTERM handler, so the cleanup still never ran and its children kept
-  running; fixed in Unreleased.)*
+  running; fixed in 0.7.0.)*
 - **Closing the window during a job is safe.** Only the ref workers were
   stopped, so quitting mid-install destroyed a tab out from under a live
   `QThread`. All workers are now tracked, the window asks before quitting on a
   running job, and the pipeline process is stopped. *(Correction: no worker
-  acted on the stop request, so pip/git kept running; fixed in Unreleased.)*
+  acted on the stop request, so pip/git kept running; fixed in 0.7.0.)*
 - **A second archive action can no longer abort the first.** The Archive tab
   kept one worker slot and only disabled the button for the action in flight,
   so e.g. "Save & Test" during a MetisWISE install dropped the last reference
