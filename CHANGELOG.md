@@ -29,6 +29,13 @@
   160-block DETLIN series, not a full calibration + science chain.
 
 ### Fixed
+- **Stop now cleans up.** SIGTERM (the Run tab's Stop) used Python's default
+  action, which skips every `finally`: `edps -s`, restoring
+  `application.properties` and removing the temp script never ran, and the
+  simulation / EDPS children kept running. `run_metis` now unwinds on SIGTERM
+  like on Ctrl-C (exit 143), and every child runs in its own process group that
+  is stopped with it. Stop no longer freezes the window while waiting, and the
+  grace period before the kill is 20 s (the cleanup can take up to 18 s).
 - **Archive auto-fetch and Archive tab used product names that do not exist**
   (`MASTER_IFU_RSRF`, `LM_LSS_MASTER_RSRF`, `*_LSS_TRACE_TABLE`,
   `*_LSS_WAVECAL`, …); they now match METIS_Pipeline and the DRLD (`RSRF_IFU`,
@@ -152,7 +159,9 @@
 - **Stop no longer orphans the EDPS server.** The Run tab sent `SIGKILL`
   immediately, skipping `run_metis`'s cleanup; it now sends `SIGTERM`, waits,
   and only then kills. A user-initiated stop is reported as stopped rather than
-  as a failure exit code.
+  as a failure exit code. *(Correction: this was not achieved. `run_metis` had
+  no SIGTERM handler, so the cleanup still never ran and its children kept
+  running; fixed in Unreleased.)*
 - **Closing the window during a job is safe.** Only the ref workers were
   stopped, so quitting mid-install destroyed a tab out from under a live
   `QThread`. All workers are now tracked, the window asks before quitting on a

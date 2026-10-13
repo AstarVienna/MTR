@@ -1360,3 +1360,72 @@ class TestGuiArgsParseAsCli:
         parsed = parse_args(tab._build_cmd_args())
         assert parsed.no_sim is True
         assert parsed.pipeline_input == ["/data/fits"]
+
+
+# ---------------------------------------------------------------------------
+# Run tab Stop
+# ---------------------------------------------------------------------------
+
+
+def _wait_for(qapp, condition, timeout=15.0):
+    import time
+
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "timed out waiting"
+        qapp.processEvents()
+        time.sleep(0.01)
+
+
+def _pid_alive(pid):
+    import os
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+class TestRunTabStop:
+    """Stop used to block the GUI thread for up to 12 s."""
+
+    def _start(self, qapp, monkeypatch, code):
+        import sys
+
+        tab = _make_run_tab(qapp)
+        tab.input_list.addItem("a.yaml")
+        monkeypatch.setattr(gui, "_resolve_run_metis_command", lambda: [sys.executable, "-u", "-c", code])
+        monkeypatch.setattr(tab, "_build_cmd_args", lambda: [])
+        tab._run()
+        # The echoed command contains the code, so wait for output only it prints.
+        _wait_for(qapp, lambda: "READY" in tab.log_view.toPlainText())
+        return tab
+
+    def test_stop_returns_at_once_and_reports_the_cleanup(self, qapp, monkeypatch):
+        import time
+
+        code = (
+            "import signal, sys, time\n"
+            "def bye(*a):\n"
+            "    time.sleep(0.5); print('cleaned up'); sys.exit(143)\n"
+            "signal.signal(signal.SIGTERM, bye)\n"
+            "print('ready'.upper()); time.sleep(30)\n"
+        )
+        tab = self._start(qapp, monkeypatch, code)
+        start = time.monotonic()
+        tab._stop()
+        assert time.monotonic() - start < 0.4
+        assert not tab.stop_btn.isEnabled()
+        _wait_for(qapp, lambda: tab.run_btn.isEnabled())
+        log = tab.log_view.toPlainText()
+        assert "cleaned up" in log and "Stopped." in log
+        assert not tab._kill_timer.isActive()
+
+    def test_kills_a_run_that_ignores_sigterm(self, qapp, monkeypatch):
+        code = "import signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\nprint('ready'.upper()); time.sleep(30)\n"
+        tab = self._start(qapp, monkeypatch, code)
+        tab.STOP_GRACE_MS = 200
+        tab._stop()
+        _wait_for(qapp, lambda: tab.run_btn.isEnabled())
+        assert "killing the process" in tab.log_view.toPlainText()

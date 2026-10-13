@@ -2054,14 +2054,19 @@ class ArchiveTab(WorkerHost, QWidget):
 
 
 class RunTab(WorkerHost, QWidget):
-    #: How long to let run_metis clean up (stop EDPS, restore config) after
-    #: SIGTERM before resorting to SIGKILL.
-    STOP_GRACE_MS = 10_000
+    #: How long to let run_metis clean up after SIGTERM before resorting to
+    #: SIGKILL: stopping its children takes up to 3 s and `edps -s` up to 15 s.
+    STOP_GRACE_MS = 20_000
 
     def __init__(self) -> None:
         super().__init__()
         self._process: QProcess | None = None
         self._stopping = False
+        # One timer, stopped when the run finishes, so a late SIGKILL can
+        # never hit the next run.
+        self._kill_timer = QTimer(self)
+        self._kill_timer.setSingleShot(True)
+        self._kill_timer.timeout.connect(self._kill_after_grace)
         self._settings = QSettings("METIS", "TestRunner")
         self._build_ui()
         self._load_settings()
@@ -2572,29 +2577,35 @@ class RunTab(WorkerHost, QWidget):
         self.stop_btn.setEnabled(False)
 
     def _stop(self) -> None:
-        """Ask the run to stop, then insist.
+        """Ask the run to stop, then insist — without blocking the GUI.
 
         SIGKILL alone (the old behaviour) skipped run_metis's own cleanup, so
         the EDPS server stayed up on its port, ~/.edps/application.properties
         stayed patched by --prefer-masters, and the temp sim script leaked.
-        SIGTERM lets that `finally` run; the kill is the fallback.
+        run_metis turns SIGTERM into a clean unwind; the kill is the fallback.
+        Waiting here used to freeze the window, so the cleanup's own output
+        only appeared once it was over.
         """
         if not self._process:
             return
         if self._process.state() == QProcess.ProcessState.NotRunning:
             return
         self._stopping = True
+        self.stop_btn.setEnabled(False)
         log_append(self.log_view, "\nStopping — waiting for cleanup…\n", "yellow")
         self._process.terminate()
-        if not self._process.waitForFinished(self.STOP_GRACE_MS):
-            log_append(
-                self.log_view,
-                "Cleanup did not finish in time; killing the process.\n"
-                "Check for a stray EDPS server if the next run misbehaves.\n",
-                "red",
-            )
-            self._process.kill()
-            self._process.waitForFinished(2000)
+        self._kill_timer.start(self.STOP_GRACE_MS)
+
+    def _kill_after_grace(self) -> None:
+        if self._process is None or self._process.state() == QProcess.ProcessState.NotRunning:
+            return
+        log_append(
+            self.log_view,
+            "Cleanup did not finish in time; killing the process.\n"
+            "Check for a stray EDPS server if the next run misbehaves.\n",
+            "red",
+        )
+        self._process.kill()
 
     @staticmethod
     def _strip_ansi(text: str) -> str:
@@ -2609,6 +2620,7 @@ class RunTab(WorkerHost, QWidget):
         log_append(self.log_view, self._strip_ansi(data), "orange")
 
     def _on_finished(self, exit_code: int, status) -> None:
+        self._kill_timer.stop()
         self.run_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         if self._stopping:

@@ -10,6 +10,7 @@ Run with:
 """
 
 import argparse
+import os
 import subprocess
 import sys
 import textwrap
@@ -1594,6 +1595,81 @@ class TestCliInterrupt:
         with pytest.raises(SystemExit) as exc:
             rm.cli()
         assert exc.value.code == 130
+
+    def test_terminated_exits_143(self, monkeypatch):
+        monkeypatch.setattr(rm, "main", lambda: (_ for _ in ()).throw(rm.Terminated))
+        with pytest.raises(SystemExit) as exc:
+            rm.cli()
+        assert exc.value.code == 143
+
+
+_SIGTERM_DRIVER = """
+import subprocess, sys
+from metis_test_runner import run_metis as rm
+
+fake_edps, marker, ready, pid_file = sys.argv[1:5]
+grandchild = (
+    "import subprocess, time\\n"
+    f"p = subprocess.Popen(['sleep', '60']); open({pid_file!r}, 'w').write(str(p.pid))\\n"
+    f"open({ready!r}, 'w').close(); time.sleep(60)"
+)
+
+def main():
+    with rm.edps_session([sys.executable, fake_edps, marker], None, None):
+        rm._run_child([sys.executable, "-c", grandchild])
+
+rm.main = main
+rm.cli()
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+class TestSigtermCleanup:
+    """The GUI's Stop sends SIGTERM; Python's default action skipped every
+    ``finally`` and left the simulation / EDPS children running."""
+
+    def _alive(self, pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        return True
+
+    def test_sigterm_runs_cleanup_and_kills_the_process_group(self, tmp_path):
+        import time
+
+        fake_edps = tmp_path / "edps.py"
+        fake_edps.write_text("import sys\nif '-s' in sys.argv: open(sys.argv[1], 'w').write('stopped')\n")
+        driver = tmp_path / "driver.py"
+        driver.write_text(_SIGTERM_DRIVER)
+        marker, ready, pid_file = tmp_path / "stopped", tmp_path / "ready", tmp_path / "pid"
+
+        proc = subprocess.Popen(
+            [sys.executable, str(driver), str(fake_edps), str(marker), str(ready), str(pid_file)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        try:
+            deadline = time.monotonic() + 15
+            while not ready.exists():
+                assert proc.poll() is None, proc.stdout.read()
+                assert time.monotonic() < deadline, "stand-in never got ready"
+                time.sleep(0.05)
+            grandchild = int(pid_file.read_text())
+
+            proc.terminate()
+            out = proc.communicate(timeout=20)[0].decode()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+
+        assert proc.returncode == 143, out
+        assert marker.read_text() == "stopped", out  # edps_session's `edps -s` ran
+        assert "Interrupted" in out and "Stopped." in out
+        deadline = time.monotonic() + 5
+        while self._alive(grandchild) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not self._alive(grandchild)
 
 
 class TestCorruptFitsAreReported:

@@ -44,6 +44,7 @@ import contextlib
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -869,6 +870,42 @@ def _default_subprocess_env() -> dict[str, str]:
     return resolve_runtime_env("default")
 
 
+#: How long a child's process group gets to exit after SIGTERM before SIGKILL.
+_CHILD_STOP_S = 3
+
+
+def _stop_process_group(proc):
+    """SIGTERM *proc*'s process group, then SIGKILL it if still running."""
+    for sig, wait in ((signal.SIGTERM, _CHILD_STOP_S), (signal.SIGKILL, None)):
+        try:
+            os.killpg(proc.pid, sig)
+        except (AttributeError, OSError):  # no killpg (Windows), or already gone
+            proc.send_signal(sig)
+        try:
+            proc.wait(timeout=wait)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def _run_child(cmd, *, input=None, **kwargs):
+    """Run *cmd* to completion in its own process group; return its exit code.
+
+    A plain ``subprocess.run`` kills only the direct child when interrupted, so
+    the simulation's multiprocessing pool or EDPS's own children kept running
+    after Ctrl-C or the GUI's Stop. Here any exception (including
+    :class:`Terminated`) stops the whole group before it propagates.
+    """
+    stdin = subprocess.PIPE if input is not None else None
+    with subprocess.Popen(cmd, stdin=stdin, start_new_session=True, **kwargs) as proc:
+        try:
+            proc.communicate(input)
+        except BaseException:
+            _stop_process_group(proc)
+            raise
+    return proc.returncode
+
+
 def _run_simulation(runner, container, sim_code, sims_cwd):
     """Execute the simulation script in the appropriate environment.
 
@@ -880,10 +917,10 @@ def _run_simulation(runner, container, sim_code, sims_cwd):
     Returns the subprocess exit code.
     """
     if runner in ("docker", "podman"):
-        return subprocess.run(
+        return _run_child(
             [runner, "exec", "-i", "-w", str(sims_cwd), container, "python", "-"],
             input=sim_code.encode(),
-        ).returncode
+        )
 
     _check_default_env(runner)
 
@@ -896,16 +933,16 @@ def _run_simulation(runner, container, sim_code, sims_cwd):
     tmp.close()
     try:
         if runner == "default":
-            return subprocess.run(
+            return _run_child(
                 [sys.executable, tmp.name],
                 cwd=str(sims_cwd),
                 env=_default_subprocess_env(),
-            ).returncode
+            )
         else:  # native
-            return subprocess.run(
+            return _run_child(
                 ["python", tmp.name],
                 cwd=str(sims_cwd),
-            ).returncode
+            )
     finally:
         os.unlink(tmp.name)
 
@@ -1828,7 +1865,7 @@ def main(argv=None):
         with edps_session(edps_cmd, edps_cwd, edps_env, prefer_masters=args.prefer_masters, runner=runner):
             print("=== Starting EDPS server ===")
             print("=== Listing Workflows    ===")
-            rc = subprocess.run(edps_cmd + ["-lw"], cwd=edps_cwd, env=edps_env).returncode
+            rc = _run_child(edps_cmd + ["-lw"], cwd=edps_cwd, env=edps_env)
             if rc != 0:
                 sys.exit(f"Error: EDPS server failed to start (exit code {rc}).")
 
@@ -1849,11 +1886,11 @@ def main(argv=None):
             # Echo it: this is the hardest part of a run to reproduce by hand
             # and was the one thing never printed.
             print(f"  $ {' '.join(full_cmd)}")
-            pipeline_rc = subprocess.run(
+            pipeline_rc = _run_child(
                 full_cmd,
                 cwd=edps_cwd,
                 env=edps_env,
-            ).returncode
+            )
         if pipeline_rc != 0:
             sys.exit(f"Error: pipeline step failed (exit code {pipeline_rc}).")
 
@@ -1863,13 +1900,39 @@ def main(argv=None):
         report_products(pipe_out, runner)
 
 
+class Terminated(KeyboardInterrupt):
+    """Raised on SIGTERM (the GUI's Stop) so it unwinds like Ctrl-C.
+
+    Python's default SIGTERM action exits without running ``finally`` blocks,
+    which skipped edps_session's restore and ``edps -s`` and the temp-script
+    removal.
+    """
+
+
+_terminating = False
+
+
+def _on_sigterm(signum, frame):
+    global _terminating
+    if _terminating:  # a repeat must not abort the cleanup the first one started
+        return
+    _terminating = True
+    raise Terminated
+
+
 def cli() -> None:
-    """Console-script entry point: turn Ctrl-C into exit 130, not a traceback."""
+    """Console-script entry point: Ctrl-C exits 130 and SIGTERM 143, after cleanup."""
+    previous = signal.signal(signal.SIGTERM, _on_sigterm)
     try:
         main()
+    except Terminated:
+        print("\nStopped.", file=sys.stderr)
+        sys.exit(143)
     except KeyboardInterrupt:
         print("\nAborted.", file=sys.stderr)
         sys.exit(130)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
 
 
 if __name__ == "__main__":
