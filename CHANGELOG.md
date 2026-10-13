@@ -16,6 +16,7 @@
 - **`--csv-to-yaml` refuses to overwrite an existing YAML** next to the CSV.
   With `--csv-lines`, the YAML is now written next to the original CSV as
   `<name>_lines<START>-<END>.yaml` instead of under `<output>/sliced_inputs/`.
+  It no longer creates empty `sim/` / `pipeline/` output directories.
 - **Static calibration prototypes moved.** They are cached in
   `<data dir>/static_calibs/` (was `<output-dir>/../static_calibs/`, so
   `-o /output` meant `/static_calibs`), or in `<output-dir>/static_calibs/` for

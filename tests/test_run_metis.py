@@ -1905,17 +1905,28 @@ class TestMainCsvToYaml:
         assert "seq_lines6-8.yaml" in str(exc.value)
 
     def test_full_yaml_written_next_to_csv(self, tmp_path, monkeypatch):
-        argv, _out = self._argv(tmp_path)
+        argv, out = self._argv(tmp_path)
         self._fake_translate(monkeypatch, tmp_path / "seq.yaml")
         main(argv)
         assert (tmp_path / "seq.yaml").is_file()
+        assert not out.exists()  # a dry run used to leave empty sim/ and pipeline/ dirs
 
     def test_sliced_yaml_moved_next_to_original(self, tmp_path, monkeypatch):
+        import re
+
         argv, out = self._argv(tmp_path, "--csv-lines", "6:8")
         (tmp_path / "seq.yaml").write_text("keep: me\n")  # full YAML doesn't block a sliced run
-        self._fake_translate(monkeypatch, out / "sliced_inputs" / "seq.yaml")
+        sliced = []
+
+        def fake(runner, container, sim_code, sims_cwd):
+            sliced.append(Path(re.search(r"'([^']*sliced_inputs/seq\.csv)'", sim_code).group(1)))
+            assert sliced[0].is_file()
+            sliced[0].with_suffix(".yaml").write_text("x: 1\n")
+            return 0
+
+        monkeypatch.setattr(rm, "_run_simulation", fake)
         main(argv)
         assert (tmp_path / "seq_lines6-8.yaml").is_file()
         assert (tmp_path / "seq.yaml").read_text() == "keep: me\n"
-        assert not (out / "sliced_inputs" / "seq.yaml").exists()
-        assert (out / "sliced_inputs" / "seq.csv").is_file()
+        assert not out.exists()
+        assert not sliced[0].parent.parent.exists()  # the scratch dir is removed

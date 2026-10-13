@@ -1509,6 +1509,14 @@ def main(argv=None):
     # fmt: off
     output_root = Path(args.output).resolve() if args.output \
                   else Path.cwd() / "output" / ts
+    # fmt: on
+    # --csv-to-yaml keeps nothing but the YAML next to each CSV, so its
+    # working files (sliced CSVs, the sim dir) go to a scratch directory.
+    scratch = None
+    if args.csv_to_yaml:
+        scratch = tempfile.TemporaryDirectory(prefix="mtr-csv-to-yaml-")
+        output_root = Path(scratch.name)
+    # fmt: off
     sim_out  = output_root / "sim"
     pipe_out = output_root / "pipeline"
     # fmt: on
@@ -1534,17 +1542,18 @@ def main(argv=None):
 
     static_calibs_dir = static_calibs_dir_for(runner, output_root)
 
-    print(f"\nOutput root      : {output_root}")
-    if args.no_sim and args.pipeline_input and len(args.pipeline_input) > 1:
-        for i, d in enumerate(args.pipeline_input):
-            label = "  Pipeline input : " if i == 0 else "                   "
-            print(f"{label}{Path(d).resolve()}")
-    else:
-        print(f"  Pipeline input : {sim_out}")
-    print(f"  Pipeline output: {pipe_out}")
-    if args.static:
-        print(f"  Static calibs  : {static_calibs_dir}")
-    print()
+    if not args.csv_to_yaml:
+        print(f"\nOutput root      : {output_root}")
+        if args.no_sim and args.pipeline_input and len(args.pipeline_input) > 1:
+            for i, d in enumerate(args.pipeline_input):
+                label = "  Pipeline input : " if i == 0 else "                   "
+                print(f"{label}{Path(d).resolve()}")
+        else:
+            print(f"  Pipeline input : {sim_out}")
+        print(f"  Pipeline output: {pipe_out}")
+        if args.static:
+            print(f"  Static calibs  : {static_calibs_dir}")
+        print()
 
     # Power-user CSV row slicing: write a header-preserving sliced copy of each
     # CSV input and feed those to the simulation instead of the originals.  YAML
@@ -1600,6 +1609,7 @@ def main(argv=None):
             if produced != target:
                 shutil.move(produced, target)
             written.append(target)
+        scratch.cleanup()
         print("\nDone. YAML written to:")
         for t in written:
             print(f"  {t}")
