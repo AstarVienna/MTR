@@ -1916,7 +1916,9 @@ class TestRequireAstropy:
         monkeypatch.setattr(rm, "_check_default_env", lambda runner: None)
         (tmp_path / "fits").mkdir()
         (tmp_path / "sims" / "metis_simulations").mkdir(parents=True)
-        argv = ["--runner", "native", "--simulations-dir", str(tmp_path / "sims"), "--no-sim"]
+        # --no-static: generating static calibs would run `python` from PATH,
+        # which needs ScopeSim (absent in CI) and is not what this test is about.
+        argv = ["--runner", "native", "--simulations-dir", str(tmp_path / "sims"), "--no-sim", "--no-static"]
         argv += ["--pipeline-input", str(tmp_path / "fits"), "-o", str(tmp_path / "o")]
         with pytest.raises(SystemExit) as exc:
             main(argv)
