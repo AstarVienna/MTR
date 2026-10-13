@@ -17,6 +17,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 import traceback
 from collections.abc import Callable
 from pathlib import Path
@@ -287,6 +288,14 @@ def strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
+class Cancelled(Exception):
+    """The job was stopped on request (e.g. the window was closed)."""
+
+
+#: How often the watchdog polls ``should_stop``.
+_STOP_POLL_S = 0.2
+
+
 def stream_subprocess(
     cmd: list,
     *,
@@ -295,11 +304,13 @@ def stream_subprocess(
     stdin_text: str | None = None,
     timeout: int = 300,
     env: dict[str, str] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> None:
     """Run *cmd*, stream its output to *on_line*, and enforce *timeout*.
 
-    Raises ``RuntimeError`` on a non-zero exit and ``TimeoutError`` if the
-    deadline expires.
+    Raises ``RuntimeError`` on a non-zero exit, ``TimeoutError`` if the
+    deadline expires, and :class:`Cancelled` once *should_stop* returns true
+    (the process group is killed first).
 
     The timeout is enforced by a watchdog rather than ``proc.wait(timeout=…)``:
     draining ``proc.stdout`` blocks until EOF, so by the time ``wait`` is
@@ -313,6 +324,8 @@ def stream_subprocess(
     """
     on_line(f"$ {' '.join(str(c) for c in cmd)}\n", "")
     timed_out = threading.Event()
+    cancelled = threading.Event()
+    finished = threading.Event()
 
     with subprocess.Popen(
         [str(c) for c in cmd],
@@ -325,11 +338,19 @@ def stream_subprocess(
         start_new_session=True,
     ) as proc:
 
-        def _fire() -> None:
-            timed_out.set()
-            _kill_process_group(proc)
+        def _watch() -> None:
+            deadline = time.monotonic() + timeout
+            while not finished.wait(_STOP_POLL_S):
+                if should_stop is not None and should_stop():
+                    cancelled.set()
+                elif time.monotonic() >= deadline:
+                    timed_out.set()
+                else:
+                    continue
+                _kill_process_group(proc)
+                return
 
-        watchdog = threading.Timer(timeout, _fire)
+        watchdog = threading.Thread(target=_watch, daemon=True)
         watchdog.start()
         try:
             if stdin_text is not None:
@@ -347,10 +368,12 @@ def stream_subprocess(
                 on_line(strip_ansi(line), "")
             proc.wait()
         finally:
-            watchdog.cancel()
+            finished.set()
             if proc.poll() is None:  # loop exited early (e.g. an error)
                 _kill_process_group(proc)
 
+    if cancelled.is_set():
+        raise Cancelled(f"Stopped: {' '.join(str(c) for c in cmd)}")
     if timed_out.is_set():
         raise TimeoutError(f"Command timed out after {timeout}s: {' '.join(str(c) for c in cmd)}")
     if proc.returncode not in (0, None):
@@ -416,16 +439,21 @@ class Installer:
         refs: dict[Path, str] | None = None,
         force: set[Path] | None = None,
         log: LogFn | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> None:
         """*refs* maps a clone target to a branch/tag/commit ("" = default).
 
         *force* is the set of targets whose local modifications the user has
         explicitly agreed to discard.  A **set**, not a single flag: confirming
         a reset of one clone must never authorise destroying the other.
+
+        *should_stop* is polled during commands and between steps; once it
+        returns true the install stops (see :class:`Cancelled`).
         """
         self._refs = refs or {}
         self._force = force or set()
         self._log: LogFn = log or (lambda _text, _colour: None)
+        self._should_stop = should_stop or (lambda: False)
 
     def run(self) -> bool:
         """Run every step; return True on success. Failures are logged, not raised."""
@@ -495,6 +523,9 @@ class Installer:
 
             self._log("\n✓ Installation complete.\n", "green")
             return True
+        except Cancelled:
+            self._log("\n■ Installation stopped.\n", "yellow")
+            return False
         except Exception as exc:
             _log_exception(self._log, "Failed", exc)
             return False
@@ -502,6 +533,8 @@ class Installer:
     # ── private helpers ──────────────────────────────────────────────────────
 
     def _step(self, msg: str) -> None:
+        if self._should_stop():
+            raise Cancelled(msg)
         self._log(f"\n── {msg}\n", "cyan")
 
     def _ensure_pip(self) -> None:
@@ -520,6 +553,7 @@ class Installer:
             cwd=cwd,
             stdin_text=stdin_text,
             timeout=timeout,
+            should_stop=self._should_stop,
         )
 
     def _clone_or_update(self, url: str, target: Path, ref: str = "", force: bool = False) -> None:
@@ -943,11 +977,23 @@ class Uninstaller:
         "metis_simulations",
     ]
 
-    def __init__(self, log: LogFn | None = None) -> None:
+    def __init__(self, log: LogFn | None = None, should_stop: Callable[[], bool] | None = None) -> None:
         self._log: LogFn = log or (lambda _text, _colour: None)
+        self._should_stop = should_stop or (lambda: False)
 
     def run(self) -> bool:
-        """Run every step; return False if any of them failed."""
+        """Run every step; return False if any of them failed or it was stopped.
+
+        A stop request ends the uninstall before the next step rather than
+        letting it carry on into deleting the data directory.
+        """
+        try:
+            return self._run_steps()
+        except Cancelled:
+            self._log("\n■ Uninstall stopped.\n", "yellow")
+            return False
+
+    def _run_steps(self) -> bool:
         from . import credentials as credstore
 
         # _METISWISE_RUNTIME_DEPS is the single source of truth for what the
@@ -971,6 +1017,8 @@ class Uninstaller:
             # pip exits 0 for not-installed names ("WARNING: Skipping …"), so a
             # single call is safe whether or not MetisWISE was ever installed.
             self._run([sys.executable, "-m", "pip", "uninstall", "-y", *packages])
+        except Cancelled:
+            raise
         except Exception as exc:
             ok = False
             self._log(f"✗ pip uninstall failed: {exc}\n", "red")
@@ -980,6 +1028,8 @@ class Uninstaller:
         try:
             if not self._remove_data_dir():
                 ok = False
+        except Cancelled:
+            raise
         except Exception as exc:
             ok = False
             self._log(f"✗ Failed to remove data directory: {exc}\n", "red")
@@ -1021,6 +1071,8 @@ class Uninstaller:
     # ── private helpers ───────────────────────────────────────────────────
 
     def _step(self, msg: str) -> None:
+        if self._should_stop():
+            raise Cancelled(msg)
         self._log(f"\n── {msg}\n", "cyan")
 
     def _ensure_pip(self) -> None:
@@ -1031,7 +1083,7 @@ class Uninstaller:
             self._run(boot)
 
     def _run(self, cmd: list, timeout: int = 300) -> None:
-        stream_subprocess(cmd, on_line=self._log, timeout=timeout)
+        stream_subprocess(cmd, on_line=self._log, timeout=timeout, should_stop=self._should_stop)
 
     def _remove_data_dir(self) -> bool:
         """Delete the whole user data dir, sparing user-owned checkouts.

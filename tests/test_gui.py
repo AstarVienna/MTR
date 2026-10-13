@@ -711,7 +711,9 @@ class TestUploadWorker:
         summary = "".join(t for t, _ in emitted["log"])
         assert "2/2" in summary
 
-    def test_partial_failure_still_reports_success_signal(self, qapp, tmp_path):
+    def test_partial_failure_reports_failure(self, qapp, tmp_path):
+        """A duplicate counts as success (upload_file returns True), so a
+        False is a real failure and must not end in a green success."""
         from unittest.mock import patch as mock_patch
 
         from metis_test_runner.gui import UploadWorker
@@ -725,9 +727,8 @@ class TestUploadWorker:
         emitted = self._connect(worker)
         with mock_patch("metis_test_runner.archive.upload_file", side_effect=[True, False, True]):
             worker.run()
-        assert emitted["done"] == [True]
-        summary = "".join(t for t, _ in emitted["log"])
-        assert "2/3" in summary
+        assert emitted["done"] == [False]
+        assert ("\n✗ Uploaded 2/3 file(s).\n", "red") in emitted["log"]
 
     def test_exception_emits_false_done(self, qapp, tmp_path):
         from unittest.mock import patch as mock_patch
@@ -1363,7 +1364,7 @@ class TestGuiArgsParseAsCli:
 
 
 # ---------------------------------------------------------------------------
-# Run tab Stop
+# Run tab Stop, worker cancellation
 # ---------------------------------------------------------------------------
 
 
@@ -1429,3 +1430,67 @@ class TestRunTabStop:
         tab._stop()
         _wait_for(qapp, lambda: tab.run_btn.isEnabled())
         assert "killing the process" in tab.log_view.toPlainText()
+
+
+class TestInstallWorkerCancellation:
+    """No worker polled isInterruptionRequested, so closing the window
+    mid-install could not stop pip/git."""
+
+    def test_stop_workers_ends_the_install_and_its_children(self, qapp, monkeypatch, tmp_path):
+        import sys
+
+        pid_file = tmp_path / "pid"
+        code = (
+            "import subprocess, time\n"
+            f"p = subprocess.Popen(['sleep', '60']); open({str(pid_file)!r}, 'w').write(str(p.pid))\n"
+            "time.sleep(60)\n"
+        )
+
+        class FakeInstaller:
+            def __init__(self, *, refs, force, log, should_stop):
+                self._log, self._should_stop = log, should_stop
+
+            def run(self):
+                try:
+                    installer.stream_subprocess(
+                        [sys.executable, "-c", code], on_line=self._log, should_stop=self._should_stop
+                    )
+                except installer.Cancelled:
+                    return False
+                return True
+
+        monkeypatch.setattr(gui, "Installer", FakeInstaller)
+        host, worker = _Host(), gui.InstallWorker()
+        done = []
+        worker.done.connect(done.append)
+        host.track_worker(worker)
+        worker.start()
+        _wait_for(qapp, lambda: pid_file.exists() and pid_file.read_text())
+        host.stop_workers()
+        assert not worker.isRunning()
+        qapp.processEvents()
+        assert done == [False]
+        _wait_for(qapp, lambda: not _pid_alive(int(pid_file.read_text())), timeout=5)
+
+
+class TestDownloadWorker:
+    def _run(self, qapp, results):
+        from unittest.mock import patch as mock_patch
+
+        worker = gui.DownloadWorker(["a.fits", "b.fits"], Path("/tmp"))
+        done, log = [], []
+        worker.done.connect(done.append)
+        worker.log.connect(lambda t, c: log.append((t, c)))
+        with mock_patch("metis_test_runner.archive.download_file", side_effect=results):
+            worker.run()
+        return done, log
+
+    def test_all_downloaded(self, qapp):
+        done, log = self._run(qapp, [Path("a"), Path("b")])
+        assert done == [True]
+        assert ("\n✓ Downloaded 2/2 file(s).\n", "green") in log
+
+    def test_failed_download_is_not_reported_as_success(self, qapp):
+        done, log = self._run(qapp, [None, None])
+        assert done == [False]
+        assert ("\n✗ Downloaded 0/2 file(s).\n", "red") in log

@@ -68,6 +68,7 @@ from .installer import (
     REPOS,
     TARGET_A,
     TARGET_B,
+    Cancelled,
     Installer,
     Uninstaller,
     _describe_head,
@@ -76,6 +77,7 @@ from .installer import (
     _validate_ref,
     discard_summary,
     remote_refs,
+    stream_subprocess,
     strip_ansi,
     uninstall_summary,
 )
@@ -580,7 +582,10 @@ class InstallWorker(QThread):
         self._force = force
 
     def run(self) -> None:
-        self.done.emit(Installer(refs=self._refs, force=self._force, log=self.log.emit).run())
+        installer = Installer(
+            refs=self._refs, force=self._force, log=self.log.emit, should_stop=self.isInterruptionRequested
+        )
+        self.done.emit(installer.run())
 
 
 # ---------------------------------------------------------------------------
@@ -597,7 +602,7 @@ class UninstallWorker(QThread):
     # fmt: on
 
     def run(self) -> None:
-        self.done.emit(Uninstaller(log=self.log.emit).run())
+        self.done.emit(Uninstaller(log=self.log.emit, should_stop=self.isInterruptionRequested).run())
 
 
 def _resolve_run_metis_command() -> list[str]:
@@ -1029,6 +1034,9 @@ class MetisWISEInstallWorker(QThread):
     # the slot runs on the main thread (queued connection) and shows a dialog.
     needs_input = pyqtSignal(str)
 
+    #: Deadline for each pip command.
+    TIMEOUT_S = 1800
+
     def __init__(self, pip_credentials: str | None) -> None:
         """*pip_credentials* is the typed ``user:pass``, or None to use the
         entry stored in the OS keyring (resolved here, on the worker thread,
@@ -1067,22 +1075,22 @@ class MetisWISEInstallWorker(QThread):
             if boot:
                 cmds = [boot, *cmds]
             for cmd in cmds:
-                self.log.emit(f"$ {' '.join(cmd)}\n", "cyan")
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    env=os.environ | env_overrides,
-                )
-                for line in iter(proc.stdout.readline, ""):
-                    self.log.emit(line, "")
-                proc.wait()
-                if proc.returncode != 0:
-                    self.log.emit(
-                        f"\n✗ Install failed (exit code {proc.returncode}).\n",
-                        "red",
+                # Same runner as the Install tab: a timeout, a stop request
+                # from the window closing, and pip's children killed with it.
+                try:
+                    stream_subprocess(
+                        cmd,
+                        on_line=self.log.emit,
+                        env=os.environ | env_overrides,
+                        timeout=self.TIMEOUT_S,
+                        should_stop=self.isInterruptionRequested,
                     )
+                except Cancelled:
+                    self.log.emit("\n■ MetisWISE install stopped.\n", "yellow")
+                    self.done.emit(False)
+                    return
+                except RuntimeError as exc:
+                    self.log.emit(f"\n✗ Install failed: {exc}\n", "red")
                     self.done.emit(False)
                     return
             if self._credentials is not None:
@@ -1242,6 +1250,8 @@ class DownloadWorker(QThread):
             total = len(self._filenames)
             downloaded = 0
             for i, fn in enumerate(self._filenames, 1):
+                if self.isInterruptionRequested():
+                    break
                 self.progress.emit(i, total)
                 path = download_file(
                     fn,
@@ -1250,11 +1260,12 @@ class DownloadWorker(QThread):
                 )
                 if path:
                     downloaded += 1
+            ok = downloaded == total
             self.log.emit(
-                f"\n✓ Downloaded {downloaded}/{total} file(s).\n",
-                "green",
+                f"\n{'✓' if ok else '✗'} Downloaded {downloaded}/{total} file(s).\n",
+                "green" if ok else "red",
             )
-            self.done.emit(True)
+            self.done.emit(ok)
         except Exception as exc:
             _log_exception(self.log.emit, "Download failed", exc)
             self.done.emit(False)
@@ -1280,6 +1291,8 @@ class UploadWorker(QThread):
             total = len(self._entries)
             uploaded = 0
             for i, (path, class_name) in enumerate(self._entries, 1):
+                if self.isInterruptionRequested():
+                    break
                 self.progress.emit(i, total)
                 ok = upload_file(
                     path,
@@ -1288,11 +1301,12 @@ class UploadWorker(QThread):
                 )
                 if ok:
                     uploaded += 1
+            ok = uploaded == total
             self.log.emit(
-                f"\n✓ Uploaded {uploaded}/{total} file(s).\n",
-                "green",
+                f"\n{'✓' if ok else '✗'} Uploaded {uploaded}/{total} file(s).\n",
+                "green" if ok else "red",
             )
-            self.done.emit(True)
+            self.done.emit(ok)
         except Exception as exc:
             _log_exception(self.log.emit, "Upload failed", exc)
             self.done.emit(False)

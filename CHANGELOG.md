@@ -36,6 +36,10 @@
   like on Ctrl-C (exit 143), and every child runs in its own process group that
   is stopped with it. Stop no longer freezes the window while waiting, and the
   grace period before the kill is 20 s (the cleanup can take up to 18 s).
+- **Closing the window stops a running install, uninstall or MetisWISE
+  install.** No worker checked for the stop request; the commands now do, and
+  their process groups are killed. An uninstall stops before the next step
+  instead of carrying on into deleting the data directory.
 - **Archive auto-fetch and Archive tab used product names that do not exist**
   (`MASTER_IFU_RSRF`, `LM_LSS_MASTER_RSRF`, `*_LSS_TRACE_TABLE`,
   `*_LSS_WAVECAL`, …); they now match METIS_Pipeline and the DRLD (`RSRF_IFU`,
@@ -51,6 +55,7 @@
   message instead of a traceback.
 - **Without astropy**, `--no-sim`, CSV-only and auto-fetch runs say astropy is
   missing instead of "could not identify any METIS sub-workflow".
+- **Download / Upload report failures as failures**; they always said success.
 
 ### Developer
 - Removed unused code: `infer_workflow`, `infer_workflow_from_fits`,
@@ -165,7 +170,8 @@
 - **Closing the window during a job is safe.** Only the ref workers were
   stopped, so quitting mid-install destroyed a tab out from under a live
   `QThread`. All workers are now tracked, the window asks before quitting on a
-  running job, and the pipeline process is stopped.
+  running job, and the pipeline process is stopped. *(Correction: no worker
+  acted on the stop request, so pip/git kept running; fixed in Unreleased.)*
 - **A second archive action can no longer abort the first.** The Archive tab
   kept one worker slot and only disabled the button for the action in flight,
   so e.g. "Save & Test" during a MetisWISE install dropped the last reference

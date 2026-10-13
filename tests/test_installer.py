@@ -1436,6 +1436,45 @@ class TestStreamSubprocess:
         )
         assert any("quick" in line for line in out)
 
+    def test_should_stop_cancels_a_silent_child(self):
+        """A stop request must work even when the child prints nothing."""
+        _, on_line = self._lines()
+        start = time.monotonic()
+        with pytest.raises(installer.Cancelled):
+            installer.stream_subprocess(
+                [sys.executable, "-c", "import time; time.sleep(60)"],
+                on_line=on_line,
+                should_stop=lambda: time.monotonic() - start > 0.3,
+            )
+        assert time.monotonic() - start < 10
+
+
+class TestStopRequests:
+    """The GUI passes QThread.isInterruptionRequested as should_stop."""
+
+    def test_installer_stops_before_the_first_step(self, monkeypatch):
+        monkeypatch.setattr(installer, "_git", lambda *a, **k: pytest.fail("git ran"))
+        out = []
+        ok = installer.Installer(log=lambda t, c: out.append(t), should_stop=lambda: True).run()
+        assert ok is False
+        assert "Installation stopped" in "".join(out)
+
+    def test_uninstall_stops_instead_of_deleting_the_data_dir(self, monkeypatch):
+        """A cancelled pip step used to be just another failure, after which the
+        uninstall carried on into removing the data directory."""
+
+        def cancelled(self, cmd, timeout=300):
+            raise installer.Cancelled("stop")
+
+        monkeypatch.setattr(installer.Uninstaller, "_run", cancelled)
+        monkeypatch.setattr(installer, "ensurepip_command_if_needed", lambda: None)
+        monkeypatch.setattr(
+            installer.Uninstaller, "_remove_data_dir", lambda self: pytest.fail("data dir removed")
+        )
+        out = []
+        assert installer.Uninstaller(log=lambda t, c: out.append(t)).run() is False
+        assert "Uninstall stopped" in "".join(out)
+
 
 # ---------------------------------------------------------------------------
 # Headless guarantee — no PyQt6 on the mtr-install / mtr-uninstall path
