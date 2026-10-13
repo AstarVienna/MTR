@@ -29,6 +29,10 @@ pipx install metis-test-runner          # needs Python 3.12 or 3.13
 mtr                                     # launches the GUI
 ```
 
+`mtr --version` and `mtr --help` print and exit. `mtr --pink` starts with the
+pink theme; `mtr --smoke-test` starts the GUI and quits at once (a check that it
+can start).
+
 Then, in the GUI:
 
 1. **Install tab → *Install / Update*.** Clones `METIS_Pipeline` and

@@ -27,6 +27,8 @@
   simulate. `tech: LMS` in a YAML is still mapped to the IFU workflow, with a
   warning. The README quickstart uses `small_test.yaml`; `LMS_RAD_06.yaml` is a
   160-block DETLIN series, not a full calibration + science chain.
+- **`mtr --version` / `mtr --help`** print and exit instead of opening the GUI,
+  and `python -m metis_test_runner` goes through the same launcher as `mtr`.
 
 ### Fixed
 - **Stop now cleans up.** SIGTERM (the Run tab's Stop) used Python's default

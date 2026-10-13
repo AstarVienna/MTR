@@ -64,3 +64,28 @@ def test_a_real_missing_pyqt6_is_recognised():
     )
     assert cp.returncode == 1
     assert "needs PyQt6" in cp.stderr
+
+
+@pytest.mark.parametrize("flag", ["--version", "--help"])
+def test_version_and_help_exit_before_the_gui(monkeypatch, capsys, flag):
+    """Both used to be handed to QApplication, which opened the GUI instead."""
+    monkeypatch.setattr(launcher, "_import_gui", lambda: pytest.fail("GUI imported"))
+    with pytest.raises(SystemExit) as err:
+        launcher.main([flag])
+    assert err.value.code == 0
+    out = capsys.readouterr().out
+    assert ("mtr " in out) if flag == "--version" else ("--smoke-test" in out and "--pink" in out)
+
+
+def test_qt_options_pass_through(monkeypatch):
+    started = []
+    monkeypatch.setattr(launcher, "_import_gui", lambda: lambda: started.append(True))
+    launcher.main(["-platform", "offscreen", "--pink"])
+    assert started == [True]
+
+
+def test_python_m_uses_the_launcher():
+    cp = subprocess.run(
+        [sys.executable, "-m", "metis_test_runner", "--version"], capture_output=True, text=True, timeout=60
+    )
+    assert cp.returncode == 0 and cp.stdout.startswith("mtr ")

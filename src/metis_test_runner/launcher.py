@@ -19,7 +19,27 @@ def _import_gui():
     return main
 
 
-def main() -> None:
+def _parse_args(argv: list[str]) -> None:
+    """Handle --help / --version before Qt starts; Qt's own options pass through."""
+    import argparse
+
+    from . import __version__
+
+    parser = argparse.ArgumentParser(
+        prog="mtr",
+        description="METIS Test Runner GUI. Unrecognised options go to Qt (e.g. -platform offscreen).",
+        allow_abbrev=False,
+    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument("--pink", action="store_true", help="start with the pink theme")
+    parser.add_argument(
+        "--smoke-test", action="store_true", help="start, then quit at once (checks that the GUI can start)"
+    )
+    parser.parse_known_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    _parse_args(sys.argv[1:] if argv is None else argv)
     try:
         gui_main = _import_gui()
     except ModuleNotFoundError as exc:
