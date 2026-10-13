@@ -1449,6 +1449,24 @@ class TestStreamSubprocess:
         assert time.monotonic() - start < 10
 
 
+class TestStreamDecoder:
+    def test_multibyte_character_split_across_chunks(self):
+        dec = installer.StreamDecoder()
+        data = "Stopping — done ✓\n".encode()
+        cut = data.index("—".encode()) + 1
+        assert dec.feed(data[:cut]) + dec.feed(data[cut:]) + dec.flush() == "Stopping — done ✓\n"
+
+    def test_escape_sequence_split_across_chunks(self):
+        dec = installer.StreamDecoder()
+        assert dec.feed(b"red: \x1b[3") == "red: "
+        assert dec.feed(b"1mtext\x1b[0m\n") == "text\n"
+
+    def test_lone_escape_is_flushed(self):
+        dec = installer.StreamDecoder()
+        assert dec.feed(b"x\x1b") == "x"
+        assert dec.flush() == "\x1b"
+
+
 class TestStopRequests:
     """The GUI passes QThread.isInterruptionRequested as should_stop."""
 

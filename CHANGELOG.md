@@ -40,6 +40,8 @@
   install.** No worker checked for the stop request; the commands now do, and
   their process groups are killed. An uninstall stops before the next step
   instead of carrying on into deleting the data directory.
+- **Run-tab log**: a multi-byte character or an escape sequence split across
+  two reads is no longer garbled.
 - **Archive auto-fetch and Archive tab used product names that do not exist**
   (`MASTER_IFU_RSRF`, `LM_LSS_MASTER_RSRF`, `*_LSS_TRACE_TABLE`,
   `*_LSS_WAVECAL`, …); they now match METIS_Pipeline and the DRLD (`RSRF_IFU`,

@@ -70,6 +70,7 @@ from .installer import (
     TARGET_B,
     Cancelled,
     Installer,
+    StreamDecoder,
     Uninstaller,
     _describe_head,
     _dirty_files,
@@ -2076,6 +2077,7 @@ class RunTab(WorkerHost, QWidget):
         super().__init__()
         self._process: QProcess | None = None
         self._stopping = False
+        self._decoders = {"stdout": StreamDecoder(), "stderr": StreamDecoder()}
         # One timer, stopped when the run finishes, so a late SIGKILL can
         # never hit the next run.
         self._kill_timer = QTimer(self)
@@ -2534,6 +2536,7 @@ class RunTab(WorkerHost, QWidget):
         self._save_settings()
         self.log_view.clear()
         self._stopping = False
+        self._decoders = {"stdout": StreamDecoder(), "stderr": StreamDecoder()}
 
         args = self._build_cmd_args()
 
@@ -2626,15 +2629,19 @@ class RunTab(WorkerHost, QWidget):
         return strip_ansi(text)
 
     def _on_stdout(self) -> None:
-        data = self._process.readAllStandardOutput().data().decode(errors="replace")
-        log_append(self.log_view, self._strip_ansi(data))
+        data = self._process.readAllStandardOutput().data()
+        log_append(self.log_view, self._decoders["stdout"].feed(data))
 
     def _on_stderr(self) -> None:
-        data = self._process.readAllStandardError().data().decode(errors="replace")
-        log_append(self.log_view, self._strip_ansi(data), "orange")
+        data = self._process.readAllStandardError().data()
+        log_append(self.log_view, self._decoders["stderr"].feed(data), "orange")
 
     def _on_finished(self, exit_code: int, status) -> None:
         self._kill_timer.stop()
+        for stream, colour in (("stdout", ""), ("stderr", "orange")):
+            tail = self._decoders[stream].flush()
+            if tail:
+                log_append(self.log_view, tail, colour)
         self.run_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         if self._stopping:

@@ -9,6 +9,7 @@ which headless servers often lack.
 from __future__ import annotations
 
 import argparse
+import codecs
 import hashlib
 import os
 import re
@@ -286,6 +287,34 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 def strip_ansi(text: str) -> str:
     """Remove ANSI colour/cursor escapes from subprocess output."""
     return _ANSI_RE.sub("", text)
+
+
+class StreamDecoder:
+    """Decode a byte stream read in arbitrary chunks and strip ANSI escapes.
+
+    Decoding each chunk on its own turned a multi-byte character split across
+    two reads into U+FFFD, and let an escape split across reads leak into the
+    log; both are carried over to the next chunk instead.
+    """
+
+    _MAX_ESCAPE = 16
+
+    def __init__(self) -> None:
+        self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        self._pending = ""
+
+    def feed(self, data: bytes) -> str:
+        text = self._pending + self._decoder.decode(data)
+        self._pending = ""
+        esc = text.rfind("\x1b")
+        if esc != -1 and len(text) - esc < self._MAX_ESCAPE and not _ANSI_RE.match(text, esc):
+            text, self._pending = text[:esc], text[esc:]
+        return strip_ansi(text)
+
+    def flush(self) -> str:
+        text = self._pending + self._decoder.decode(b"", final=True)
+        self._pending = ""
+        return strip_ansi(text)
 
 
 class Cancelled(Exception):
