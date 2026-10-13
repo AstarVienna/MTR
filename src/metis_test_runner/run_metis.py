@@ -364,6 +364,13 @@ def scan_yaml_inputs(yaml_files):
     whose tech/mode are unrecognised are silently skipped (their tags are
     still collected); the caller is expected to handle an empty
     *sub_workflows* set explicitly.
+
+    *has_science* is true for a ``catg: SCIENCE`` block or for any tag the
+    pipeline reduces under the science meta target (e.g. CALIB std frames),
+    the same rule the FITS path uses via :func:`derive_has_science`.
+
+    Raises ``ValueError`` naming the file for unparsable YAML or a block whose
+    ``properties`` is not a mapping.
     """
     has_science = False
     data_tags = set()
@@ -372,26 +379,31 @@ def scan_yaml_inputs(yaml_files):
 
     for path in yaml_files:
         with open(path) as fh:
-            data = yaml.safe_load(fh)
+            try:
+                data = yaml.safe_load(fh)
+            except yaml.YAMLError as exc:
+                raise ValueError(f"{path}: not valid YAML: {exc}") from exc
         if not isinstance(data, dict):
             continue
-        for block in data.values():
+        for name, block in data.items():
             if not isinstance(block, dict):
                 continue
             tag = block.get("do.catg", "")
             if tag:
                 data_tags.add(tag)
             props = block.get("properties", {})
-            if props.get("catg", "").upper() == "SCIENCE":
+            if not isinstance(props, dict):
+                raise ValueError(f"{path}: block {name!r}: 'properties' must be a mapping, got {props!r}")
+            if str(props.get("catg") or "").upper() == "SCIENCE":
                 has_science = True
             wf = None
-            tech = props.get("tech", "")
+            tech = str(props.get("tech") or "")
             if tech:
                 wf = TECH_TO_WORKFLOW.get(_normalize_tech(tech))
                 if _normalize_tech(tech) == "LMS" and path not in legacy_tech:
                     legacy_tech.append(path)
             if wf is None:
-                mode = block.get("mode", "")
+                mode = str(block.get("mode") or "")
                 if mode:
                     wf = MODE_TO_WORKFLOW.get(_normalize_mode(mode))
             if wf:
@@ -403,7 +415,24 @@ def scan_yaml_inputs(yaml_files):
             "(and 'nd_filter_name', not 'ndfilter_name').",
             file=sys.stderr,
         )
+    has_science = has_science or derive_has_science(data_tags, sub_workflows)
     return data_tags, has_science, sub_workflows
+
+
+def _require_astropy(purpose):
+    """Exit with an actionable message if astropy is missing.
+
+    scan_fits_inputs degrades to empty results without it, which callers then
+    reported as "could not identify any METIS sub-workflow".
+    """
+    try:
+        import astropy.io.fits  # noqa: F401
+    except ImportError:
+        sys.exit(
+            f"Error: {purpose} needs astropy, which is not installed in MTR's environment.\n"
+            "Install it with `pipx inject metis-test-runner astropy` "
+            "(or `pip install 'metis-test-runner[archive]'`)."
+        )
 
 
 def scan_fits_inputs(fits_dir):
@@ -1418,7 +1447,10 @@ def main(argv=None):
             print("  Workflow      : (auto-detected from simulated FITS; CSV-only run)")
             print("  Data tags     : (will be inferred from FITS headers)")
         else:
-            yaml_tags, has_science, yaml_sub_workflows = scan_yaml_inputs(yaml_subset)
+            try:
+                yaml_tags, has_science, yaml_sub_workflows = scan_yaml_inputs(yaml_subset)
+            except ValueError as exc:
+                sys.exit(f"Error: {exc}")
             if not yaml_sub_workflows:
                 sys.exit(
                     "Error: could not identify any METIS sub-workflow from the "
@@ -1604,6 +1636,7 @@ def main(argv=None):
         fetch_tags = set(yaml_tags)
         fetch_sub_workflows = set(yaml_sub_workflows)
         if sim_out.is_dir():
+            _require_astropy("--auto-fetch-calibrations")
             fits_tags_now, fits_wfs_now = scan_fits_inputs(sim_out)
             fetch_tags |= fits_tags_now
             fetch_sub_workflows |= fits_wfs_now
@@ -1669,6 +1702,7 @@ def main(argv=None):
             )
             fits_tags = set()
             active_sub_workflows = set()
+            _require_astropy("Reading the input FITS headers (--no-sim)")
             for d in input_dirs:
                 tags, wfs = scan_fits_inputs(d)
                 fits_tags |= tags
@@ -1698,6 +1732,7 @@ def main(argv=None):
             # simulated, mirroring the --no-sim path, so the correct calibration
             # target gets scheduled for a CSV-only run.
             if not data_tags or not active_sub_workflows:
+                _require_astropy("Identifying the workflow of a CSV-only run from the simulated FITS")
                 fits_tags, fits_wfs = scan_fits_inputs(sim_out)
                 if not data_tags:
                     data_tags = fits_tags
@@ -1707,11 +1742,7 @@ def main(argv=None):
                     print(f"  Data tags     : {sorted(data_tags)}  (inferred from simulated FITS)")
                 if active_sub_workflows:
                     print(f"  Sub-workflows : {sorted(active_sub_workflows)}  (inferred from simulated FITS)")
-                has_science = any(
-                    meta == "science" and tag in data_tags
-                    for wf in active_sub_workflows
-                    for _, tag, meta in WORKFLOW_TASK_CHAIN.get(wf, [])
-                )
+                has_science = derive_has_science(data_tags, active_sub_workflows)
             if not active_sub_workflows:
                 sys.exit("Error: could not identify any METIS sub-workflow from the simulated FITS headers.")
 

@@ -32,6 +32,12 @@
 - **FITS classification** knows the twilight-flat, chop-home, off-axis-PSF, LSS
   sky and N-band pupil frames, and accepts sky frames with DPR.CATG `CALIB` as
   well as `SCIENCE`, as the pipeline does.
+- **A YAML with only std or pupil frames gets `-m science`**, like the same data
+  run with `--no-sim`; it was given no EDPS target.
+- **Malformed YAML** (a syntax error, an empty `properties:`) gives an `Error:`
+  message instead of a traceback.
+- **Without astropy**, `--no-sim`, CSV-only and auto-fetch runs say astropy is
+  missing instead of "could not identify any METIS sub-workflow".
 
 ### Developer
 - Removed unused code: `infer_workflow`, `infer_workflow_from_fits`,

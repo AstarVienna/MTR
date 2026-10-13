@@ -258,6 +258,28 @@ class TestScanYamlInputs:
         assert has_sci is True
         assert wfs == {"metis.metis_ifu_wkf"}
 
+    @pytest.mark.parametrize(
+        ("tag", "catg", "tech"),
+        [("LM_IMAGE_STD_RAW", "CALIB", "IMAGE,LM"), ("LM_PUPIL_RAW", "TECHNICAL", "PUP,LM")],
+    )
+    def test_science_target_raws_without_catg_science(self, tmp_path, tag, catg, tech):
+        """Std and pupil frames are reduced under -m science, like on the FITS path."""
+        f = _write_yaml(
+            tmp_path,
+            "obs.yaml",
+            f"""
+            block1:
+              do.catg: {tag}
+              properties:
+                tech: "{tech}"
+                catg: "{catg}"
+        """,
+        )
+        tags, has_sci, wfs = scan_yaml_inputs([f])
+        assert has_sci is True
+        assert has_sci == rm.derive_has_science(tags, wfs)
+        assert infer_edps_targets_for_workflows(tags, has_sci, wfs)[-2:] == ["-m", "science"]
+
     def test_legacy_lms_tech_is_accepted_with_a_warning(self, tmp_path, capsys):
         body = '\n            block{i}:\n              do.catg: DARK_IFU_RAW\n              properties:\n                tech: "{tech}"\n'
         f = _write_yaml(tmp_path, "obs.yaml", body.format(i=1, tech="LMS") + body.format(i=2, tech="LMS"))
@@ -267,6 +289,26 @@ class TestScanYamlInputs:
         g = _write_yaml(tmp_path, "new.yaml", body.format(i=1, tech="IFU"))
         scan_yaml_inputs([g])
         assert "LMS" not in capsys.readouterr().err
+
+    @pytest.mark.parametrize(
+        ("content", "message"),
+        [
+            ("block1: [unclosed\n", "not valid YAML"),
+            ("block1:\n  do.catg: X\n  properties:\n", "'properties' must be a mapping"),
+            ("block1:\n  do.catg: X\n  properties: [1, 2]\n", "'properties' must be a mapping"),
+        ],
+    )
+    def test_malformed_yaml_raises_value_error_naming_the_file(self, tmp_path, content, message):
+        f = tmp_path / "bad.yaml"
+        f.write_text(content)
+        with pytest.raises(ValueError, match=message) as exc:
+            scan_yaml_inputs([f])
+        assert "bad.yaml" in str(exc.value)
+
+    def test_null_catg_and_tech_are_tolerated(self, tmp_path):
+        f = tmp_path / "obs.yaml"
+        f.write_text("block1:\n  do.catg: X\n  properties:\n    catg:\n    tech:\n")
+        assert scan_yaml_inputs([f]) == ({"X"}, False, set())
 
     @pytest.mark.parametrize(
         ("lines", "workflow"),
@@ -1706,6 +1748,45 @@ class TestMainHardlinkPreflight:
         argv, _out = self._argv(tmp_path, "--no-pipeline")
         with pytest.raises(Stop):
             main(argv)
+
+
+class TestRequireAstropy:
+    def test_missing_astropy_names_the_cause(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "astropy.io.fits", None)  # makes the import fail
+        with pytest.raises(SystemExit) as exc:
+            rm._require_astropy("--no-sim")
+        assert "needs astropy" in str(exc.value) and "pipx inject" in str(exc.value)
+
+    def test_no_sim_run_without_astropy(self, tmp_path, monkeypatch):
+        """Used to fail with "could not identify any METIS sub-workflow"."""
+        monkeypatch.setitem(sys.modules, "astropy.io.fits", None)
+        monkeypatch.setattr(rm, "hardlink_mismatch", lambda pipe_out: None)
+        monkeypatch.setattr(rm, "_check_default_env", lambda runner: None)
+        (tmp_path / "fits").mkdir()
+        (tmp_path / "sims" / "metis_simulations").mkdir(parents=True)
+        argv = ["--runner", "native", "--simulations-dir", str(tmp_path / "sims"), "--no-sim"]
+        argv += ["--pipeline-input", str(tmp_path / "fits"), "-o", str(tmp_path / "o")]
+        with pytest.raises(SystemExit) as exc:
+            main(argv)
+        assert "needs astropy" in str(exc.value)
+
+    def test_present_astropy_passes(self):
+        pytest.importorskip("astropy")
+        rm._require_astropy("anything")
+
+
+class TestMainMalformedYaml:
+    def test_reports_an_error_not_a_traceback(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(rm, "_run_simulation", MagicMock(side_effect=AssertionError("simulated")))
+        monkeypatch.setattr(rm, "hardlink_mismatch", lambda pipe_out: None)
+        sims = tmp_path / "sims"
+        (sims / "metis_simulations").mkdir(parents=True)
+        bad = tmp_path / "bad.yaml"
+        bad.write_text("block1:\n  do.catg: X\n  properties:\n")
+        argv = ["--runner", "native", "--simulations-dir", str(sims), "-o", str(tmp_path / "out"), str(bad)]
+        with pytest.raises(SystemExit) as exc:
+            main(argv)
+        assert str(exc.value).startswith("Error: ") and "bad.yaml" in str(exc.value)
 
 
 class TestCsvYamlTarget:
