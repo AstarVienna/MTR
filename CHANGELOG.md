@@ -59,6 +59,12 @@
   message instead of a traceback.
 - **Without astropy**, `--no-sim`, CSV-only and auto-fetch runs say astropy is
   missing instead of "could not identify any METIS sub-workflow".
+- **An apostrophe in the instrument-packages path** no longer breaks the
+  generated simulation script.
+- **`--prefer-masters` writes `application.properties` atomically**, keeping
+  its permissions and a symlink.
+- **Uninstall refuses an unsafe EDPS `base_dir`** (relative, `/`, `$HOME`, …)
+  instead of deleting it.
 - **Download / Upload report failures as failures**; they always said success.
 
 ### Developer

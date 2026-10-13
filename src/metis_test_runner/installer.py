@@ -1196,6 +1196,13 @@ class Uninstaller:
         # No backup → install owns everything here. Resolve the bookkeeping dir
         # from the config *before* deleting it.
         base_dir = self._edps_base_dir(props)
+        # base_dir comes from a user-editable file: vet both targets before
+        # deleting either, with the same guard as the data directory.
+        if not base_dir.is_absolute():
+            raise RuntimeError(f"Refusing to remove base_dir={base_dir}: not an absolute path (see {props})")
+        for target in (edps_dir, base_dir):
+            if target.exists():
+                _assert_safe_to_remove(target)
         for target in (edps_dir, base_dir):
             if target.exists():
                 shutil.rmtree(target)

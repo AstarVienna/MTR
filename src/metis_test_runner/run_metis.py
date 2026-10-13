@@ -45,6 +45,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -718,7 +719,7 @@ def _build_sim_script(
             "from pathlib import Path as _Path",
             f"_inst_dir = _Path({inst_pkgs_path!r})",
             "if not (_inst_dir / 'METIS').is_dir():",
-            f"    print('Instrument packages not found at {inst_pkgs_path}. Downloading \u2026')",
+            "    print(f'Instrument packages not found at {_inst_dir}. Downloading \u2026')",
             "    _inst_dir.mkdir(parents=True, exist_ok=True)",
             "    sim.download_packages('METIS', release='2026-04-17')",
             "    sim.download_packages('ELT', release='2025-10-26')",
@@ -785,7 +786,7 @@ def _build_sim_script(
         ]
         if inst_pkgs_path is not None:
             lines.append(
-                f"            print('  Instrument packages path: {inst_pkgs_path}', file=_sys.stderr)"
+                f"            print('  Instrument packages path:', {inst_pkgs_path!r}, file=_sys.stderr)"
             )
         else:
             lines.append(
@@ -978,7 +979,10 @@ def _set_association_preference(value: str) -> str | None:
         text,
         flags=re.MULTILINE,
     )
-    props.write_text(new_text)
+    # Atomic, so an interrupted run never leaves the user's EDPS config empty;
+    # resolved and chmod-ed so a symlinked file and its permissions survive.
+    target = props.resolve()
+    paths.write_text_atomic(target, new_text, mode=stat.S_IMODE(target.stat().st_mode))
     return original
 
 

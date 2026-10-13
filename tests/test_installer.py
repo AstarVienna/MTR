@@ -489,6 +489,18 @@ class TestUninstallEdpsCleanup:
         assert not (tmp_path / ".edps").exists()
         assert not default_book.exists()
 
+    @pytest.mark.parametrize("value", [".", "relative/dir", "/", "HOME"])
+    def test_refuses_an_unsafe_base_dir_and_deletes_nothing(self, tmp_path, monkeypatch, value):
+        """base_dir is read from a user-editable file and was rmtree'd unguarded."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "relative" / "dir").mkdir(parents=True)
+        self._seed(tmp_path, f"base_dir={tmp_path if value == 'HOME' else value}\n")
+        with pytest.raises(RuntimeError, match="Refusing to remove"):
+            self._make_worker()._cleanup_edps()
+        assert (tmp_path / ".edps" / "application.properties").exists()
+        assert (tmp_path / "relative" / "dir").exists()
+
     def test_edps_base_dir_parses_config_value(self, tmp_path):
         from metis_test_runner.installer import Uninstaller
 

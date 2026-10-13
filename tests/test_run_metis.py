@@ -11,6 +11,7 @@ Run with:
 
 import argparse
 import os
+import stat
 import subprocess
 import sys
 import textwrap
@@ -810,6 +811,12 @@ class TestBuildSimScript:
         assert (cache / "PERSISTENCE_MAP_LM.fits").read_text() == "v2"
         assert not (cache / "leftover.fits").exists()
         assert sorted(p.name for p in tmp_path.iterdir()) == ["s.py", "sims", "static_calibs"]
+
+    @pytest.mark.parametrize("path", ["/home/o'brien/pkgs", "/home/a b/pkgs", '/x/"quoted"'])
+    def test_awkward_paths_still_compile(self, path):
+        """The path was pasted raw into two single-quoted print() literals."""
+        kwargs = {**self._base_kwargs, "out_dir": path, "sims_root": path}
+        compile(_build_sim_script(**kwargs, inst_pkgs_path=path, static_calibs_dir=path), "sim", "exec")
 
     def test_script_contains_output_dir(self):
         script = _build_sim_script(**self._base_kwargs)
@@ -1728,6 +1735,26 @@ class TestPreferMastersIsHonest:
         self._props(tmp_path, monkeypatch, "association_preference=master_per_quality_level\n")
         rm._apply_prefer_masters("default")
         assert "changes nothing" in capsys.readouterr().out
+
+    def test_patch_is_atomic_and_keeps_mode_and_symlink(self, tmp_path, monkeypatch):
+        real = tmp_path / "dotfiles" / "application.properties"
+        real.parent.mkdir()
+        real.write_text("port=4444\nassociation_preference=best_quality\n")
+        real.chmod(0o644)
+        link = tmp_path / "application.properties"
+        link.symlink_to(real)
+        monkeypatch.setattr(rm, "_edps_properties_path", lambda: link)
+        writes = []
+        real_atomic = rm.paths.write_text_atomic
+        monkeypatch.setattr(
+            rm.paths, "write_text_atomic", lambda *a, **k: (writes.append(a), real_atomic(*a, **k))
+        )
+
+        assert rm._set_association_preference("master_per_quality_level") == "best_quality"
+        assert writes, "expected an atomic write"
+        assert link.is_symlink()
+        assert "association_preference=master_per_quality_level" in real.read_text()
+        assert stat.S_IMODE(real.stat().st_mode) == 0o644
 
     def test_missing_line_is_reported(self, tmp_path, monkeypatch, capsys):
         self._props(tmp_path, monkeypatch, "port=4444\n")
