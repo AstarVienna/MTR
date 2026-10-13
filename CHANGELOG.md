@@ -16,6 +16,11 @@
 - **`--csv-to-yaml` refuses to overwrite an existing YAML** next to the CSV.
   With `--csv-lines`, the YAML is now written next to the original CSV as
   `<name>_lines<START>-<END>.yaml` instead of under `<output>/sliced_inputs/`.
+- **Static calibration prototypes moved.** They are cached in
+  `<data dir>/static_calibs/` (was `<output-dir>/../static_calibs/`, so
+  `-o /output` meant `/static_calibs`), or in `<output-dir>/static_calibs/` for
+  `docker` / `podman`, which the host can actually see. The cache is
+  regenerated when METIS_Simulations' `makeCalibPrototypes.py` changes.
 - **The bundled `LMS_RAD_06.yaml` uses the current Simulations names**
   (`tech: IFU`, `nd_filter_name`); `tech: LMS` and `ndfilter_name` no longer
   simulate. `tech: LMS` in a YAML is still mapped to the IFU workflow, with a

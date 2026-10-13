@@ -628,6 +628,23 @@ def _resolve_inst_pkgs_path(args, runner):
     return None
 
 
+#: Marks the static-calibs cache with the hash of the generator that built it.
+_STATIC_STAMP = ".mtr-static-calibs-stamp"
+
+
+def static_calibs_dir_for(runner, output_root):
+    """Where the static calibration prototypes are cached for *runner*.
+
+    Native runs share one cache in the user data directory. A container
+    writes it into the output root, which must be bind-mounted at the same
+    path anyway, so the host can check it and pass it to EDPS. (It used to
+    sit in the output root's *parent*, which a container need not see.)
+    """
+    if runner in ("docker", "podman"):
+        return output_root / "static_calibs"
+    return paths.data_dir() / "static_calibs"
+
+
 def _build_sim_script(
     out_dir,
     do_calib,
@@ -780,20 +797,41 @@ def _build_sim_script(
         ]
 
     # --- Static calibration prototypes (cached) -----------------------------
-    # Generate PERSISTENCE_MAP, ATM_PROFILE, REF_STD_CAT, etc. into a shared
-    # cache directory so they survive across runs.  Skip if already present.
+    # Generate PERSISTENCE_MAP, ATM_PROFILE, REF_STD_CAT, etc. into a cache
+    # directory so they survive across runs. The cache is stamped with a hash
+    # of makeCalibPrototypes.py, so a METIS_Simulations update that changes the
+    # prototypes regenerates it. It is built beside the target and renamed into
+    # place, so a concurrent run never sees a half-written cache.
     if do_static and static_calibs_dir is not None:
         lines += [
             "",
             "    # --- Generate static calibration prototypes (cached) ---",
+            "    import hashlib as _hashlib, shutil as _shutil",
+            "    from metis_simulations import makeCalibPrototypes as _mcp",
             f"    _static_dir = {static_calibs_dir!r}",
-            "    if not _os.path.isfile(_os.path.join(_static_dir, 'PERSISTENCE_MAP_LM.fits')):",
-            "        _os.makedirs(_static_dir, exist_ok=True)",
-            "        from metis_simulations import makeCalibPrototypes as _mcp",
-            "        _mcp.generateStaticCalibs(_static_dir)",
-            "        print(f'Generated static calibration prototypes in {_static_dir}')",
-            "    else:",
+            f"    _stamp_file = _os.path.join(_static_dir, {_STATIC_STAMP!r})",
+            "    with open(_mcp.__file__, 'rb') as _fh:",
+            "        _stamp = _hashlib.sha256(_fh.read()).hexdigest()",
+            "    try:",
+            "        with open(_stamp_file) as _fh:",
+            "            _cached = _fh.read().strip()",
+            "    except OSError:",
+            "        _cached = None",
+            "    if _cached == _stamp and _os.path.isfile(_os.path.join(_static_dir, 'PERSISTENCE_MAP_LM.fits')):",
             "        print(f'Static calibration prototypes already cached in {_static_dir}')",
+            "    else:",
+            "        _tmp = f'{_static_dir}.tmp{_os.getpid()}'",
+            "        _shutil.rmtree(_tmp, ignore_errors=True)",
+            "        _os.makedirs(_tmp)",
+            "        _mcp.generateStaticCalibs(_tmp)",
+            "        with open(_os.path.join(_tmp, " + repr(_STATIC_STAMP) + "), 'w') as _fh:",
+            "            _fh.write(_stamp)",
+            "        _old = f'{_static_dir}.old{_os.getpid()}'",
+            "        if _os.path.isdir(_static_dir):",
+            "            _os.rename(_static_dir, _old)",
+            "        _os.rename(_tmp, _static_dir)",
+            "        _shutil.rmtree(_old, ignore_errors=True)",
+            "        print(f'Generated static calibration prototypes in {_static_dir}')",
         ]
 
     return "\n".join(lines) + "\n"
@@ -1494,9 +1532,7 @@ def main(argv=None):
         sim_out.mkdir(parents=True, exist_ok=True)
     pipe_out.mkdir(parents=True, exist_ok=True)
 
-    # Shared directory for cached static calibration prototypes.
-    # Placed alongside the per-run output directories so they persist.
-    static_calibs_dir = output_root.parent / "static_calibs"
+    static_calibs_dir = static_calibs_dir_for(runner, output_root)
 
     print(f"\nOutput root      : {output_root}")
     if args.no_sim and args.pipeline_input and len(args.pipeline_input) > 1:
@@ -1598,10 +1634,8 @@ def main(argv=None):
     # When --no-sim is set the simulation step is skipped entirely, so the
     # statics that would normally be produced alongside the sim are never
     # generated. Run the same sim script with do_sim=False (which keeps only
-    # the static calib block) when the shared cache is empty.
-    elif (
-        not args.no_pipeline and args.static and not (static_calibs_dir / "PERSISTENCE_MAP_LM.fits").is_file()
-    ):
+    # the static calib block); it reuses the cache unless it is stale.
+    elif not args.no_pipeline and args.static:
         # fmt: off
         sim_code = _build_sim_script(
             out_dir            = str(sim_out),

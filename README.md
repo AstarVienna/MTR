@@ -139,6 +139,11 @@ Output is written under the chosen output directory (default: `./output/<timesta
 - `<output-dir>/sim/` — synthetic FITS frames from ScopeSim
 - `<output-dir>/pipeline/` — reduced data products from EDPS
 
+Static calibration prototypes (`--static`) are cached in
+`<data dir>/static_calibs/` (`~/.local/share/metis-test-runner/static_calibs/`
+by default) and shared by all runs. With the `docker` / `podman` runners they go
+to `<output-dir>/static_calibs/` instead, inside the bind mount.
+
 The GUI displays the resolved paths live under the *Output directory* field so you can see exactly where products will land before you hit Run.
 
 ## Reference
@@ -353,7 +358,7 @@ YAML and CSV inputs may be mixed in any combination.
 | `--runner {default,native,docker,podman}` | `default` | Execution mode (see below; env: `METIS_RUNNER`) |
 | `--container NAME` | — | Container name/ID for `docker` / `podman` runners (env: `METIS_CONTAINER`) |
 | `--calib N` | `1` | Auto-generate N calibration frames (dark/flat) per unique config, inferred from input content. Forwarded to METIS_Simulations as `doCalib`, which sets `nObs` per calibration config. Pass `--calib 0` or `--no-calib` to disable. |
-| `--static {0,1}` | `1` | Ensure static calibration prototypes (`PERSISTENCE_MAP_*`, `ATM_PROFILE`, `REF_STD_CAT`, …) exist in a shared cache directory and pass it to EDPS. Generated once and reused across runs. Pass `--static 0` or `--no-static` to disable. |
+| `--static {0,1}` | `1` | Ensure static calibration prototypes (`PERSISTENCE_MAP_*`, `ATM_PROFILE`, `REF_STD_CAT`, …) exist in a cache directory and pass it to EDPS: `<data dir>/static_calibs` for the `default`/`native` runners, `<output-dir>/static_calibs` for `docker`/`podman` (see [Output Layout](#output-layout)). Reused across runs, and regenerated when METIS_Simulations' `makeCalibPrototypes.py` changes. Pass `--static 0` or `--no-static` to disable. |
 | `--cores N` | `4` | CPU cores used for parallel simulations |
 | `--no-sim` | off | Skip simulation; run pipeline on existing FITS data (source defaults to `<output>/sim/` — override with `--pipeline-input`) |
 | `--pipeline-input DIR` | `<output>/sim/` | Directory containing FITS files to feed the pipeline (only with `--no-sim`; env: `METIS_PIPELINE_INPUT`) |

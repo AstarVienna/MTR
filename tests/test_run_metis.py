@@ -761,6 +761,55 @@ class TestBuildSimScript:
         script = _build_sim_script(**self._base_kwargs, inst_pkgs_path=None)
         assert "local_packages_path" not in script
 
+    @pytest.mark.parametrize("runner", ["default", "native", "docker", "podman"])
+    def test_static_calibs_location(self, runner, tmp_path):
+        """It used to be <output>/../static_calibs: -o /output put it at /static_calibs."""
+        where = rm.static_calibs_dir_for(runner, tmp_path / "run")
+        if runner in ("docker", "podman"):
+            assert where == tmp_path / "run" / "static_calibs"  # inside the bind mount
+        else:
+            assert where == rm.paths.data_dir() / "static_calibs"
+
+    def test_static_cache_is_reused_then_rebuilt_when_the_generator_changes(self, tmp_path):
+        """The cache used to be keyed only on PERSISTENCE_MAP_LM.fits existing,
+        so prototypes from an older METIS_Simulations were reused for good."""
+        sims = tmp_path / "sims"
+        (sims / "metis_simulations").mkdir(parents=True)
+        (sims / "scopesim.py").write_text("")
+        (sims / "metis_simulations" / "__init__.py").write_text("")
+        generator = sims / "metis_simulations" / "makeCalibPrototypes.py"
+        generator.write_text(
+            "import os\n"
+            "def generateStaticCalibs(d):\n"
+            "    open(os.path.join(d, 'PERSISTENCE_MAP_LM.fits'), 'w').write('v1')\n"
+        )
+        cache = tmp_path / "static_calibs"
+        script = tmp_path / "s.py"
+        script.write_text(
+            _build_sim_script(
+                **{**self._base_kwargs, "sims_root": str(sims)},
+                static_calibs_dir=str(cache),
+                do_sim=False,
+            )
+        )
+
+        def run():
+            # -B: a same-size edit within one second would otherwise load the stale .pyc
+            cp = subprocess.run(
+                [sys.executable, "-B", str(script)], capture_output=True, text=True, timeout=60
+            )
+            assert cp.returncode == 0, cp.stderr
+            return cp.stdout
+
+        assert "Generated" in run()
+        (cache / "leftover.fits").write_text("old")
+        assert "already cached" in run()
+        generator.write_text(generator.read_text().replace("v1", "v2"))
+        assert "Generated" in run()
+        assert (cache / "PERSISTENCE_MAP_LM.fits").read_text() == "v2"
+        assert not (cache / "leftover.fits").exists()
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["s.py", "sims", "static_calibs"]
+
     def test_script_contains_output_dir(self):
         script = _build_sim_script(**self._base_kwargs)
         assert "/tmp/sim" in script
