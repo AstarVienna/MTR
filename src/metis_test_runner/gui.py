@@ -554,6 +554,26 @@ class WorkerHost:
     def busy(self) -> bool:
         return bool(self.live_workers())
 
+    def jobs_blocking(self, action: str) -> list[str]:
+        """Jobs in *other* tabs that must finish before *action* may start.
+
+        MainWindow installs the hook; a tab used on its own has none.
+        """
+        hook = getattr(self, "_jobs_blocking_hook", None)
+        return hook(self, action) if hook else []
+
+    def reject_if_blocked(self, action: str) -> bool:
+        """True (and explains why) if another tab's job blocks *action*."""
+        jobs = self.jobs_blocking(action)
+        if not jobs:
+            return False
+        QMessageBox.information(
+            self,
+            "Another job is running",
+            f"Wait for {' and '.join(jobs)} to finish before starting {action}.",
+        )
+        return True
+
     def stop_workers(self) -> None:
         """Ask every live worker to stop, then wait briefly for each."""
         for worker in list(self._workers):
@@ -919,6 +939,8 @@ class InstallTab(WorkerHost, QWidget):
     # ── actions ──────────────────────────────────────────────────────────────
 
     def _start(self) -> None:
+        if self.reject_if_blocked("the install"):
+            return
         try:
             refs = {
                 target: _validate_ref(self.ref_combos[key].currentText())
@@ -988,6 +1010,8 @@ class InstallTab(WorkerHost, QWidget):
         return force
 
     def _uninstall(self) -> None:
+        if self.reject_if_blocked("the uninstall"):
+            return
         reply = QMessageBox.question(
             self,
             "Confirm uninstall",
@@ -1721,7 +1745,7 @@ class ArchiveTab(WorkerHost, QWidget):
         return True
 
     def _on_install_metiswise(self) -> None:
-        if self._reject_if_busy():
+        if self._reject_if_busy() or self.reject_if_blocked("the MetisWISE install"):
             return
         # NB: not .strip() — a credential with leading/trailing whitespace is
         # rejected below rather than silently altered.
@@ -2529,6 +2553,8 @@ class RunTab(WorkerHost, QWidget):
         return args
 
     def _run(self) -> None:
+        if self.reject_if_blocked("a pipeline run"):
+            return
         if not self.rb_pipe_only.isChecked() and self.input_list.count() == 0:
             QMessageBox.warning(self, "No input files", "Add at least one input file (YAML or CSV).")
             return
@@ -2824,6 +2850,8 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._run_tab, "Run")
         tabs.addTab(self._install_tab, "Install")
         tabs.addTab(self._archive_tab, "Archive")
+        for tab in (self._run_tab, self._install_tab, self._archive_tab):
+            tab._jobs_blocking_hook = self._jobs_blocking
         if not _installation_complete():
             tabs.setCurrentIndex(1)  # Install tab
         self.setCentralWidget(tabs)
@@ -2842,20 +2870,35 @@ class MainWindow(QMainWindow):
         apply_theme(QApplication.instance(), self._current_theme)
         self._update_theme_btn_label()
 
-    def _busy_jobs(self) -> list[str]:
-        """Names of jobs still running, for the close confirmation."""
+    def _busy_jobs(self, tabs=None) -> list[str]:
+        """Names of jobs still running in *tabs* (default: all), e.g. for the close confirmation."""
+        tabs = (self._run_tab, self._install_tab, self._archive_tab) if tabs is None else tabs
         jobs = []
         proc = getattr(self._run_tab, "_process", None)
-        if proc is not None and proc.state() != QProcess.ProcessState.NotRunning:
+        if self._run_tab in tabs and proc is not None and proc.state() != QProcess.ProcessState.NotRunning:
             jobs.append("a pipeline run")
         for tab, label in (
             (self._install_tab, "an install/uninstall"),
             (self._archive_tab, "an archive operation"),
         ):
-            for worker in tab.live_workers():
+            if tab in tabs and tab.live_workers():
                 jobs.append(label)
-                break
         return jobs
+
+    def _jobs_blocking(self, tab, action: str) -> list[str]:
+        """Jobs in other tabs that conflict with *action* started from *tab*.
+
+        Install/Uninstall replace the packages and checkouts a run or the
+        archive client is using; a run and the MetisWISE install need them
+        to stay put while they work.
+        """
+        if tab is self._install_tab:
+            blocking = (self._run_tab, self._archive_tab)
+        elif tab is self._archive_tab:
+            blocking = (self._run_tab, self._install_tab)
+        else:
+            blocking = (self._install_tab,)
+        return self._busy_jobs(blocking)
 
     def closeEvent(self, event) -> None:
         # Destroying a tab while one of its QThreads is still running aborts

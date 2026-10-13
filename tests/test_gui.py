@@ -1364,7 +1364,7 @@ class TestGuiArgsParseAsCli:
 
 
 # ---------------------------------------------------------------------------
-# Run tab Stop, worker cancellation
+# Run tab Stop, worker cancellation, cross-tab guard
 # ---------------------------------------------------------------------------
 
 
@@ -1494,3 +1494,39 @@ class TestDownloadWorker:
         done, log = self._run(qapp, [None, None])
         assert done == [False]
         assert ("\n✗ Downloaded 0/2 file(s).\n", "red") in log
+
+
+class TestCrossTabGuard:
+    """Install/Uninstall could run underneath a live pipeline run, and the
+    MetisWISE pip install next to the Install tab's pip."""
+
+    def test_busy_install_blocks_a_run_and_the_metiswise_install(self, qapp, monkeypatch):
+        from PyQt6.QtWidgets import QMessageBox
+
+        win = gui.MainWindow()
+        worker = _SleepyWorker()
+        win._install_tab.track_worker(worker)
+        worker.start()
+        infos = []
+        monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: infos.append(a))
+        try:
+            win._run_tab.input_list.addItem("a.yaml")
+            win._run_tab._run()
+            assert win._run_tab._process is None
+            assert win._archive_tab.reject_if_blocked("the MetisWISE install") is True
+            assert len(infos) == 2 and "an install/uninstall" in infos[0][2]
+        finally:
+            win._install_tab.stop_workers()
+            win.close()
+
+    def test_busy_archive_blocks_install_but_not_a_run(self, qapp):
+        win = gui.MainWindow()
+        worker = _SleepyWorker()
+        win._archive_tab.track_worker(worker)
+        worker.start()
+        try:
+            assert win._install_tab.jobs_blocking("the install") == ["an archive operation"]
+            assert win._run_tab.jobs_blocking("a pipeline run") == []
+        finally:
+            win._archive_tab.stop_workers()
+            win.close()

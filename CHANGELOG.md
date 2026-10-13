@@ -40,6 +40,8 @@
   install.** No worker checked for the stop request; the commands now do, and
   their process groups are killed. An uninstall stops before the next step
   instead of carrying on into deleting the data directory.
+- **Install / Uninstall can no longer start during a run** (or an archive
+  job), and a run or the MetisWISE install not during an install.
 - **Run-tab log**: a multi-byte character or an escape sequence split across
   two reads is no longer garbled.
 - **Archive auto-fetch and Archive tab used product names that do not exist**
