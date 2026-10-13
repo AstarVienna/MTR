@@ -74,8 +74,8 @@ UMBRELLA_WORKFLOW = "metis.metis_wkf"
 TECH_TO_WORKFLOW = {
     "IMAGE,LM": "metis.metis_lm_img_wkf",
     "IMAGE,N":  "metis.metis_n_img_wkf",
-    "LMS":      "metis.metis_ifu_wkf",
-    "IFU":      "metis.metis_ifu_wkf",    # name after updateHeaders()
+    "LMS":      "metis.metis_ifu_wkf",    # legacy, warned about in scan_yaml_inputs
+    "IFU":      "metis.metis_ifu_wkf",
     "LSS,LM":   "metis.metis_lm_lss_wkf",
     "LSS,N":    "metis.metis_n_lss_wkf",
     "RAVC,LM":  "metis.metis_lm_ravc_wkf",
@@ -368,6 +368,7 @@ def scan_yaml_inputs(yaml_files):
     has_science = False
     data_tags = set()
     sub_workflows = set()
+    legacy_tech = []
 
     for path in yaml_files:
         with open(path) as fh:
@@ -387,6 +388,8 @@ def scan_yaml_inputs(yaml_files):
             tech = props.get("tech", "")
             if tech:
                 wf = TECH_TO_WORKFLOW.get(_normalize_tech(tech))
+                if _normalize_tech(tech) == "LMS" and path not in legacy_tech:
+                    legacy_tech.append(path)
             if wf is None:
                 mode = block.get("mode", "")
                 if mode:
@@ -394,6 +397,12 @@ def scan_yaml_inputs(yaml_files):
             if wf:
                 sub_workflows.add(wf)
 
+    for path in legacy_tech:
+        print(
+            f"Warning: {path} uses tech 'LMS'; METIS_Simulations now expects 'IFU' "
+            "(and 'nd_filter_name', not 'ndfilter_name').",
+            file=sys.stderr,
+        )
     return data_tags, has_science, sub_workflows
 
 

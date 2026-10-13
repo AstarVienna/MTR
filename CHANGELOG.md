@@ -16,6 +16,11 @@
 - **`--csv-to-yaml` refuses to overwrite an existing YAML** next to the CSV.
   With `--csv-lines`, the YAML is now written next to the original CSV as
   `<name>_lines<START>-<END>.yaml` instead of under `<output>/sliced_inputs/`.
+- **The bundled `LMS_RAD_06.yaml` uses the current Simulations names**
+  (`tech: IFU`, `nd_filter_name`); `tech: LMS` and `ndfilter_name` no longer
+  simulate. `tech: LMS` in a YAML is still mapped to the IFU workflow, with a
+  warning. The README quickstart uses `small_test.yaml`; `LMS_RAD_06.yaml` is a
+  160-block DETLIN series, not a full calibration + science chain.
 
 ### Fixed
 - **Archive auto-fetch and Archive tab used product names that do not exist**

@@ -57,7 +57,7 @@ pipx install metis-test-runner
 mtr-install                                   # same steps as Install / Update
 mtr-install --list-refs                       # current checkouts + available branches/tags
 mtr-install --pipeline-ref develop --simulations-ref v0.4.2   # branch, tag or full SHA
-mtr-cli --copy-examples ~/mtr-examples && mtr-cli ~/mtr-examples/LMS_RAD_06.yaml
+mtr-cli --copy-examples ~/mtr-examples && mtr-cli ~/mtr-examples/small_test.yaml
 mtr-uninstall                                 # same as Uninstall (--yes skips the prompt)
 ```
 
@@ -125,7 +125,7 @@ files. To pull missing master calibrations automatically during a run, tick
 |---|---|
 | `metis_lm_img_wkf` | `IMAGE,LM` |
 | `metis_n_img_wkf` | `IMAGE,N` |
-| `metis_ifu_wkf` | `LMS`, `IFU`, `RAVC,IFU` |
+| `metis_ifu_wkf` | `IFU`, `RAVC,IFU` (the old `LMS` is still accepted, with a warning) |
 | `metis_lm_lss_wkf` | `LSS,LM` |
 | `metis_n_lss_wkf` | `LSS,N` |
 | `metis_lm_ravc_wkf` | `RAVC,LM` |
@@ -172,7 +172,7 @@ mtr                                  # launches the GUI from anywhere
 
 # The example inputs ship inside the package, so copy them out first:
 mtr-cli --copy-examples ~/mtr-examples
-mtr-cli ~/mtr-examples/LMS_RAD_06.yaml    # CLI equivalent
+mtr-cli ~/mtr-examples/small_test.yaml    # CLI equivalent
 ```
 
 > **Tip:** `mtr-cli --examples-dir` prints where the bundled examples live if
@@ -311,13 +311,13 @@ BLOCK_NAME:
     dit: <float>          # detector integration time (s)
     ndit: <int>           # number of integrations
     catg: <CALIB|SCIENCE>
-    tech: <LMS|IMAGE,LM|LSS,LM|…>
+    tech: <IFU|IMAGE,LM|LSS,LM|…>
     type: <DETLIN|DARK|FLAT|…>
     tplname: <ESO template name>
     nObs: <int>           # number of exposures to simulate
 ```
 
-See `LMS_RAD_06.yaml` (see `mtr-cli --examples-dir`) for a complete IFU example covering the full calibration + science chain.
+`LMS_RAD_06.yaml` (see `mtr-cli --examples-dir`) is the LMS_RAD_06 AIT test: an IFU detector-linearity series of 160 DETLIN blocks (`metis_ifu_lingain`). It simulates 320 frames, so expect a long run.
 
 The small per-mode examples — `small_test.yaml` (IFU),
 `small_test_img_lm.yaml` / `small_test_img_lm.csv` (IMAGE,LM), and

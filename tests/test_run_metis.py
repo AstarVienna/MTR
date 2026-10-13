@@ -258,6 +258,16 @@ class TestScanYamlInputs:
         assert has_sci is True
         assert wfs == {"metis.metis_ifu_wkf"}
 
+    def test_legacy_lms_tech_is_accepted_with_a_warning(self, tmp_path, capsys):
+        body = '\n            block{i}:\n              do.catg: DARK_IFU_RAW\n              properties:\n                tech: "{tech}"\n'
+        f = _write_yaml(tmp_path, "obs.yaml", body.format(i=1, tech="LMS") + body.format(i=2, tech="LMS"))
+        assert scan_yaml_inputs([f])[2] == {"metis.metis_ifu_wkf"}
+        assert capsys.readouterr().err.count("uses tech 'LMS'") == 1
+
+        g = _write_yaml(tmp_path, "new.yaml", body.format(i=1, tech="IFU"))
+        scan_yaml_inputs([g])
+        assert "LMS" not in capsys.readouterr().err
+
     @pytest.mark.parametrize(
         ("lines", "workflow"),
         [
