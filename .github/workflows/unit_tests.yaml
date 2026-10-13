@@ -6,7 +6,8 @@ on:
   pull_request:
   # The Install tab resolves ESO-mirror packages at runtime and 0.4.5
   # deliberately unpinned pycpl, so upstream can break us without a commit
-  # here. A weekly run surfaces that before a user does.
+  # here. A weekly run surfaces that before a user does, and also runs the
+  # upstream-contract job.
   schedule:
     - cron: "0 5 * * 1"
   workflow_dispatch:
@@ -40,8 +41,8 @@ jobs:
       - name: Lint
         run: ruff check --output-format=github .
 
-      - name: Check formatting of the diff
-        run: ruff format --diff . || true   # advisory until the tree is formatted
+      - name: Check formatting
+        run: ruff format --check --diff .
 
   test:
     name: Tests (${{ matrix.os }}, py${{ matrix.python-version }})
@@ -107,6 +108,42 @@ jobs:
           mtr-shell --help
           mtr-install --help
           mtr-uninstall --help
+
+  # MTR hard-codes Pipeline task chains, classification tags and archive
+  # product names, and bundles Simulations input files. Check them against
+  # the current upstream main branches; the mocked suite above cannot.
+  upstream-contract:
+    name: Upstream contract (METIS_Pipeline / METIS_Simulations main)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/checkout@v7
+        with:
+          repository: AstarVienna/METIS_Pipeline
+          path: upstream/METIS_Pipeline
+
+      - uses: actions/checkout@v7
+        with:
+          repository: AstarVienna/METIS_Simulations
+          path: upstream/METIS_Simulations
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install MTR with dev extras
+        run: pip install -e .[dev]
+
+      - name: Run the contract tests
+        env:
+          METIS_PIPELINE_DIR: ${{ github.workspace }}/upstream/METIS_Pipeline
+          METIS_SIMULATIONS_DIR: ${{ github.workspace }}/upstream/METIS_Simulations
+        run: pytest tests/test_upstream_contract.py -v -m upstream
 
   package:
     name: Build & verify distribution

@@ -73,9 +73,14 @@
   bind-mount path), and examples paths that only worked from the repository.
 
 ### Developer
-- Removed unused code: `infer_workflow`, `infer_workflow_from_fits`,
-  `known_workflows`, `collect_tags_from_fits`, `paths.venv_python`,
-  `indexes.EXTRA_INDEX_URLS`.
+- `tests/test_upstream_contract.py` checks MTR's task chains, classification
+  tags, archive product names and bundled examples against METIS_Pipeline /
+  METIS_Simulations checkouts. It is skipped unless `METIS_PIPELINE_DIR` /
+  `METIS_SIMULATIONS_DIR` are set, and runs in the weekly CI job against both
+  main branches.
+- CI enforces `ruff format`. Removed unused code: `infer_workflow`,
+  `infer_workflow_from_fits`, `known_workflows`, `collect_tags_from_fits`,
+  `paths.venv_python`, `indexes.EXTRA_INDEX_URLS`.
 
 ## 0.6.0 — 2026-09-30
 
