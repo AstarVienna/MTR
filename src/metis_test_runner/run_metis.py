@@ -159,7 +159,6 @@ WORKFLOW_TASK_CHAIN = {
         ("metis_n_adc_slitloss", "N_ADC_SLITLOSS_RAW",  "qc1calib"),
         ("metis_n_lss_rsrf",     "N_LSS_RSRF_RAW",       "qc1calib"),
         ("metis_n_lss_trace",    "N_LSS_RSRF_PINH_RAW",  "qc1calib"),
-        ("metis_n_lss_wave",     "N_LSS_WAVE_RAW",       "qc1calib"),
         ("metis_n_lss_std",      "N_LSS_STD_RAW",        "science"),
         ("metis_n_lss_sci",      "N_LSS_SCI_RAW",        "science"),
     ],
@@ -192,7 +191,10 @@ WORKFLOW_TASK_CHAIN = {
 
 # Reverse lookup: (dpr.catg, dpr.type, dpr.tech) → EDPS classification tag.
 # Used to classify FITS files by their ESO DPR headers when --no-sim is given.
-# Derived from metis_classification.py.
+# Derived from metis_classification.py (plus the rules defined in
+# metis_chophome_wkf.py / metis_pupil_imaging_wkf.py). A catg of None means
+# the pipeline rule ignores DPR.CATG (sky frames may be CALIB or SCIENCE);
+# use lookup_dpr_tag() rather than indexing directly.
 # fmt: off
 DPR_TO_TAG = {
     # LM IMG
@@ -201,17 +203,21 @@ DPR_TO_TAG = {
     ("CALIB",     "DISTORTION",      "IMAGE,LM"): "LM_DISTORTION_RAW",
     ("CALIB",     "DARK,WCUOFF",     "IMAGE,LM"): "LM_WCU_OFF_RAW",
     ("CALIB",     "FLAT,LAMP",       "IMAGE,LM"): "LM_FLAT_LAMP_RAW",
+    ("CALIB",     "FLAT,TWILIGHT",   "IMAGE,LM"): "LM_TWILIGHT_FLAT",
     ("SCIENCE",   "OBJECT",          "IMAGE,LM"): "LM_IMAGE_SCI_RAW",
-    ("SCIENCE",   "SKY",             "IMAGE,LM"): "LM_IMAGE_SKY_RAW",
+    (None,        "SKY",             "IMAGE,LM"): "LM_IMAGE_SKY_RAW",
     ("CALIB",     "STD",             "IMAGE,LM"): "LM_IMAGE_STD_RAW",
+    ("CALIB",     "PSF,OFFAXIS",     "IMAGE,LM"): "LM_OFF_AXIS_PSF_RAW",
+    ("CALIB",     "CHOPHOME",        "IMAGE,LM"): "LM_CHOPHOME_RAW",
     # N IMG
     ("CALIB",     "DETLIN",          "IMAGE,N"):  "DETLIN_GEO_RAW",
     ("CALIB",     "DARK",            "IMAGE,N"):  "DARK_GEO_RAW",
     ("CALIB",     "DISTORTION",      "IMAGE,N"):  "N_DISTORTION_RAW",
     ("CALIB",     "DARK,WCUOFF",     "IMAGE,N"):  "N_WCU_OFF_RAW",
     ("CALIB",     "FLAT,LAMP",       "IMAGE,N"):  "N_FLAT_LAMP_RAW",
+    ("CALIB",     "FLAT,TWILIGHT",   "IMAGE,N"):  "N_TWILIGHT_FLAT",
     ("SCIENCE",   "OBJECT",          "IMAGE,N"):  "N_IMAGE_SCI_RAW",
-    ("SCIENCE",   "SKY",             "IMAGE,N"):  "N_IMAGE_SKY_RAW",
+    (None,        "SKY",             "IMAGE,N"):  "N_IMAGE_SKY_RAW",
     ("CALIB",     "STD",             "IMAGE,N"):  "N_IMAGE_STD_RAW",
     # IFU
     ("CALIB",     "DETLIN",          "IFU"):      "DETLIN_IFU_RAW",
@@ -230,6 +236,7 @@ DPR_TO_TAG = {
     ("CALIB",     "WAVE",            "LSS,LM"):   "LM_LSS_WAVE_RAW",
     ("CALIB",     "STD",             "LSS,LM"):   "LM_LSS_STD_RAW",
     ("SCIENCE",   "OBJECT",          "LSS,LM"):   "LM_LSS_SCI_RAW",
+    (None,        "SKY",             "LSS,LM"):   "LM_LSS_SKY_RAW",
     # N LSS
     ("CALIB",     "SLITLOSS",        "LSS,N"):    "N_ADC_SLITLOSS_RAW",
     ("CALIB",     "FLAT,LAMP",       "LSS,N"):    "N_LSS_RSRF_RAW",
@@ -237,10 +244,21 @@ DPR_TO_TAG = {
     ("CALIB",     "WAVE",            "LSS,N"):    "N_LSS_WAVE_RAW",
     ("CALIB",     "STD",             "LSS,N"):    "N_LSS_STD_RAW",
     ("SCIENCE",   "OBJECT",          "LSS,N"):    "N_LSS_SCI_RAW",
+    (None,        "SKY",             "LSS,N"):    "N_LSS_SKY_RAW",
     # Pupil
     ("TECHNICAL", "PUPIL",           "PUP,LM"):   "LM_PUPIL_RAW",
+    ("TECHNICAL", "PUPIL",           "PUP,N"):    "N_PUPIL_RAW",
 }
 # fmt: on
+
+
+def lookup_dpr_tag(catg, typ, tech):
+    """Map a DPR (catg, type, tech) triple to its classification tag, or None.
+
+    Falls back to the catg-agnostic entry, mirroring pipeline rules that do
+    not test DPR.CATG.
+    """
+    return DPR_TO_TAG.get((catg, typ, tech)) or DPR_TO_TAG.get((None, typ, tech))
 
 
 def _edps_properties_path() -> Path:
@@ -412,7 +430,7 @@ def scan_fits_inputs(fits_dir):
             continue
 
         if catg:
-            tag = DPR_TO_TAG.get((catg, typ, tech))
+            tag = lookup_dpr_tag(catg, typ, tech)
         else:
             tag = pro_catg or None
         if tag:
@@ -461,7 +479,7 @@ def classify_fits_file(path):
         return None
 
     if catg:
-        return DPR_TO_TAG.get((catg, typ, tech))
+        return lookup_dpr_tag(catg, typ, tech)
     if pro_catg:
         return pro_catg
     return None

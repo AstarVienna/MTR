@@ -861,19 +861,21 @@ TASK_PRODUCTS: dict[str, TaskProducts] = {
     "metis_ifu_dark":                TaskProducts(produces=("MASTER_DARK_IFU",)),
     "metis_ifu_distortion":          TaskProducts(produces=("IFU_DISTORTION_TABLE",)),
     "metis_ifu_wavecal":             TaskProducts(produces=("IFU_WAVECAL",)),
-    "metis_ifu_rsrf":                TaskProducts(produces=("MASTER_IFU_RSRF",)),
+    "metis_ifu_rsrf":                TaskProducts(produces=("RSRF_IFU",)),
     # LM LSS
     "metis_lm_lss_lingain":          TaskProducts(produces=("LINEARITY_2RG", "GAIN_MAP_2RG")),
     "metis_lm_lss_dark":             TaskProducts(produces=("MASTER_DARK_2RG",)),
-    "metis_lm_lss_rsrf":             TaskProducts(produces=("LM_LSS_MASTER_RSRF",)),
-    "metis_lm_lss_trace":            TaskProducts(produces=("LM_LSS_TRACE_TABLE",)),
-    "metis_lm_lss_wave":             TaskProducts(produces=("LM_LSS_WAVECAL",)),
+    "metis_lm_lss_adc_slitloss":     TaskProducts(produces=("LM_ADC_SLITLOSS",)),
+    "metis_lm_lss_rsrf":             TaskProducts(produces=("MASTER_LM_LSS_RSRF",)),
+    "metis_lm_lss_trace":            TaskProducts(produces=("LM_LSS_TRACE",)),
+    # LM_LSS_CURVE is also written, but nothing downstream consumes it.
+    "metis_lm_lss_wave":             TaskProducts(produces=("LM_LSS_DIST_SOL", "LM_LSS_WAVE_GUESS")),
     # N LSS
     "metis_n_lss_lingain":           TaskProducts(produces=("LINEARITY_GEO", "GAIN_MAP_GEO")),
     "metis_n_lss_dark":              TaskProducts(produces=("MASTER_DARK_GEO",)),
-    "metis_n_lss_rsrf":              TaskProducts(produces=("N_LSS_MASTER_RSRF",)),
-    "metis_n_lss_trace":             TaskProducts(produces=("N_LSS_TRACE_TABLE",)),
-    "metis_n_lss_wave":              TaskProducts(produces=("N_LSS_WAVECAL",)),
+    "metis_n_adc_slitloss":          TaskProducts(produces=("N_ADC_SLITLOSS",)),
+    "metis_n_lss_rsrf":              TaskProducts(produces=("MASTER_N_LSS_RSRF",)),
+    "metis_n_lss_trace":             TaskProducts(produces=("N_LSS_TRACE",)),
 }
 # fmt: on
 

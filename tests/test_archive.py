@@ -1620,11 +1620,7 @@ class TestTaskProductsConsistency:
                 if meta != "science" and t not in archive.TASK_PRODUCTS
             }
         )
-        assert uncoverable == [
-            "metis_ifu_std_reduce",
-            "metis_lm_lss_adc_slitloss",
-            "metis_n_adc_slitloss",
-        ]
+        assert uncoverable == ["metis_ifu_std_reduce"]
 
 
 # ---------------------------------------------------------------------------

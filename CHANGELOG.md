@@ -17,6 +17,17 @@
   With `--csv-lines`, the YAML is now written next to the original CSV as
   `<name>_lines<START>-<END>.yaml` instead of under `<output>/sliced_inputs/`.
 
+### Fixed
+- **Archive auto-fetch and Archive tab used product names that do not exist**
+  (`MASTER_IFU_RSRF`, `LM_LSS_MASTER_RSRF`, `*_LSS_TRACE_TABLE`,
+  `*_LSS_WAVECAL`, …); they now match METIS_Pipeline and the DRLD (`RSRF_IFU`,
+  `MASTER_{LM,N}_LSS_RSRF`, `{LM,N}_LSS_TRACE`, `LM_LSS_DIST_SOL` +
+  `LM_LSS_WAVE_GUESS`), and the ADC slit-loss products can be fetched too. The
+  N LSS chain no longer lists `metis_n_lss_wave`, which is not a task.
+- **FITS classification** knows the twilight-flat, chop-home, off-axis-PSF, LSS
+  sky and N-band pupil frames, and accepts sky frames with DPR.CATG `CALIB` as
+  well as `SCIENCE`, as the pipeline does.
+
 ### Developer
 - Removed unused code: `infer_workflow`, `infer_workflow_from_fits`,
   `known_workflows`, `collect_tags_from_fits`, `paths.venv_python`,

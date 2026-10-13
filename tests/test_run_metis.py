@@ -1083,6 +1083,17 @@ class TestLookupTableConsistency:
         for key in DPR_TO_TAG:
             assert isinstance(key, tuple) and len(key) == 3, f"DPR_TO_TAG key is not a 3-tuple: {key!r}"
 
+    @pytest.mark.parametrize("catg", ["CALIB", "SCIENCE"])
+    def test_sky_frames_classify_with_either_catg(self, catg):
+        """The pipeline's *_SKY_RAW rules ignore DPR.CATG (Simulations issue #151)."""
+        assert rm.lookup_dpr_tag(catg, "SKY", "IMAGE,LM") == "LM_IMAGE_SKY_RAW"
+        assert rm.lookup_dpr_tag(catg, "SKY", "LSS,N") == "N_LSS_SKY_RAW"
+
+    def test_exact_catg_still_required_elsewhere(self):
+        assert rm.lookup_dpr_tag("CALIB", "SKY", "IFU") == "IFU_SKY_RAW"
+        assert rm.lookup_dpr_tag("SCIENCE", "SKY", "IFU") is None
+        assert rm.lookup_dpr_tag("SCIENCE", "STD", "IMAGE,LM") is None
+
     def test_ifu_workflow_science_task_has_science_meta_target(self):
         """The IFU sci_reduce task must be gated by 'science'."""
         chain = dict((name, meta) for name, _, meta in WORKFLOW_TASK_CHAIN["metis.metis_ifu_wkf"])
