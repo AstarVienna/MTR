@@ -68,6 +68,9 @@
 - **Uninstall refuses an unsafe EDPS `base_dir`** (relative, `/`, `$HOME`, …)
   instead of deleting it.
 - **Download / Upload report failures as failures**; they always said success.
+- README / `--help` corrections: the `--simulations-dir` default, the container
+  path for it, where archive credentials live, the docker example (`-dit`, same
+  bind-mount path), and examples paths that only worked from the repository.
 
 ### Developer
 - Removed unused code: `infer_workflow`, `infer_workflow_from_fits`,

@@ -142,6 +142,7 @@ Output is written under the chosen output directory (default: `./output/<timesta
 
 - `<output-dir>/sim/` — synthetic FITS frames from ScopeSim
 - `<output-dir>/pipeline/` — reduced data products from EDPS
+- `<output-dir>/sliced_inputs/` — the trimmed CSV copies made by `--csv-lines`
 
 Static calibration prototypes (`--static`) are cached in
 `<data dir>/static_calibs/` (`~/.local/share/metis-test-runner/static_calibs/`
@@ -266,12 +267,12 @@ Build and start the pipeline container from [METIS_Pipeline/toolbox/](https://gi
 ```bash
 cd METIS_Pipeline/toolbox
 docker build -t metispipeline .
-docker run -d --name metis-pipeline --net=host \
-  --mount type=bind,source=/path/to/output,target=/output \
+docker run -dit --name metis-pipeline --net=host \
+  --mount type=bind,source=/path/to/output,target=/path/to/output \
   metispipeline
 ```
 
-Then in the GUI, set runner to `docker` (or `podman`) and enter the container name. The output directory must be bind-mounted into the container so EDPS can write products back to the host.
+Then in the GUI, set runner to `docker` (or `podman`) and enter the container name. The output directory must be bind-mounted into the container **at the same path** so EDPS can write products back to the host: MTR passes the host path into the container unchanged. `-dit` keeps the container running; the image has no long-running command, so a plain `-d` exits at once.
 
 **Option C — bare-metal or inside a container** (runner `native`)
 
@@ -289,7 +290,7 @@ ScopeSim instrument packages (Armazones, ELT, METIS) will be downloaded into `./
 | `native` | Tools (`edps`, `python`, ScopeSim) are installed directly on PATH — e.g. you are running **inside** a Docker/Podman container, or have a bare-metal install. |
 | `docker` / `podman` | Tools live inside a container and you are running the script **outside** it. The runner wraps every command with `docker exec` / `podman exec`. |
 
-> **Note for `docker` / `podman` runners:** the output directory (`-o`) must be bind-mounted into the container so EDPS can write pipeline products to it. The `--simulations-dir` flag should point to the path of `METIS_Simulations/Simulations` *inside* the container (default: `/home/metis/METIS_Simulations`).
+> **Note for `docker` / `podman` runners:** the output directory (`-o`) must be bind-mounted into the container so EDPS can write pipeline products to it. The `--simulations-dir` flag should point to the METIS_Simulations checkout *inside* the container (default: `/home/metis/METIS_Simulations`, where the toolbox image clones it).
 
 </details>
 
@@ -369,7 +370,7 @@ YAML and CSV inputs may be mixed in any combination.
 | `--no-pipeline` | off | Run simulation only; skip EDPS pipeline |
 | `--csv-to-yaml` | off | Dry run: translate CSV input(s) to YAML via METIS_Simulations (`testRun`+`writeYaml`) and stop — writes `<name>.yaml` next to each CSV, with no simulation and no pipeline. Only CSV inputs are affected. Refuses to run if the target YAML already exists. |
 | `--csv-lines START:END` | all rows | Restrict CSV inputs to a range of 1-based file lines (e.g. `6:12`, `6:` from line 6 to end, `:12` from start to line 12). The header block (column-name row + `component`/`description`/`type` rows) is always kept; MTR writes a sliced copy under `<output>/sliced_inputs/` and feeds that to the simulation. Applies to `.csv` inputs only; ignored with `--no-sim`. With `--csv-to-yaml`, the YAML is written next to the original CSV as `<name>_lines<START>-<END>.yaml` (open bounds become `1` / `end`). Also exposed in the GUI Run tab. |
-| `--simulations-dir PATH` | `./METIS_Simulations` (host) or `/home/metis/METIS_Simulations` (container) | Path to ScopeSim scripts (env: `METIS_SIMULATIONS_DIR`) |
+| `--simulations-dir PATH` | `<data dir>/METIS_Simulations` (host) or `/home/metis/METIS_Simulations` (container) | Path to ScopeSim scripts (env: `METIS_SIMULATIONS_DIR`) |
 | `--inst-pkgs PATH` | see below | Path to ScopeSim instrument packages (Armazones, ELT, METIS). Defaults to the user data dir for the `default` runner, `./inst_pkgs` for `native`, and container-resolved `./inst_pkgs` for `docker`/`podman` (env: `METIS_INST_PKGS`) |
 | `--auto-fetch-calibrations` | off | Before running the pipeline, query the remote METIS archive (via MetisWISE) for any master calibrations the input set is missing and download them into the pipeline input directory. Requires MetisWISE to be installed and archive credentials stored via the Archive tab (OS keyring; a legacy `~/.awe/Environment.cfg` also works). |
 | `--prefer-masters` | off | Set EDPS `association_preference` to `master_per_quality_level` for this run, preferring master calibrations over reduced raw data. **Only useful when EDPS was configured outside MTR** — the Install tab already pins this value, so on a standard install the flag changes nothing. Ignored for `docker`/`podman`, where EDPS reads the container's own configuration. Not exposed in the GUI for the same reason. |
@@ -455,7 +456,7 @@ mtr-cli ~/mtr-examples/small_test_img_lm.csv
 mtr-cli --csv-to-yaml /path/to/my_sheet.csv
 
 # Mixed YAML + CSV in a single run
-mtr-cli ~/mtr-examples/small_test.yaml examples/small_test_img_lm.csv
+mtr-cli ~/mtr-examples/small_test.yaml ~/mtr-examples/small_test_img_lm.csv
 ```
 
 </details>
@@ -477,9 +478,9 @@ mtr-exec -- python my_scopesim_probe.py
 # Open an interactive shell with the environment pre-applied
 mtr-shell
 # then, inside it:
-(mtr) $ edps -lw
-(mtr) $ pyesorex metis_ifu_dark ...
-(mtr) $ python        # scopesim importable, instrument packages resolved
+edps -lw
+pyesorex metis_ifu_dark ...
+python        # scopesim importable, instrument packages resolved
 ```
 
 Both accept `--runner {default,native,docker,podman}` and `--container NAME`

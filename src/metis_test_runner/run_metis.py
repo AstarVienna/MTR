@@ -1334,7 +1334,7 @@ def parse_args(argv=None):
         default=os.environ.get("METIS_SIMULATIONS_DIR"),
         help="Path to the METIS_Simulations repository. For docker/podman "
         "runners this must be the path *inside* the container "
-        "[default: ./METIS_Simulations for default/native, "
+        "[default: <data dir>/METIS_Simulations for default/native, "
         "/home/metis/METIS_Simulations for docker/podman] "
         "(env: METIS_SIMULATIONS_DIR)",
     )
@@ -1358,8 +1358,9 @@ def parse_args(argv=None):
         action="store_true",
         help="Automatically download missing master calibration files from "
         "the remote METIS archive before running the pipeline. "
-        "Requires MetisWISE to be installed and ~/.awe/Environment.cfg "
-        "to hold valid credentials (see Archive tab).",
+        "Requires MetisWISE to be installed and archive credentials stored "
+        "via the Archive tab (OS keyring; a legacy ~/.awe/Environment.cfg "
+        "also works).",
     )
     p.add_argument(
         "--prefer-masters",
