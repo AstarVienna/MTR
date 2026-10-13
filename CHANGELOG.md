@@ -17,6 +17,11 @@
   With `--csv-lines`, the YAML is now written next to the original CSV as
   `<name>_lines<START>-<END>.yaml` instead of under `<output>/sliced_inputs/`.
 
+### Developer
+- Removed unused code: `infer_workflow`, `infer_workflow_from_fits`,
+  `known_workflows`, `collect_tags_from_fits`, `paths.venv_python`,
+  `indexes.EXTRA_INDEX_URLS`.
+
 ## 0.6.0 — 2026-09-30
 
 ### Added

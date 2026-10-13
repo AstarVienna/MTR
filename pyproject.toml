@@ -108,7 +108,6 @@ xfail_strict = true
 target-version = "py312"
 # The existing style already runs past 100 (gui.py's Qt import line is 118).
 line-length = 110
-extend-exclude = ["IMPROVEMENTS.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]

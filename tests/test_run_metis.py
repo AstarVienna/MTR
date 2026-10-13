@@ -33,11 +33,8 @@ from metis_test_runner.run_metis import (
     _parse_line_range,
     _slice_csv,
     classify_fits_file,
-    collect_tags_from_fits,
     infer_edps_target,
     infer_edps_targets_for_workflows,
-    infer_workflow,
-    known_workflows,
     main,
     parse_args,
     read_edps_port,
@@ -96,7 +93,7 @@ class TestReadEdpsPort:
 
 
 # ---------------------------------------------------------------------------
-# infer_workflow
+# YAML / CSV fixtures
 # ---------------------------------------------------------------------------
 
 
@@ -113,311 +110,6 @@ def _write_csv(tmp_path, name, content=None):
     p = tmp_path / name
     p.write_text(content or "Block,File,DIT,NDIT,Tech\nplaceholder,row,0.1,1,IMAGE_LM\n")
     return p
-
-
-class TestInferWorkflow:
-    # --- tech-based inference ---
-
-    def test_lms_tech_maps_to_ifu_workflow(self, tmp_path):
-        f = _write_yaml(
-            tmp_path,
-            "obs.yaml",
-            """
-            block1:
-              do.catg: DETLIN_IFU_RAW
-              mode: wcu_lms
-              properties:
-                tech: "LMS"
-                catg: "CALIB"
-        """,
-        )
-        wf, has_sci, tags = infer_workflow([f])
-        assert wf == "metis.metis_ifu_wkf"
-        assert not has_sci
-        assert "DETLIN_IFU_RAW" in tags
-
-    def test_image_lm_tech_maps_to_lm_img_workflow(self, tmp_path):
-        f = _write_yaml(
-            tmp_path,
-            "obs.yaml",
-            """
-            block1:
-              do.catg: LM_IMAGE_SCI_RAW
-              properties:
-                tech: "IMAGE,LM"
-                catg: "SCIENCE"
-        """,
-        )
-        wf, has_sci, _tags = infer_workflow([f])
-        assert wf == "metis.metis_lm_img_wkf"
-        assert has_sci
-
-    def test_image_n_tech_maps_to_n_img_workflow(self, tmp_path):
-        f = _write_yaml(
-            tmp_path,
-            "obs.yaml",
-            """
-            block1:
-              do.catg: N_IMAGE_SCI_RAW
-              properties:
-                tech: "IMAGE,N"
-                catg: "SCIENCE"
-        """,
-        )
-        wf, has_sci, _ = infer_workflow([f])
-        assert wf == "metis.metis_n_img_wkf"
-        assert has_sci
-
-    def test_lss_lm_tech_maps_to_lm_lss_workflow(self, tmp_path):
-        f = _write_yaml(
-            tmp_path,
-            "obs.yaml",
-            """
-            block1:
-              do.catg: LM_LSS_SCI_RAW
-              properties:
-                tech: "LSS,LM"
-                catg: "SCIENCE"
-        """,
-        )
-        wf, _, _ = infer_workflow([f])
-        assert wf == "metis.metis_lm_lss_wkf"
-
-    def test_lss_n_tech_maps_to_n_lss_workflow(self, tmp_path):
-        f = _write_yaml(
-            tmp_path,
-            "obs.yaml",
-            """
-            block1:
-              do.catg: N_LSS_SCI_RAW
-              properties:
-                tech: "LSS,N"
-                catg: "SCIENCE"
-        """,
-        )
-        wf, _, _ = infer_workflow([f])
-        assert wf == "metis.metis_n_lss_wkf"
-
-    # --- mode-based fallback ---
-
-    def test_mode_lms_maps_to_ifu_workflow(self, tmp_path):
-        f = _write_yaml(
-            tmp_path,
-            "obs.yaml",
-            """
-            block1:
-              do.catg: IFU_SCI_RAW
-              mode: lms
-              properties:
-                catg: "SCIENCE"
-        """,
-        )
-        wf, has_sci, _ = infer_workflow([f])
-        assert wf == "metis.metis_ifu_wkf"
-        assert has_sci
-
-    def test_mode_img_lm_maps_to_lm_img_workflow(self, tmp_path):
-        f = _write_yaml(
-            tmp_path,
-            "obs.yaml",
-            """
-            block1:
-              do.catg: LM_IMAGE_SCI_RAW
-              mode: img_lm
-              properties:
-                catg: "SCIENCE"
-        """,
-        )
-        wf, _, _ = infer_workflow([f])
-        assert wf == "metis.metis_lm_img_wkf"
-
-    # --- normalisation: whitespace and case tolerance ---
-
-    def test_tech_with_whitespace_around_comma_still_resolves(self, tmp_path):
-        # Human-edited YAML often has "IMAGE, LM" with a space; we shouldn't
-        # force users to know the keys are spaceless.
-        f = _write_yaml(
-            tmp_path,
-            "obs.yaml",
-            """
-            block1:
-              do.catg: LM_IMAGE_SCI_RAW
-              properties:
-                tech: "IMAGE, LM"
-                catg: "SCIENCE"
-        """,
-        )
-        wf, _, _ = infer_workflow([f])
-        assert wf == "metis.metis_lm_img_wkf"
-
-    def test_mode_with_wrong_case_still_resolves(self, tmp_path):
-        # Mode keys are lowercase; accept upper-case YAML values too.
-        f = _write_yaml(
-            tmp_path,
-            "obs.yaml",
-            """
-            block1:
-              do.catg: LM_IMAGE_SCI_RAW
-              mode: IMG_LM
-              properties:
-                catg: "SCIENCE"
-        """,
-        )
-        wf, _, _ = infer_workflow([f])
-        assert wf == "metis.metis_lm_img_wkf"
-
-    # --- tech takes priority over mode ---
-
-    def test_tech_takes_priority_over_mode(self, tmp_path):
-        f = _write_yaml(
-            tmp_path,
-            "obs.yaml",
-            """
-            block1:
-              do.catg: IFU_SCI_RAW
-              mode: img_lm
-              properties:
-                tech: "LMS"
-                catg: "SCIENCE"
-        """,
-        )
-        wf, _, _ = infer_workflow([f])
-        assert wf == "metis.metis_ifu_wkf"
-
-    # --- multi-file / multi-block ---
-
-    def test_multiple_yaml_files_merged(self, tmp_path):
-        f1 = _write_yaml(
-            tmp_path,
-            "obs1.yaml",
-            """
-            block1:
-              do.catg: DETLIN_IFU_RAW
-              mode: wcu_lms
-              properties:
-                tech: "LMS"
-                catg: "CALIB"
-        """,
-        )
-        f2 = _write_yaml(
-            tmp_path,
-            "obs2.yaml",
-            """
-            block2:
-              do.catg: IFU_SCI_RAW
-              mode: lms
-              properties:
-                tech: "LMS"
-                catg: "SCIENCE"
-        """,
-        )
-        wf, has_sci, tags = infer_workflow([f1, f2])
-        assert wf == "metis.metis_ifu_wkf"
-        assert has_sci
-        assert "DETLIN_IFU_RAW" in tags
-        assert "IFU_SCI_RAW" in tags
-
-    def test_has_science_false_for_calib_only(self, tmp_path):
-        f = _write_yaml(
-            tmp_path,
-            "obs.yaml",
-            """
-            block1:
-              do.catg: DARK_IFU_RAW
-              mode: wcu_lms
-              properties:
-                tech: "LMS"
-                catg: "CALIB"
-        """,
-        )
-        _, has_sci, _ = infer_workflow([f])
-        assert not has_sci
-
-    def test_science_catg_case_insensitive(self, tmp_path):
-        f = _write_yaml(
-            tmp_path,
-            "obs.yaml",
-            """
-            block1:
-              do.catg: IFU_SCI_RAW
-              properties:
-                tech: "LMS"
-                catg: "science"
-        """,
-        )
-        _, has_sci, _ = infer_workflow([f])
-        assert has_sci
-
-    # --- error path ---
-
-    def test_raises_for_unknown_tech_and_mode(self, tmp_path):
-        f = _write_yaml(
-            tmp_path,
-            "obs.yaml",
-            """
-            block1:
-              do.catg: SOMETHING_RAW
-              mode: unknown_mode
-              properties:
-                tech: "UNKNOWN,TECH"
-                catg: "CALIB"
-        """,
-        )
-        with pytest.raises(ValueError, match="Cannot determine workflow"):
-            infer_workflow([f])
-
-    def test_raises_for_empty_yaml(self, tmp_path):
-        f = _write_yaml(
-            tmp_path,
-            "obs.yaml",
-            """
-            block1: null
-        """,
-        )
-        with pytest.raises(ValueError):
-            infer_workflow([f])
-
-    # --- CSV handling: introspection is skipped; workflow comes from FITS ---
-
-    def test_raises_when_only_csv_inputs(self, tmp_path):
-        """CSV-only input set → ValueError (workflow is inferred from FITS later)."""
-        csv_file = _write_csv(tmp_path, "obs.csv")
-        with pytest.raises(ValueError, match="cannot be inferred from CSV"):
-            infer_workflow([csv_file])
-
-    def test_csv_files_skipped_in_mixed_input(self, tmp_path):
-        """When YAML+CSV are mixed, only YAML drives inference; CSV is ignored."""
-        yaml_file = _write_yaml(
-            tmp_path,
-            "obs.yaml",
-            """
-            block1:
-              do.catg: LM_IMAGE_SCI_RAW
-              properties:
-                tech: "IMAGE,LM"
-                catg: "SCIENCE"
-        """,
-        )
-        csv_file = _write_csv(tmp_path, "obs.csv")
-        wf, has_sci, tags = infer_workflow([yaml_file, csv_file])
-        assert wf == "metis.metis_lm_img_wkf"
-        assert has_sci
-        assert tags == {"LM_IMAGE_SCI_RAW"}
-
-
-class TestKnownWorkflows:
-    def test_returns_sorted_unique_workflow_names(self):
-        names = known_workflows()
-        assert names == sorted(set(names))
-        # Anchor a few representative entries so the GUI dropdown stays
-        # populated; the full list comes from TECH_TO_WORKFLOW + MODE_TO_WORKFLOW.
-        assert "metis.metis_lm_img_wkf" in names
-        assert "metis.metis_ifu_wkf" in names
-
-    def test_all_returned_workflows_are_in_lookup_tables(self):
-        names = set(known_workflows())
-        expected = set(TECH_TO_WORKFLOW.values()) | set(MODE_TO_WORKFLOW.values())
-        assert names == expected
 
 
 # ---------------------------------------------------------------------------
@@ -565,6 +257,42 @@ class TestScanYamlInputs:
         assert tags == {"IFU_SCI_RAW"}
         assert has_sci is True
         assert wfs == {"metis.metis_ifu_wkf"}
+
+    @pytest.mark.parametrize(
+        ("lines", "workflow"),
+        [
+            ('properties:\n    tech: "IMAGE,N"', "metis.metis_n_img_wkf"),
+            ('properties:\n    tech: "LSS,LM"', "metis.metis_lm_lss_wkf"),
+            ('properties:\n    tech: "LSS,N"', "metis.metis_n_lss_wkf"),
+            ('properties:\n    tech: "IMAGE, LM"', "metis.metis_lm_img_wkf"),  # space after the comma
+            ("mode: IMG_LM\n  properties: {}", "metis.metis_lm_img_wkf"),  # upper-case mode
+            ("mode: lms\n  properties: {}", "metis.metis_ifu_wkf"),
+            ('mode: img_lm\n  properties:\n    tech: "IFU"', "metis.metis_ifu_wkf"),  # tech wins over mode
+        ],
+    )
+    def test_tech_and_mode_lookup(self, tmp_path, lines, workflow):
+        f = tmp_path / "obs.yaml"
+        f.write_text(f"block1:\n  do.catg: X\n  {lines}\n")
+        assert scan_yaml_inputs([f])[2] == {workflow}
+
+    def test_science_catg_is_case_insensitive(self, tmp_path):
+        f = tmp_path / "obs.yaml"
+        f.write_text('block1:\n  do.catg: X\n  properties:\n    catg: "science"\n')
+        assert scan_yaml_inputs([f])[1] is True
+
+    def test_calibration_only_has_no_science(self, tmp_path):
+        f = _write_yaml(
+            tmp_path,
+            "obs.yaml",
+            """
+            block1:
+              do.catg: DARK_2RG_RAW
+              properties:
+                tech: "IMAGE,LM"
+                catg: "CALIB"
+        """,
+        )
+        assert scan_yaml_inputs([f])[1] is False
 
     def test_mixed_workflows_in_one_file(self, tmp_path):
         f = _write_yaml(
@@ -783,120 +511,6 @@ class TestUmbrellaWorkflow:
         # The umbrella workflow is the EDPS workflow that imports every METIS
         # sub-workflow; main() always invokes EDPS with this name.
         assert UMBRELLA_WORKFLOW == "metis.metis_wkf"
-
-
-# ---------------------------------------------------------------------------
-# collect_tags_from_fits
-# ---------------------------------------------------------------------------
-
-
-class TestCollectTagsFromFits:
-    def test_returns_empty_set_when_astropy_missing(self, tmp_path):
-        """If astropy is not installed, returns empty set gracefully."""
-        import builtins
-
-        real_import = builtins.__import__
-
-        def mock_import(name, *args, **kwargs):
-            if name == "astropy.io.fits":
-                raise ImportError("mocked missing astropy")
-            return real_import(name, *args, **kwargs)
-
-        with patch("builtins.__import__", side_effect=mock_import):
-            result = collect_tags_from_fits(tmp_path)
-        assert result == set()
-
-    def test_returns_empty_set_for_empty_directory(self, tmp_path):
-        try:
-            import astropy  # noqa: F401
-        except ImportError:
-            pytest.skip("astropy not installed")
-        result = collect_tags_from_fits(tmp_path)
-        assert result == set()
-
-    def test_classifies_lm_science_fits_header(self, tmp_path):
-        pytest.importorskip("astropy")
-        from astropy.io import fits as afits
-
-        hdr = afits.Header()
-        hdr["HIERARCH ESO DPR CATG"] = "SCIENCE"
-        hdr["HIERARCH ESO DPR TYPE"] = "OBJECT"
-        hdr["HIERARCH ESO DPR TECH"] = "IMAGE,LM"
-        hdul = afits.HDUList([afits.PrimaryHDU(header=hdr)])
-        hdul.writeto(tmp_path / "sci.fits")
-
-        tags = collect_tags_from_fits(tmp_path)
-        assert "LM_IMAGE_SCI_RAW" in tags
-
-    def test_classifies_ifu_dark_fits_header(self, tmp_path):
-        pytest.importorskip("astropy")
-        from astropy.io import fits as afits
-
-        hdr = afits.Header()
-        hdr["HIERARCH ESO DPR CATG"] = "CALIB"
-        hdr["HIERARCH ESO DPR TYPE"] = "DARK"
-        hdr["HIERARCH ESO DPR TECH"] = "IFU"
-        hdul = afits.HDUList([afits.PrimaryHDU(header=hdr)])
-        hdul.writeto(tmp_path / "dark.fits")
-
-        tags = collect_tags_from_fits(tmp_path)
-        assert "DARK_IFU_RAW" in tags
-
-    def test_skips_fits_with_unknown_header_triple(self, tmp_path):
-        pytest.importorskip("astropy")
-        from astropy.io import fits as afits
-
-        hdr = afits.Header()
-        hdr["HIERARCH ESO DPR CATG"] = "UNKNOWN"
-        hdr["HIERARCH ESO DPR TYPE"] = "GARBAGE"
-        hdr["HIERARCH ESO DPR TECH"] = "XYZ"
-        hdul = afits.HDUList([afits.PrimaryHDU(header=hdr)])
-        hdul.writeto(tmp_path / "unknown.fits")
-
-        tags = collect_tags_from_fits(tmp_path)
-        assert tags == set()
-
-    def test_collects_tags_from_multiple_fits_files(self, tmp_path):
-        pytest.importorskip("astropy")
-        from astropy.io import fits as afits
-
-        for (catg, typ, tech), fname in [
-            (("CALIB", "DETLIN", "IFU"), "detlin.fits"),
-            (("CALIB", "DARK",   "IFU"), "dark.fits"),
-            (("SCIENCE", "OBJECT", "IFU"), "sci.fits"),
-        ]:  # fmt: skip
-            hdr = afits.Header()
-            hdr["HIERARCH ESO DPR CATG"] = catg
-            hdr["HIERARCH ESO DPR TYPE"] = typ
-            hdr["HIERARCH ESO DPR TECH"] = tech
-            afits.HDUList([afits.PrimaryHDU(header=hdr)]).writeto(tmp_path / fname)
-
-        tags = collect_tags_from_fits(tmp_path)
-        assert tags == {"DETLIN_IFU_RAW", "DARK_IFU_RAW", "IFU_SCI_RAW"}
-
-    def test_skips_non_fits_files_silently(self, tmp_path):
-        pytest.importorskip("astropy")
-        (tmp_path / "readme.txt").write_text("not a fits file")
-        # Should not raise; no .fits files → empty set
-        tags = collect_tags_from_fits(tmp_path)
-        assert tags == set()
-
-    def test_recurses_into_subdirectories(self, tmp_path):
-        """--pipeline-input may point at an output-root; raw FITS live in
-        sub-directories (e.g. ``sim/``) and must still be classified."""
-        pytest.importorskip("astropy")
-        from astropy.io import fits as afits
-
-        sim_dir = tmp_path / "sim"
-        sim_dir.mkdir()
-        hdr = afits.Header()
-        hdr["HIERARCH ESO DPR CATG"] = "CALIB"
-        hdr["HIERARCH ESO DPR TYPE"] = "DARK"
-        hdr["HIERARCH ESO DPR TECH"] = "IFU"
-        afits.HDUList([afits.PrimaryHDU(header=hdr)]).writeto(sim_dir / "dark.fits")
-
-        tags = collect_tags_from_fits(tmp_path)
-        assert "DARK_IFU_RAW" in tags
 
 
 # ---------------------------------------------------------------------------

@@ -340,8 +340,8 @@ def _normalize_mode(mode: str) -> str:
 def scan_yaml_inputs(yaml_files):
     """Return ``(data_tags, has_science, sub_workflows)`` by scanning YAML.
 
-    Unlike :func:`infer_workflow`, this does *not* pick a single sub-workflow.
-    Instead it walks every block and records the set of sub-workflows
+    It does *not* pick a single sub-workflow: it walks every block and
+    records the set of sub-workflows
     implied by the per-block ``properties.tech`` / ``mode`` value.  Blocks
     whose tech/mode are unrecognised are silently skipped (their tags are
     still collected); the caller is expected to handle an empty
@@ -382,7 +382,7 @@ def scan_yaml_inputs(yaml_files):
 def scan_fits_inputs(fits_dir):
     """Return ``(data_tags, sub_workflows)`` from FITS headers in *fits_dir*.
 
-    Walks ``*.fits`` recursively (same as :func:`collect_tags_from_fits`).
+    Walks ``*.fits`` recursively, so an output root (``sim/``, ``pipeline/``, …) works too.
     Each file's ``HIERARCH ESO DPR TECH`` is mapped via ``TECH_TO_WORKFLOW``
     to identify which sub-workflow it belongs to.  Files whose tech is
     unrecognised contribute their classification tag (if any) but do not
@@ -435,80 +435,6 @@ def scan_fits_inputs(fits_dir):
     return data_tags, sub_workflows
 
 
-def infer_workflow(input_files):
-    """Return (workflow, has_science, data_tags) by scanning YAML blocks.
-
-    CSV inputs are skipped here: their AIT format does not carry enough
-    information for MTR to map to an EDPS workflow without parsing the full
-    csvParser logic. When the input list contains *no* YAML files this
-    function raises ValueError; callers should then fall back to FITS header
-    inference (after simulation).
-
-    For YAML files, checks ``properties.tech`` first, then ``mode`` as a
-    fallback. ``has_science`` is True when any block has
-    ``properties.catg == "SCIENCE"``. ``data_tags`` is the set of
-    ``do.catg`` values found across all YAML blocks; these equal the EDPS
-    classification tag names for the generated FITS files.
-    """
-    yaml_files = [p for p in input_files if Path(p).suffix.lower() in (".yaml", ".yml")]
-    if not yaml_files:
-        raise ValueError(
-            "No YAML files provided; workflow cannot be inferred from CSV "
-            "(it is auto-detected from the simulated FITS headers instead)."
-        )
-
-    techs = []
-    modes = []
-    has_science = False
-    data_tags = set()
-
-    for path in yaml_files:
-        with open(path) as fh:
-            data = yaml.safe_load(fh)
-        if not isinstance(data, dict):
-            continue
-        for block in data.values():
-            if not isinstance(block, dict):
-                continue
-            tag = block.get("do.catg", "")
-            if tag:
-                data_tags.add(tag)
-            props = block.get("properties", {})
-            tech = props.get("tech", "")
-            if tech and tech not in techs:
-                techs.append(tech)
-            mode = block.get("mode", "")
-            if mode and mode not in modes:
-                modes.append(mode)
-            if props.get("catg", "").upper() == "SCIENCE":
-                has_science = True
-
-    for t in techs:
-        key = _normalize_tech(t)
-        if key in TECH_TO_WORKFLOW:
-            return TECH_TO_WORKFLOW[key], has_science, data_tags
-    for m in modes:
-        key = _normalize_mode(m)
-        if key in MODE_TO_WORKFLOW:
-            return MODE_TO_WORKFLOW[key], has_science, data_tags
-
-    raise ValueError(
-        "Cannot determine workflow from YAML content.\n"
-        f"  Found tech values : {techs}\n"
-        f"  Found mode values : {modes}\n"
-        f"  Known tech values : {list(TECH_TO_WORKFLOW)}\n"
-        f"  Known mode values : {list(MODE_TO_WORKFLOW)}"
-    )
-
-
-def known_workflows():
-    """Return the sorted set of workflow names recognised by infer_workflow.
-
-    Exposed so the GUI workflow dropdown stays in sync with the CLI choices.
-    """
-    return sorted(set(TECH_TO_WORKFLOW.values()) | set(MODE_TO_WORKFLOW.values()))
-
-
 def classify_fits_file(path):
     """Return the EDPS classification tag for a single FITS file, or None.
 
@@ -539,55 +465,6 @@ def classify_fits_file(path):
     if pro_catg:
         return pro_catg
     return None
-
-
-def collect_tags_from_fits(fits_dir):
-    """Return the set of EDPS classification tags present in a FITS directory.
-
-    Walks *fits_dir* recursively so that ``--pipeline-input`` pointing at an
-    output-root (containing ``sim/``, ``pipeline/``, …) still finds raw FITS.
-    For each ``.fits`` file, delegates to :func:`classify_fits_file`.  Files
-    whose headers don't match any known rule are silently skipped.
-    """
-    tags = set()
-    for f in Path(fits_dir).rglob("*.fits"):
-        tag = classify_fits_file(f)
-        if tag:
-            tags.add(tag)
-    return tags
-
-
-def infer_workflow_from_fits(fits_dir):
-    """Infer the EDPS workflow from DPR TECH headers in a FITS directory.
-
-    Used when --no-sim is given without any YAML files, or when all inputs
-    are CSV (CSV cannot be auto-classified in MTR).
-    """
-    try:
-        from astropy.io import fits as afits
-    except ImportError as exc:
-        raise ValueError("astropy is required to infer workflow from FITS headers.") from exc
-
-    techs = []
-    for f in Path(fits_dir).rglob("*.fits"):
-        try:
-            with afits.open(f, memmap=True) as hdul:
-                tech = hdul[0].header.get("HIERARCH ESO DPR TECH", "").strip()
-            if tech and tech not in techs:
-                techs.append(tech)
-        except Exception:
-            continue
-
-    for t in techs:
-        if t in TECH_TO_WORKFLOW:
-            return TECH_TO_WORKFLOW[t]
-
-    raise ValueError(
-        "Cannot determine workflow from FITS headers.\n"
-        f"  Found DPR.TECH values : {techs}\n"
-        f"  Known DPR.TECH values : {list(TECH_TO_WORKFLOW)}\n"
-        "Pass YAML files or ensure FITS headers contain a recognised DPR.TECH value."
-    )
 
 
 def infer_edps_target(workflow, data_tags, has_science):

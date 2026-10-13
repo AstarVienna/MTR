@@ -16,7 +16,6 @@ checkout: MTR never clones, updates or deletes it (see user_owned_repos()).
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 from pathlib import Path
 
@@ -77,11 +76,6 @@ def inst_pkgs_dir() -> Path:
 
 def env_file() -> Path:
     return data_dir() / ".env"
-
-
-def venv_python() -> Path:
-    """Python interpreter that hosts MTR (the pipx/venv MTR was installed into)."""
-    return Path(sys.executable)
 
 
 def examples_dir() -> Path:
