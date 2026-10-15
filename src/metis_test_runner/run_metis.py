@@ -62,6 +62,12 @@ from .env import resolve_runtime_env
 INPUT_EXTS = (".yaml", ".yml", ".csv")
 
 
+# ScopeSim instrument packages the simulation uses. Each irdb release names the
+# oldest ScopeSim it loads (``needs_scopesim``), so METIS is bumped together with
+# the scopesim pin in installer.Installer.PIP_REQUIREMENTS.
+IRDB_RELEASES = {"METIS": "2026-09-23", "ELT": "2025-10-26", "Armazones": "2023-07-11"}
+
+
 # ---------------------------------------------------------------------------
 # Workflow lookup tables
 # ---------------------------------------------------------------------------
@@ -647,6 +653,14 @@ def static_calibs_dir_for(runner, output_root):
     return paths.data_dir() / "static_calibs"
 
 
+def _inst_pkgs_managed(inst_pkgs_path):
+    """True for MTR's own instrument-package folder, whose releases MTR may replace."""
+    try:
+        return Path(inst_pkgs_path).resolve() == (paths.data_dir() / "inst_pkgs").resolve()
+    except OSError:
+        return False
+
+
 def _build_sim_script(
     out_dir,
     do_calib,
@@ -662,8 +676,10 @@ def _build_sim_script(
     """Return the simulation driver script as a string.
 
     When *inst_pkgs_path* is given (default and native runners) the script
-    overrides ScopeSim's local_packages_path and auto-downloads the instrument
-    packages into that directory if the METIS package is not yet present.
+    overrides ScopeSim's local_packages_path and downloads the ``IRDB_RELEASES``
+    instrument packages that are missing there. In MTR's own folder it also
+    replaces a package whose ``version.yaml`` names another release; in a
+    folder the user chose it only warns.
 
     When *static_calibs_dir* is given (and *do_static* is true) the script
     generates static calibration prototypes (PERSISTENCE_MAP, ATM_PROFILE, …)
@@ -715,15 +731,40 @@ def _build_sim_script(
             "# Override ScopeSim's inst_pkgs path.",
             f'sim.rc.__config__["!SIM.file.local_packages_path"] = {inst_pkgs_path!r}',
             "",
-            "# Auto-download instrument packages if not present.",
+            "# Download the pinned instrument package releases MTR was tested with.",
+            "import shutil as _shutil",
+            "import yaml as _yaml",
             "from pathlib import Path as _Path",
             f"_inst_dir = _Path({inst_pkgs_path!r})",
-            "if not (_inst_dir / 'METIS').is_dir():",
-            "    print(f'Instrument packages not found at {_inst_dir}. Downloading \u2026')",
-            "    _inst_dir.mkdir(parents=True, exist_ok=True)",
-            "    sim.download_packages('METIS', release='2026-04-17')",
-            "    sim.download_packages('ELT', release='2025-10-26')",
-            "    sim.download_packages('Armazones', release='2023-07-11')",
+            f"_managed = {_inst_pkgs_managed(inst_pkgs_path)!r}",
+            "def _irdb_release(_pkg_dir):",
+            "    try:",
+            "        with open(_pkg_dir / 'version.yaml') as _fh:",
+            "            return str((_yaml.safe_load(_fh) or {}).get('version') or '') or None",
+            "    except (OSError, _yaml.YAMLError, AttributeError):",
+            "        return None",
+            f"for _pkg, _release in {IRDB_RELEASES!r}.items():",
+            "    _have = _irdb_release(_inst_dir / _pkg)",
+            "    if _have == _release:",
+            "        continue",
+            "    if (_inst_dir / _pkg).exists() and not _managed:",
+            "        print(f'Warning: {_inst_dir / _pkg} is release {_have or \"unknown\"}, but MTR expects '",
+            "              f'{_release}. Delete it to have MTR download {_release}.', file=sys.stderr)",
+            "        continue",
+            "    print(f'Downloading instrument package {_pkg} {_release} into {_inst_dir} \u2026')",
+            "    _tmp = _inst_dir / f'.{_pkg}.download{_os.getpid()}'",
+            "    _shutil.rmtree(_tmp, ignore_errors=True)",
+            "    sim.download_packages(_pkg, release=_release, save_dir=str(_tmp))",
+            "    if _irdb_release(_tmp / _pkg) != _release:",
+            "        _shutil.rmtree(_tmp, ignore_errors=True)",
+            "        sys.exit(f'Error: could not download instrument package {_pkg} release {_release}.')",
+            "    # Swap it in whole: unzipping over the old release would keep its stale files.",
+            "    _old = _inst_dir / f'.{_pkg}.old{_os.getpid()}'",
+            "    if (_inst_dir / _pkg).exists():",
+            "        _os.rename(_inst_dir / _pkg, _old)",
+            "    _os.rename(_tmp / _pkg, _inst_dir / _pkg)",
+            "    _shutil.rmtree(_old, ignore_errors=True)",
+            "    _shutil.rmtree(_tmp, ignore_errors=True)",
         ]
     lines += [
         "",

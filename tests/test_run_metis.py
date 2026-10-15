@@ -741,6 +741,95 @@ class TestClassifyFitsFile:
 # ---------------------------------------------------------------------------
 
 
+_STUB_SCOPESIM = """
+import os, sys, types
+rc = types.SimpleNamespace(__config__={})
+def download_packages(pkg, release, save_dir):
+    with open(os.environ["STUB_LOG"], "a") as fh:
+        fh.write(f"{pkg} {release}\\n")
+    os.makedirs(os.path.join(save_dir, pkg))
+    got = os.environ.get("STUB_SERVE", release)
+    with open(os.path.join(save_dir, pkg, "version.yaml"), "w") as fh:
+        fh.write(f"version: '{got}'\\n")
+"""
+
+
+class TestInstrumentPackageReleases:
+    """The generated script keeps inst_pkgs on the IRDB_RELEASES versions."""
+
+    def _run(self, tmp_path, inst, monkeypatch, managed, serve=None):
+        stub = tmp_path / "stub"
+        (stub / "scopesim").mkdir(parents=True, exist_ok=True)
+        (stub / "scopesim" / "__init__.py").write_text(_STUB_SCOPESIM)
+        monkeypatch.setattr(rm, "_inst_pkgs_managed", lambda _p: managed)
+        script = _build_sim_script(
+            out_dir=str(tmp_path / "out"),
+            do_calib=0,
+            do_static=False,
+            n_cores=1,
+            input_list=[],
+            inst_pkgs_path=str(inst),
+            do_sim=False,
+        )
+        env = {**os.environ, "PYTHONPATH": str(stub), "STUB_LOG": str(tmp_path / "log")}
+        if serve:
+            env["STUB_SERVE"] = serve
+        (tmp_path / "log").write_text("")
+        proc = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True)
+        return proc, (tmp_path / "log").read_text().split("\n")[:-1]
+
+    def _install(self, inst, pkg, version, extra=None):
+        (inst / pkg).mkdir(parents=True)
+        (inst / pkg / "version.yaml").write_text(f"version: '{version}'\n")
+        if extra:
+            (inst / pkg / extra).write_text("")
+
+    def test_missing_packages_are_downloaded(self, tmp_path, monkeypatch):
+        proc, log = self._run(tmp_path, tmp_path / "inst", monkeypatch, managed=False)
+        assert proc.returncode == 0, proc.stderr
+        assert log == [f"{pkg} {rel}" for pkg, rel in rm.IRDB_RELEASES.items()]
+        assert sorted(p.name for p in (tmp_path / "inst").iterdir()) == sorted(rm.IRDB_RELEASES)
+
+    def test_current_packages_are_left_alone(self, tmp_path, monkeypatch):
+        inst = tmp_path / "inst"
+        for pkg, rel in rm.IRDB_RELEASES.items():
+            self._install(inst, pkg, rel)
+        proc, log = self._run(tmp_path, inst, monkeypatch, managed=True)
+        assert proc.returncode == 0, proc.stderr
+        assert log == []
+
+    def test_old_release_is_replaced_in_mtrs_own_folder(self, tmp_path, monkeypatch):
+        inst = tmp_path / "inst"
+        for pkg, rel in rm.IRDB_RELEASES.items():
+            self._install(inst, pkg, rel)
+        (inst / "METIS").rename(tmp_path / "gone")
+        self._install(inst, "METIS", "2026-04-17", extra="stale.dat")
+        proc, log = self._run(tmp_path, inst, monkeypatch, managed=True)
+        assert proc.returncode == 0, proc.stderr
+        assert log == [f"METIS {rm.IRDB_RELEASES['METIS']}"]
+        assert not (inst / "METIS" / "stale.dat").exists()
+        assert sorted(p.name for p in inst.iterdir()) == sorted(rm.IRDB_RELEASES)
+
+    def test_old_release_in_a_user_folder_only_warns(self, tmp_path, monkeypatch):
+        inst = tmp_path / "inst"
+        for pkg, rel in rm.IRDB_RELEASES.items():
+            self._install(inst, pkg, rel)
+        (inst / "METIS" / "version.yaml").write_text("version: '2026-04-17'\n")
+        proc, log = self._run(tmp_path, inst, monkeypatch, managed=False)
+        assert proc.returncode == 0, proc.stderr
+        assert log == []
+        assert "is release 2026-04-17, but MTR expects" in proc.stderr
+
+    def test_wrong_download_fails_and_keeps_the_old_package(self, tmp_path, monkeypatch):
+        inst = tmp_path / "inst"
+        self._install(inst, "METIS", "2026-04-17")
+        proc, _ = self._run(tmp_path, inst, monkeypatch, managed=True, serve="1999-01-01")
+        assert proc.returncode == 1
+        assert "could not download instrument package METIS" in proc.stderr
+        assert (inst / "METIS" / "version.yaml").read_text() == "version: '2026-04-17'\n"
+        assert sorted(p.name for p in inst.iterdir()) == ["METIS"]
+
+
 class TestBuildSimScript:
     _base_kwargs = dict(
         out_dir="/tmp/sim",

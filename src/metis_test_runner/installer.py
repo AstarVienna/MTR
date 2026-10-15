@@ -438,8 +438,10 @@ class Installer:
         "edps",
         "pyesorex",
         "adari_core",
-        "scopesim==0.11.3",
-        "scopesim_templates==0.8.1",
+        # Bumped together with run_metis.IRDB_RELEASES: each irdb release
+        # names the oldest ScopeSim that loads it.
+        "scopesim==0.12.0",
+        "scopesim_templates==0.9.0",
     ]
 
     @classmethod

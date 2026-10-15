@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- **ScopeSim 0.12.0, scopesim_templates 0.9.0 and the METIS instrument package
+  2026-09-23.** The `default` runner replaces an older package release in its
+  own folder on the next run (checked via the package's `version.yaml`); in a
+  folder set with `--inst-pkgs` / `METIS_INST_PKGS` or the `native` runner's
+  `./inst_pkgs`, it only warns.
+
 ## 0.7.0 — 2026-10-13
 
 ### Added

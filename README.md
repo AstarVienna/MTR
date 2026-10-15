@@ -282,6 +282,11 @@ ScopeSim instrument packages (Armazones, ELT, METIS) will be downloaded into `./
 
 > **Tip:** with the `native` runner, launch the GUI (or invoke `mtr-cli`) from the same directory, or set `--inst-pkgs` — otherwise ScopeSim downloads a fresh copy of the instrument packages into every new directory. The `default` runner keeps them in the user data directory.
 
+MTR uses fixed package releases (METIS 2026-09-23, which needs ScopeSim 0.12).
+In its own folder in the user data directory it replaces an older release
+automatically; in a folder you chose it only warns, so delete the package there
+to get the new one.
+
 #### Reference
 
 | Mode | When to use |
