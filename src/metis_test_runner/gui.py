@@ -1546,17 +1546,12 @@ class ArchiveTab(WorkerHost, QWidget):
         self._catg_combo.setEditable(True)
         self._catg_combo.setMinimumWidth(200)
         self._catg_combo.addItem("(all)")
-        from itertools import chain as _chain
+        from . import tables
 
-        from .archive import TASK_PRODUCTS
-
-        all_produces = set(_chain.from_iterable(p.produces for p in TASK_PRODUCTS.values()))
-        for catg in sorted(all_produces):
+        for catg in sorted(tables.get().product_tags()):
             self._catg_combo.addItem(catg)
         self._catg_combo.insertSeparator(self._catg_combo.count())
-        from .run_metis import DPR_TO_TAG
-
-        for tag in sorted(set(DPR_TO_TAG.values())):
+        for tag in sorted(tables.get().raw_tags()):
             self._catg_combo.addItem(tag)
         filter_row.addWidget(self._catg_combo)
         filter_row.addSpacing(12)
@@ -1952,14 +1947,9 @@ class ArchiveTab(WorkerHost, QWidget):
             self._stage_table.removeRow(r)
 
     def _candidate_class_names(self) -> list[str]:
-        from itertools import chain as _chain
+        from . import tables
 
-        from .archive import TASK_PRODUCTS
-        from .run_metis import DPR_TO_TAG
-
-        produces = _chain.from_iterable(p.produces for p in TASK_PRODUCTS.values())
-        candidates = set(DPR_TO_TAG.values()) | set(produces)
-        return sorted(candidates)
+        return sorted(tables.get().raw_tags() | tables.get().product_tags())
 
     def _on_set_class_selected(self) -> None:
         rows = sorted({idx.row() for idx in self._stage_table.selectedIndexes()})

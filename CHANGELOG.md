@@ -3,11 +3,34 @@
 ## Unreleased
 
 ### Changed
+- **Classification tags, task chains and master products now come from
+  METIS_Pipeline** instead of tables copied by hand. MTR parses the EDPS
+  workflow files (no EDPS import needed): the `workflow_dir` EDPS is configured
+  with, else the Pipeline checkout. Without one, and always for `docker` /
+  `podman`, it uses a snapshot bundled with MTR, which the weekly CI job checks
+  against Pipeline main. Runs print the source as `Tables :`.
+- **`mode` routes through the instrument package.** A block without a known
+  `tech` now gets its workflow from the tech irdb assigns to its `mode`, which
+  adds `wcu_lss_l` / `wcu_lss_m` / `wcu_lss_n`, `lms_cube` and the `leiden_*`
+  modes.
 - **ScopeSim 0.12.0, scopesim_templates 0.9.0 and the METIS instrument package
   2026-09-23.** The `default` runner replaces an older package release in its
   own folder on the next run (checked via the package's `version.yaml`); in a
   folder set with `--inst-pkgs` / `METIS_INST_PKGS` or the `native` runner's
   `./inst_pkgs`, it only warns.
+- **Auto-fetch also fetches `IFU_STD_COMBINED`** (from `metis_ifu_std_reduce`)
+  for IFU science input.
+- Masters of a multi-product task are listed and fetched in alphabetical order.
+
+### Fixed
+- **YAML blocks are classified by their DPR keywords**, as the Pipeline
+  classifies the simulated frames, not by Simulations' `do.catg` file label.
+  Slit-loss blocks (`do.catg: LM_SLITLOSSES_RAW`) now trigger
+  `-m qc1calib`; `DARK_LM_RAW`, `LM_FLAT_TWILIGHT_RAW` and similar labels map to
+  the Pipeline's tags.
+- **LM sky frames are reduced**: `metis_lm_img_basic_reduce_sky`
+  (`LM_IMAGE_SKY_RAW`) joins the LM imaging, RAVC and APP chains, so sky-only
+  input runs `-m science`.
 
 ## 0.7.0 — 2026-10-13
 

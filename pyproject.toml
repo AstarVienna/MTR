@@ -104,7 +104,7 @@ testpaths = ["tests"]
 addopts = "-ra --strict-markers --strict-config"
 xfail_strict = true
 markers = [
-    "upstream: contract tests against METIS_Pipeline / METIS_Simulations checkouts (need METIS_PIPELINE_DIR / METIS_SIMULATIONS_DIR)",
+    "upstream: contract tests against METIS_Pipeline / METIS_Simulations / irdb checkouts (need METIS_PIPELINE_DIR / METIS_SIMULATIONS_DIR / METIS_IRDB_DIR)",
 ]
 
 [tool.ruff]

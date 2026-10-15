@@ -20,11 +20,10 @@ import shutil
 import sys
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
 
-from . import credentials, paths
+from . import credentials, paths, tables
 from .env import ENV_CFG_FIELDS as _ENV_CFG_FIELDS
 from .indexes import ESO_INDEX, PYCPL_INDEX
 
@@ -817,74 +816,11 @@ def upload_file(
 # Section D — Master calibration auto-download
 # ---------------------------------------------------------------------------
 
-# Canonical source of truth for what each EDPS task produces and consumes
-# lives in METIS_Pipeline/metisp/workflows/metis/metis_*_wkf.py (see
-# `.with_main_input(...)` / `.with_associated_input(...)` calls). The mapping
-# below mirrors that graph for the subset of tasks whose master products we
-# can fetch from the archive. Static reference files (PERSISTENCE_MAP,
-# ATM_PROFILE, REF_STD_CAT, etc.) are intentionally absent: they are
+# What each calibration task produces, and the task chains, are derived from
+# METIS_Pipeline's workflow files (see tables.py). Static reference files
+# (PERSISTENCE_MAP, ATM_PROFILE, REF_STD_CAT, etc.) are not fetched: they are
 # regenerated locally in run_metis.py's pre-pipeline prelude via
 # metis_simulations.makeCalibPrototypes.generateStaticCalibs().
-
-
-@dataclass(frozen=True)
-class TaskProducts:
-    """Archive-relevant I/O for a single EDPS task.
-
-    ``produces`` are the ``PRO.CATG`` names of the master products the task
-    writes; all must be present for the task to be considered covered by
-    local files. ``consumes`` lists non-static ancillary masters that are
-    required as input but are *not* produced by another task in the chain —
-    today this stays empty for every task (all such inputs are either
-    chain outputs or locally generated static calibs), and is retained as a
-    schema slot for the rare future case that needs it.
-    """
-
-    produces: tuple[str, ...]
-    consumes: tuple[str, ...] = ()
-
-
-# fmt: off
-TASK_PRODUCTS: dict[str, TaskProducts] = {
-    # LM IMG
-    "metis_lm_img_lingain":          TaskProducts(produces=("LINEARITY_2RG", "GAIN_MAP_2RG")),
-    "metis_lm_img_dark":             TaskProducts(produces=("MASTER_DARK_2RG",)),
-    "metis_lm_img_flat":             TaskProducts(produces=("MASTER_IMG_FLAT_LAMP_LM",)),
-    "metis_lm_img_distortion":       TaskProducts(produces=("LM_DISTORTION_TABLE",)),
-    # N IMG
-    "metis_n_img_lingain":           TaskProducts(produces=("LINEARITY_GEO", "GAIN_MAP_GEO")),
-    "metis_n_img_dark":              TaskProducts(produces=("MASTER_DARK_GEO",)),
-    "metis_n_img_flat":              TaskProducts(produces=("MASTER_IMG_FLAT_LAMP_N",)),
-    "metis_n_img_distortion":        TaskProducts(produces=("N_DISTORTION_TABLE",)),
-    # IFU
-    "metis_ifu_lingain":             TaskProducts(produces=("LINEARITY_IFU", "GAIN_MAP_IFU")),
-    "metis_ifu_dark":                TaskProducts(produces=("MASTER_DARK_IFU",)),
-    "metis_ifu_distortion":          TaskProducts(produces=("IFU_DISTORTION_TABLE",)),
-    "metis_ifu_wavecal":             TaskProducts(produces=("IFU_WAVECAL",)),
-    "metis_ifu_rsrf":                TaskProducts(produces=("RSRF_IFU",)),
-    # LM LSS
-    "metis_lm_lss_lingain":          TaskProducts(produces=("LINEARITY_2RG", "GAIN_MAP_2RG")),
-    "metis_lm_lss_dark":             TaskProducts(produces=("MASTER_DARK_2RG",)),
-    "metis_lm_lss_adc_slitloss":     TaskProducts(produces=("LM_ADC_SLITLOSS",)),
-    "metis_lm_lss_rsrf":             TaskProducts(produces=("MASTER_LM_LSS_RSRF",)),
-    "metis_lm_lss_trace":            TaskProducts(produces=("LM_LSS_TRACE",)),
-    # LM_LSS_CURVE is also written, but nothing downstream consumes it.
-    "metis_lm_lss_wave":             TaskProducts(produces=("LM_LSS_DIST_SOL", "LM_LSS_WAVE_GUESS")),
-    # N LSS
-    "metis_n_lss_lingain":           TaskProducts(produces=("LINEARITY_GEO", "GAIN_MAP_GEO")),
-    "metis_n_lss_dark":              TaskProducts(produces=("MASTER_DARK_GEO",)),
-    "metis_n_adc_slitloss":          TaskProducts(produces=("N_ADC_SLITLOSS",)),
-    "metis_n_lss_rsrf":              TaskProducts(produces=("MASTER_N_LSS_RSRF",)),
-    "metis_n_lss_trace":             TaskProducts(produces=("N_LSS_TRACE",)),
-}
-# fmt: on
-
-
-def _get_task_chain(workflow: str) -> list[tuple[str, str, str | None]]:
-    """Import and return the task chain for *workflow* from ``run_metis``."""
-    from .run_metis import WORKFLOW_TASK_CHAIN
-
-    return WORKFLOW_TASK_CHAIN.get(workflow, [])
 
 
 def _task_covered(task_name: str, raw_tag: str, data_tags: set[str]) -> bool:
@@ -899,10 +835,10 @@ def _task_covered(task_name: str, raw_tag: str, data_tags: set[str]) -> bool:
     """
     if raw_tag in data_tags:
         return True
-    entry = TASK_PRODUCTS.get(task_name)
-    if entry is None or not entry.produces:
+    produces = tables.get().task_products.get(task_name)
+    if not produces:
         return False
-    return all(catg in data_tags for catg in entry.produces)
+    return all(catg in data_tags for catg in produces)
 
 
 def identify_missing_calibrations(
@@ -912,7 +848,7 @@ def identify_missing_calibrations(
 ) -> list[tuple[str, str]]:
     """Identify master calibrations needed but not available locally.
 
-    Walks the ``WORKFLOW_TASK_CHAIN`` for *workflow*.  For each non-science
+    Walks the task chain for *workflow*.  For each non-science
     task that is **not** covered but is upstream of one that **is**, every
     ``PRO.CATG`` the task produces that is missing from *data_tags* is
     returned as its own entry.
@@ -920,7 +856,7 @@ def identify_missing_calibrations(
     Returns a list of ``(task_name, master_pro_catg)`` pairs; a single task
     may appear multiple times when it produces more than one master.
     """
-    chain = _get_task_chain(workflow)
+    chain = tables.get().chains.get(workflow, [])
     if not chain:
         return []
 
@@ -948,10 +884,7 @@ def identify_missing_calibrations(
             continue
         if _task_covered(task_name, tag, data_tags):
             continue
-        entry = TASK_PRODUCTS.get(task_name)
-        if entry is None:
-            continue
-        for pro_catg in entry.produces:
+        for pro_catg in tables.get().task_products.get(task_name, ()):
             if pro_catg not in data_tags:
                 missing.append((task_name, pro_catg))
     return missing

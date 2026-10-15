@@ -136,6 +136,12 @@ files. To pull missing master calibrations automatically during a run, tick
 | `metis_lm_app_wkf` | `APP,LM` |
 | `metis_pupil_imaging_wkf` | `PUP,LM`, `PUP,N` |
 
+This routing is MTR's own choice. Everything else (classification tags, task
+chains, master products) is read from the Pipeline's workflow files: the
+`workflow_dir` EDPS is configured with, else the Pipeline checkout, else a
+snapshot bundled with MTR (always for `docker` / `podman`). Each run prints the
+source as `Tables :`.
+
 ## Output Layout
 
 Output is written under the chosen output directory (default: `./output/<timestamp>/`):
@@ -311,13 +317,13 @@ See [`small_test_img_lm.csv`](https://github.com/AstarVienna/MTR/blob/main/src/m
 
 ### YAML Format
 
-Each top-level key in the YAML is one *observation block*. The workflow (`lm_img`, `n_img`, `ifu`, `lm_lss`, `n_lss`, …) and the deepest pipeline target task are inferred automatically from the YAML content — primarily from `properties.tech`, falling back to `mode`.
+Each top-level key in the YAML is one *observation block*. The workflow (`lm_img`, `n_img`, `ifu`, `lm_lss`, `n_lss`, …) and the deepest pipeline target task are inferred automatically from the YAML content — primarily from `properties.tech`, falling back to the tech the instrument package gives `mode`. Each block's classification tag comes from `properties.catg` / `type` / `tech`, the DPR keywords its frames get; `do.catg` only names the files, and is used only when that triple is unknown.
 
 Required fields per block:
 
 ```yaml
 BLOCK_NAME:
-  do.catg: <EDPS classification tag>   # e.g. DETLIN_IFU_RAW, IFU_SCI_RAW
+  do.catg: <file label>                # e.g. DETLIN_IFU_RAW, IFU_SCI_RAW
   mode: <scopesim mode>                 # e.g. wcu_lms, lms
   source:
     name: <scopesim source name>        # e.g. empty_sky, star

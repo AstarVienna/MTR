@@ -23,7 +23,7 @@ import pytest
 # global warnings.showwarning state.
 from astropy.io import fits as _afits
 
-from metis_test_runner import archive, credentials, paths
+from metis_test_runner import archive, credentials, paths, tables
 
 # Mocks for the commonwise database modules imported by _ensure_db_connection().
 _DB_MOCKS = {
@@ -1365,6 +1365,7 @@ class TestIdentifyMissingCalibrations:
             "metis_ifu_distortion",
             "metis_ifu_wavecal",
             "metis_ifu_rsrf",
+            "metis_ifu_std_reduce",
         }
         # ...and never the science task itself.
         assert not any("sci_reduce" in t for t in task_names)
@@ -1424,8 +1425,8 @@ class TestIdentifyMissingCalibrations:
             has_science=False,
         )
         assert missing == [
-            ("metis_lm_img_lingain", "LINEARITY_2RG"),
             ("metis_lm_img_lingain", "GAIN_MAP_2RG"),
+            ("metis_lm_img_lingain", "LINEARITY_2RG"),
         ]
 
     def test_only_masters_no_raw(self):
@@ -1595,32 +1596,25 @@ class TestFetchMissingCalibrations:
 
 
 class TestTaskProductsConsistency:
-    """TASK_PRODUCTS is hand-maintained against WORKFLOW_TASK_CHAIN."""
+    """Task products and chains both come from the Pipeline workflows."""
 
-    def test_every_task_products_key_is_a_real_task(self):
-        from metis_test_runner.run_metis import WORKFLOW_TASK_CHAIN
+    def test_every_task_products_key_is_a_chain_task(self):
+        t = tables.get()
+        real = {name for chain in t.chains.values() for name, _, _ in chain}
+        assert sorted(set(t.task_products) - real) == []
 
-        real = {t for chain in WORKFLOW_TASK_CHAIN.values() for t, _, _ in chain}
-        unknown = sorted(set(archive.TASK_PRODUCTS) - real)
-        assert unknown == [], f"TASK_PRODUCTS names no-longer-existent tasks: {unknown}"
-
-    def test_calibration_tasks_without_products_are_documented(self):
-        """A calib task absent from TASK_PRODUCTS can never be auto-fetched.
-
-        identify_missing_calibrations silently `continue`s past it, so this
-        pins the current gap rather than letting it grow unnoticed.
-        """
-        from metis_test_runner.run_metis import WORKFLOW_TASK_CHAIN
-
+    def test_every_calibration_task_can_be_fetched(self):
+        """identify_missing_calibrations skips a calib task without products."""
+        t = tables.get()
         uncoverable = sorted(
             {
-                t
-                for chain in WORKFLOW_TASK_CHAIN.values()
-                for t, _, meta in chain
-                if meta != "science" and t not in archive.TASK_PRODUCTS
+                name
+                for chain in t.chains.values()
+                for name, _, meta in chain
+                if meta != "science" and name not in t.task_products
             }
         )
-        assert uncoverable == ["metis_ifu_std_reduce"]
+        assert uncoverable == []
 
 
 # ---------------------------------------------------------------------------

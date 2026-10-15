@@ -109,11 +109,12 @@ jobs:
           mtr-install --help
           mtr-uninstall --help
 
-  # MTR hard-codes Pipeline task chains, classification tags and archive
-  # product names, and bundles Simulations input files. Check them against
-  # the current upstream main branches; the mocked suite above cannot.
+  # MTR bundles a snapshot of the Pipeline's task chains, classification tags
+  # and products and of the pinned irdb release's modes, keeps its own tech
+  # routing, and bundles Simulations input files. Check them against the
+  # current upstream main branches; the mocked suite above cannot.
   upstream-contract:
-    name: Upstream contract (METIS_Pipeline / METIS_Simulations main)
+    name: Upstream contract (METIS_Pipeline / METIS_Simulations main, pinned irdb)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -139,10 +140,24 @@ jobs:
       - name: Install MTR with dev extras
         run: pip install -e .[dev]
 
+      - name: Read the pinned irdb release
+        id: irdb
+        run: python -c "from metis_test_runner.run_metis import IRDB_RELEASES as r; print(f'tag=METIS.{r[\"METIS\"]}')" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        with:
+          repository: AstarVienna/irdb
+          ref: ${{ steps.irdb.outputs.tag }}
+          path: upstream/irdb
+          sparse-checkout: METIS
+
       - name: Run the contract tests
         env:
           METIS_PIPELINE_DIR: ${{ github.workspace }}/upstream/METIS_Pipeline
           METIS_SIMULATIONS_DIR: ${{ github.workspace }}/upstream/METIS_Simulations
+          METIS_IRDB_DIR: ${{ github.workspace }}/upstream/irdb
+        # On a snapshot failure, refresh it with
+        # python -m metis_test_runner.upstream PIPELINE_DIR IRDB_DIR
         run: pytest tests/test_upstream_contract.py -v -m upstream
 
   package:
@@ -183,6 +198,7 @@ jobs:
               "metis_test_runner/examples/small_test_img_n.csv",
               "metis_test_runner/examples/small_test_img_n.yaml",
               "metis_test_runner/py.typed",
+              "metis_test_runner/upstream_snapshot.json",
           ]
           missing = [n for n in expected if n not in names]
           if missing:

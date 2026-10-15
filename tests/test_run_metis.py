@@ -21,12 +21,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from metis_test_runner import run_metis as rm
+from metis_test_runner import tables
 from metis_test_runner.run_metis import (
-    DPR_TO_TAG,
-    MODE_TO_WORKFLOW,
-    TECH_TO_WORKFLOW,
-    UMBRELLA_WORKFLOW,
-    WORKFLOW_TASK_CHAIN,
     _build_sim_script,
     _check_default_env,
     _csv_yaml_target,
@@ -564,7 +560,7 @@ class TestUmbrellaWorkflow:
     def test_umbrella_constant_value(self):
         # The umbrella workflow is the EDPS workflow that imports every METIS
         # sub-workflow; main() always invokes EDPS with this name.
-        assert UMBRELLA_WORKFLOW == "metis.metis_wkf"
+        assert tables.UMBRELLA_WORKFLOW == "metis.metis_wkf"
 
 
 # ---------------------------------------------------------------------------
@@ -1253,48 +1249,61 @@ class TestDefaultSubprocessEnv:
 
 class TestLookupTableConsistency:
     def test_all_tech_to_workflow_values_are_known_workflows(self):
-        known = set(WORKFLOW_TASK_CHAIN)
-        for tech, wf in TECH_TO_WORKFLOW.items():
-            assert wf in known, f"TECH_TO_WORKFLOW[{tech!r}] = {wf!r} not in WORKFLOW_TASK_CHAIN"
+        known = set(tables.get().chains)
+        for tech, wf in tables.TECH_TO_WORKFLOW.items():
+            assert wf in known, f"TECH_TO_WORKFLOW[{tech!r}] = {wf!r} has no task chain"
 
-    def test_all_mode_to_workflow_values_are_known_workflows(self):
-        known = set(WORKFLOW_TASK_CHAIN)
-        for mode, wf in MODE_TO_WORKFLOW.items():
-            assert wf in known, f"MODE_TO_WORKFLOW[{mode!r}] = {wf!r} not in WORKFLOW_TASK_CHAIN"
+    def test_every_mode_routes_to_a_known_workflow(self):
+        t = tables.get()
+        for mode in t.mode_to_tech:
+            assert t.workflow_for_mode(mode) in t.chains, f"mode {mode!r} has no workflow"
+
+    @pytest.mark.parametrize(
+        "mode, wf",
+        [
+            ("img_lm", "metis.metis_lm_img_wkf"),
+            ("wcu_img_n", "metis.metis_n_img_wkf"),
+            ("lss_m", "metis.metis_lm_lss_wkf"),
+            ("wcu_lss_n", "metis.metis_n_lss_wkf"),
+            (" WCU_LMS ", "metis.metis_ifu_wkf"),
+        ],
+    )
+    def test_mode_routes_through_irdb_tech(self, mode, wf):
+        assert tables.get().workflow_for_mode(mode) == wf
 
     def test_each_workflow_task_chain_has_at_least_one_entry(self):
-        for wf, chain in WORKFLOW_TASK_CHAIN.items():
+        for wf, chain in tables.get().chains.items():
             assert len(chain) >= 1, f"Empty task chain for {wf!r}"
 
     def test_workflow_task_chain_tuples_have_three_elements(self):
-        for wf, chain in WORKFLOW_TASK_CHAIN.items():
+        for wf, chain in tables.get().chains.items():
             for entry in chain:
                 assert len(entry) == 3, f"Task chain entry in {wf!r} does not have 3 elements: {entry!r}"
 
     def test_meta_targets_only_valid_values(self):
         valid = {None, "qc1calib", "science"}
-        for wf, chain in WORKFLOW_TASK_CHAIN.items():
+        for wf, chain in tables.get().chains.items():
             for _, _, meta in chain:
                 assert meta in valid, f"Unknown meta_target {meta!r} in workflow {wf!r}"
 
     def test_dpr_to_tag_keys_are_three_tuples(self):
-        for key in DPR_TO_TAG:
+        for key in tables.get().dpr_to_tag:
             assert isinstance(key, tuple) and len(key) == 3, f"DPR_TO_TAG key is not a 3-tuple: {key!r}"
 
     @pytest.mark.parametrize("catg", ["CALIB", "SCIENCE"])
     def test_sky_frames_classify_with_either_catg(self, catg):
         """The pipeline's *_SKY_RAW rules ignore DPR.CATG (Simulations issue #151)."""
-        assert rm.lookup_dpr_tag(catg, "SKY", "IMAGE,LM") == "LM_IMAGE_SKY_RAW"
-        assert rm.lookup_dpr_tag(catg, "SKY", "LSS,N") == "N_LSS_SKY_RAW"
+        assert tables.get().lookup_dpr_tag(catg, "SKY", "IMAGE,LM") == "LM_IMAGE_SKY_RAW"
+        assert tables.get().lookup_dpr_tag(catg, "SKY", "LSS,N") == "N_LSS_SKY_RAW"
 
     def test_exact_catg_still_required_elsewhere(self):
-        assert rm.lookup_dpr_tag("CALIB", "SKY", "IFU") == "IFU_SKY_RAW"
-        assert rm.lookup_dpr_tag("SCIENCE", "SKY", "IFU") is None
-        assert rm.lookup_dpr_tag("SCIENCE", "STD", "IMAGE,LM") is None
+        assert tables.get().lookup_dpr_tag("CALIB", "SKY", "IFU") == "IFU_SKY_RAW"
+        assert tables.get().lookup_dpr_tag("SCIENCE", "SKY", "IFU") is None
+        assert tables.get().lookup_dpr_tag("SCIENCE", "STD", "IMAGE,LM") is None
 
     def test_ifu_workflow_science_task_has_science_meta_target(self):
         """The IFU sci_reduce task must be gated by 'science'."""
-        chain = dict((name, meta) for name, _, meta in WORKFLOW_TASK_CHAIN["metis.metis_ifu_wkf"])
+        chain = dict((name, meta) for name, _, meta in tables.get().chains["metis.metis_ifu_wkf"])
         assert chain.get("metis_ifu_sci_reduce") == "science"
 
     def test_lm_img_workflow_calib_tasks_have_no_meta_target(self):
@@ -1305,14 +1314,14 @@ class TestLookupTableConsistency:
             "metis_lm_img_flat",
             "metis_lm_img_distortion",
         }
-        for name, _, meta in WORKFLOW_TASK_CHAIN["metis.metis_lm_img_wkf"]:
+        for name, _, meta in tables.get().chains["metis.metis_lm_img_wkf"]:
             if name in calib_tasks:
                 assert meta is None, f"Expected no meta_target for {name!r}, got {meta!r}"
 
     def test_lss_calib_tasks_gated_by_qc1calib(self):
         """All non-science tasks in LSS workflows must be qc1calib-gated."""
         for wf in ("metis.metis_lm_lss_wkf", "metis.metis_n_lss_wkf"):
-            for name, _, meta in WORKFLOW_TASK_CHAIN[wf]:
+            for name, _, meta in tables.get().chains[wf]:
                 if meta != "science":
                     assert meta == "qc1calib", f"LSS task {name!r} in {wf!r} expected qc1calib, got {meta!r}"
 

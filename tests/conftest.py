@@ -25,6 +25,7 @@ os.environ["XDG_DATA_HOME"] = _qsettings_tmp
 # Only the upstream contract tests see them, via the fixtures below.
 _UPSTREAM_PIPELINE = os.environ.pop("METIS_PIPELINE_DIR", None)
 _UPSTREAM_SIMULATIONS = os.environ.pop("METIS_SIMULATIONS_DIR", None)
+_UPSTREAM_IRDB = os.environ.pop("METIS_IRDB_DIR", None)
 
 import pytest  # noqa: E402 (must follow the env setup above)
 
@@ -53,3 +54,19 @@ def upstream_pipeline_dir():
 @pytest.fixture(scope="session")
 def upstream_simulations_dir():
     return _upstream_dir(_UPSTREAM_SIMULATIONS, "METIS_SIMULATIONS_DIR")
+
+
+@pytest.fixture(scope="session")
+def upstream_irdb_dir():
+    """irdb packages at the pinned METIS release (an inst_pkgs folder or a tagged clone)."""
+    return _upstream_dir(_UPSTREAM_IRDB, "METIS_IRDB_DIR")
+
+
+@pytest.fixture(autouse=True)
+def _bundled_tables():
+    """Use the bundled snapshot, not whatever Pipeline checkout this machine has."""
+    from metis_test_runner import tables
+
+    tables.use_snapshot()
+    yield
+    tables.use_snapshot()

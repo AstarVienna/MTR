@@ -55,7 +55,7 @@ from pathlib import Path
 
 import yaml
 
-from . import __version__, paths
+from . import __version__, paths, tables
 from .env import resolve_runtime_env
 
 # Recognised input file extensions
@@ -66,207 +66,6 @@ INPUT_EXTS = (".yaml", ".yml", ".csv")
 # oldest ScopeSim it loads (``needs_scopesim``), so METIS is bumped together with
 # the scopesim pin in installer.Installer.PIP_REQUIREMENTS.
 IRDB_RELEASES = {"METIS": "2026-09-23", "ELT": "2025-10-26", "Armazones": "2023-07-11"}
-
-
-# ---------------------------------------------------------------------------
-# Workflow lookup tables
-# ---------------------------------------------------------------------------
-
-# Umbrella workflow that imports every METIS sub-workflow.  When mixed inputs
-# span multiple sub-workflows we invoke this one and pass per-sub-workflow
-# -t / -m targeting flags so EDPS can pick the right tasks from a single run.
-UMBRELLA_WORKFLOW = "metis.metis_wkf"
-
-# Primary key: properties.tech value in YAML block
-# fmt: off
-TECH_TO_WORKFLOW = {
-    "IMAGE,LM": "metis.metis_lm_img_wkf",
-    "IMAGE,N":  "metis.metis_n_img_wkf",
-    "LMS":      "metis.metis_ifu_wkf",    # legacy, warned about in scan_yaml_inputs
-    "IFU":      "metis.metis_ifu_wkf",
-    "LSS,LM":   "metis.metis_lm_lss_wkf",
-    "LSS,N":    "metis.metis_n_lss_wkf",
-    "RAVC,LM":  "metis.metis_lm_ravc_wkf",
-    "RAVC,IFU": "metis.metis_ifu_wkf",
-    "APP,LM":   "metis.metis_lm_app_wkf",
-    "PUP,LM":   "metis.metis_pupil_imaging_wkf",
-    "PUP,N":    "metis.metis_pupil_imaging_wkf",
-}
-# fmt: on
-
-# Fallback key: mode value in YAML block
-# fmt: off
-MODE_TO_WORKFLOW = {
-    "img_lm":     "metis.metis_lm_img_wkf",
-    "wcu_img_lm": "metis.metis_lm_img_wkf",
-    "img_n":      "metis.metis_n_img_wkf",
-    "wcu_img_n":  "metis.metis_n_img_wkf",
-    "lss_l":      "metis.metis_lm_lss_wkf",
-    "lss_m":      "metis.metis_lm_lss_wkf",
-    "lss_n":      "metis.metis_n_lss_wkf",
-    "lms":        "metis.metis_ifu_wkf",
-    "wcu_lms":    "metis.metis_ifu_wkf",
-}
-# fmt: on
-
-# ---------------------------------------------------------------------------
-# Task chain tables
-# ---------------------------------------------------------------------------
-
-# Ordered task chain for each workflow: (task_name, main_input_tag, meta_target).
-# Listed from most upstream (first calibration step) to most downstream.
-# meta_target matches the EDPS meta-target that gates the task:
-#   None       — task has no with_meta_targets(); always eligible
-#   "qc1calib" — task gated behind QC1_CALIB meta-target
-#   "science"  — task gated behind SCIENCE meta-target
-#
-# Only tasks with a raw-file main input are listed here; intermediate tasks
-# whose main input is a previous task's product are omitted because they run
-# automatically when their upstream task is targeted.
-# fmt: off
-WORKFLOW_TASK_CHAIN = {
-    "metis.metis_ifu_wkf": [
-        ("metis_ifu_lingain",    "DETLIN_IFU_RAW",      None),
-        ("metis_ifu_dark",       "DARK_IFU_RAW",         None),
-        ("metis_ifu_distortion", "IFU_DISTORTION_RAW",  None),
-        ("metis_ifu_wavecal",    "IFU_WAVE_RAW",         None),
-        ("metis_ifu_rsrf",       "IFU_RSRF_RAW",         None),
-        ("metis_ifu_std_reduce", "IFU_STD_RAW",          None),
-        ("metis_ifu_sci_reduce", "IFU_SCI_RAW",          "science"),
-    ],
-    "metis.metis_lm_img_wkf": [
-        ("metis_lm_img_lingain",          "DETLIN_2RG_RAW",   None),
-        ("metis_lm_img_dark",             "DARK_2RG_RAW",     None),
-        ("metis_lm_img_flat",             "LM_FLAT_LAMP_RAW", None),
-        ("metis_lm_img_distortion",       "LM_DISTORTION_RAW", None),
-        ("metis_lm_img_basic_reduce_sci", "LM_IMAGE_SCI_RAW", "science"),
-        ("metis_lm_img_basic_reduce_std", "LM_IMAGE_STD_RAW", "science"),
-    ],
-    "metis.metis_n_img_wkf": [
-        ("metis_n_img_lingain",    "DETLIN_GEO_RAW",   None),
-        ("metis_n_img_dark",       "DARK_GEO_RAW",     None),
-        ("metis_n_img_flat",       "N_FLAT_LAMP_RAW",  None),
-        ("metis_n_img_distortion", "N_DISTORTION_RAW", None),
-        ("metis_n_img_chopnod_sci", "N_IMAGE_SCI_RAW", "science"),
-        ("metis_n_img_chopnod_std", "N_IMAGE_STD_RAW", "science"),
-    ],
-    # LSS calibration tasks are all gated behind QC1_CALIB.
-    "metis.metis_lm_lss_wkf": [
-        ("metis_lm_lss_lingain",      "DETLIN_2RG_RAW",       "qc1calib"),
-        ("metis_lm_lss_dark",         "DARK_2RG_RAW",         "qc1calib"),
-        ("metis_lm_lss_adc_slitloss", "LM_ADC_SLITLOSS_RAW", "qc1calib"),
-        ("metis_lm_lss_rsrf",         "LM_LSS_RSRF_RAW",      "qc1calib"),
-        ("metis_lm_lss_trace",        "LM_LSS_RSRF_PINH_RAW", "qc1calib"),
-        ("metis_lm_lss_wave",         "LM_LSS_WAVE_RAW",      "qc1calib"),
-        ("metis_lm_lss_std",          "LM_LSS_STD_RAW",       "science"),
-        ("metis_lm_lss_sci",          "LM_LSS_SCI_RAW",       "science"),
-    ],
-    "metis.metis_n_lss_wkf": [
-        ("metis_n_lss_lingain",  "DETLIN_GEO_RAW",       "qc1calib"),
-        ("metis_n_lss_dark",     "DARK_GEO_RAW",         "qc1calib"),
-        ("metis_n_adc_slitloss", "N_ADC_SLITLOSS_RAW",  "qc1calib"),
-        ("metis_n_lss_rsrf",     "N_LSS_RSRF_RAW",       "qc1calib"),
-        ("metis_n_lss_trace",    "N_LSS_RSRF_PINH_RAW",  "qc1calib"),
-        ("metis_n_lss_std",      "N_LSS_STD_RAW",        "science"),
-        ("metis_n_lss_sci",      "N_LSS_SCI_RAW",        "science"),
-    ],
-    # RAVC and APP extend the LM IMG workflow with a single extra science task.
-    "metis.metis_lm_ravc_wkf": [
-        ("metis_lm_img_lingain",          "DETLIN_2RG_RAW",    None),
-        ("metis_lm_img_dark",             "DARK_2RG_RAW",      None),
-        ("metis_lm_img_flat",             "LM_FLAT_LAMP_RAW",  None),
-        ("metis_lm_img_distortion",       "LM_DISTORTION_RAW", None),
-        ("metis_lm_img_basic_reduce_sci", "LM_IMAGE_SCI_RAW",  "science"),
-        ("metis_lm_img_basic_reduce_std", "LM_IMAGE_STD_RAW",  "science"),
-    ],
-    "metis.metis_lm_app_wkf": [
-        ("metis_lm_img_lingain",          "DETLIN_2RG_RAW",    None),
-        ("metis_lm_img_dark",             "DARK_2RG_RAW",      None),
-        ("metis_lm_img_flat",             "LM_FLAT_LAMP_RAW",  None),
-        ("metis_lm_img_distortion",       "LM_DISTORTION_RAW", None),
-        ("metis_lm_img_basic_reduce_sci", "LM_IMAGE_SCI_RAW",  "science"),
-        ("metis_lm_img_basic_reduce_std", "LM_IMAGE_STD_RAW",  "science"),
-    ],
-    # Pupil imaging reuses LM IMG calibration tasks.
-    "metis.metis_pupil_imaging_wkf": [
-        ("metis_lm_img_lingain", "DETLIN_2RG_RAW",   None),
-        ("metis_lm_img_dark",    "DARK_2RG_RAW",     None),
-        ("metis_lm_img_flat",    "LM_FLAT_LAMP_RAW", None),
-        ("metis_pupil_imaging",  "LM_PUPIL_RAW",     "science"),
-    ],
-}
-# fmt: on
-
-# Reverse lookup: (dpr.catg, dpr.type, dpr.tech) → EDPS classification tag.
-# Used to classify FITS files by their ESO DPR headers when --no-sim is given.
-# Derived from metis_classification.py (plus the rules defined in
-# metis_chophome_wkf.py / metis_pupil_imaging_wkf.py). A catg of None means
-# the pipeline rule ignores DPR.CATG (sky frames may be CALIB or SCIENCE);
-# use lookup_dpr_tag() rather than indexing directly.
-# fmt: off
-DPR_TO_TAG = {
-    # LM IMG
-    ("CALIB",     "DETLIN",          "IMAGE,LM"): "DETLIN_2RG_RAW",
-    ("CALIB",     "DARK",            "IMAGE,LM"): "DARK_2RG_RAW",
-    ("CALIB",     "DISTORTION",      "IMAGE,LM"): "LM_DISTORTION_RAW",
-    ("CALIB",     "DARK,WCUOFF",     "IMAGE,LM"): "LM_WCU_OFF_RAW",
-    ("CALIB",     "FLAT,LAMP",       "IMAGE,LM"): "LM_FLAT_LAMP_RAW",
-    ("CALIB",     "FLAT,TWILIGHT",   "IMAGE,LM"): "LM_TWILIGHT_FLAT",
-    ("SCIENCE",   "OBJECT",          "IMAGE,LM"): "LM_IMAGE_SCI_RAW",
-    (None,        "SKY",             "IMAGE,LM"): "LM_IMAGE_SKY_RAW",
-    ("CALIB",     "STD",             "IMAGE,LM"): "LM_IMAGE_STD_RAW",
-    ("CALIB",     "PSF,OFFAXIS",     "IMAGE,LM"): "LM_OFF_AXIS_PSF_RAW",
-    ("CALIB",     "CHOPHOME",        "IMAGE,LM"): "LM_CHOPHOME_RAW",
-    # N IMG
-    ("CALIB",     "DETLIN",          "IMAGE,N"):  "DETLIN_GEO_RAW",
-    ("CALIB",     "DARK",            "IMAGE,N"):  "DARK_GEO_RAW",
-    ("CALIB",     "DISTORTION",      "IMAGE,N"):  "N_DISTORTION_RAW",
-    ("CALIB",     "DARK,WCUOFF",     "IMAGE,N"):  "N_WCU_OFF_RAW",
-    ("CALIB",     "FLAT,LAMP",       "IMAGE,N"):  "N_FLAT_LAMP_RAW",
-    ("CALIB",     "FLAT,TWILIGHT",   "IMAGE,N"):  "N_TWILIGHT_FLAT",
-    ("SCIENCE",   "OBJECT",          "IMAGE,N"):  "N_IMAGE_SCI_RAW",
-    (None,        "SKY",             "IMAGE,N"):  "N_IMAGE_SKY_RAW",
-    ("CALIB",     "STD",             "IMAGE,N"):  "N_IMAGE_STD_RAW",
-    # IFU
-    ("CALIB",     "DETLIN",          "IFU"):      "DETLIN_IFU_RAW",
-    ("CALIB",     "DARK",            "IFU"):      "DARK_IFU_RAW",
-    ("CALIB",     "DISTORTION",      "IFU"):      "IFU_DISTORTION_RAW",
-    ("CALIB",     "WAVE",            "IFU"):      "IFU_WAVE_RAW",
-    ("CALIB",     "RSRF",            "IFU"):      "IFU_RSRF_RAW",
-    ("CALIB",     "DARK,WCUOFF",     "IFU"):      "IFU_WCU_OFF_RAW",
-    ("CALIB",     "STD",             "IFU"):      "IFU_STD_RAW",
-    ("CALIB",     "SKY",             "IFU"):      "IFU_SKY_RAW",
-    ("SCIENCE",   "OBJECT",          "IFU"):      "IFU_SCI_RAW",
-    # LM LSS
-    ("CALIB",     "SLITLOSS",        "LSS,LM"):   "LM_ADC_SLITLOSS_RAW",
-    ("CALIB",     "FLAT,LAMP",       "LSS,LM"):   "LM_LSS_RSRF_RAW",
-    ("CALIB",     "FLAT,LAMP,PINH",  "LSS,LM"):   "LM_LSS_RSRF_PINH_RAW",
-    ("CALIB",     "WAVE",            "LSS,LM"):   "LM_LSS_WAVE_RAW",
-    ("CALIB",     "STD",             "LSS,LM"):   "LM_LSS_STD_RAW",
-    ("SCIENCE",   "OBJECT",          "LSS,LM"):   "LM_LSS_SCI_RAW",
-    (None,        "SKY",             "LSS,LM"):   "LM_LSS_SKY_RAW",
-    # N LSS
-    ("CALIB",     "SLITLOSS",        "LSS,N"):    "N_ADC_SLITLOSS_RAW",
-    ("CALIB",     "FLAT,LAMP",       "LSS,N"):    "N_LSS_RSRF_RAW",
-    ("CALIB",     "FLAT,LAMP,PINH",  "LSS,N"):    "N_LSS_RSRF_PINH_RAW",
-    ("CALIB",     "WAVE",            "LSS,N"):    "N_LSS_WAVE_RAW",
-    ("CALIB",     "STD",             "LSS,N"):    "N_LSS_STD_RAW",
-    ("SCIENCE",   "OBJECT",          "LSS,N"):    "N_LSS_SCI_RAW",
-    (None,        "SKY",             "LSS,N"):    "N_LSS_SKY_RAW",
-    # Pupil
-    ("TECHNICAL", "PUPIL",           "PUP,LM"):   "LM_PUPIL_RAW",
-    ("TECHNICAL", "PUPIL",           "PUP,N"):    "N_PUPIL_RAW",
-}
-# fmt: on
-
-
-def lookup_dpr_tag(catg, typ, tech):
-    """Map a DPR (catg, type, tech) triple to its classification tag, or None.
-
-    Falls back to the catg-agnostic entry, mirroring pipeline rules that do
-    not test DPR.CATG.
-    """
-    return DPR_TO_TAG.get((catg, typ, tech)) or DPR_TO_TAG.get((None, typ, tech))
 
 
 def _edps_properties_path() -> Path:
@@ -351,16 +150,20 @@ def read_edps_port(default: int = 5000) -> int:
     return default
 
 
-def _normalize_tech(tech: str) -> str:
-    """Normalise a tech string for lookup: upper-case, trim whitespace,
-    collapse spaces around commas. Keys in TECH_TO_WORKFLOW use this form."""
-    return ",".join(part.strip() for part in tech.upper().split(","))
+def yaml_block_tag(block, props):
+    """Classification tag the Pipeline will give the frames of a YAML block.
 
-
-def _normalize_mode(mode: str) -> str:
-    """Normalise a mode string for lookup: lower-case and trim whitespace.
-    Keys in MODE_TO_WORKFLOW use this form."""
-    return mode.strip().lower()
+    Looks up the DPR triple Simulations writes into the header (after its tech
+    rewrite). ``do.catg`` only names the output file, and differs from the
+    Pipeline tag for several blocks, so it is used only when the triple is unknown.
+    """
+    tech = tables.normalize_tech(str(props.get("tech") or ""))
+    tag = tables.get().lookup_dpr_tag(
+        str(props.get("catg") or "").strip().upper(),
+        tables.normalize_tech(str(props.get("type") or "")),
+        tables.YAML_TECH_TO_DPR_TECH.get(tech, tech),
+    )
+    return tag or block.get("do.catg") or None
 
 
 def scan_yaml_inputs(yaml_files):
@@ -396,24 +199,24 @@ def scan_yaml_inputs(yaml_files):
         for name, block in data.items():
             if not isinstance(block, dict):
                 continue
-            tag = block.get("do.catg", "")
-            if tag:
-                data_tags.add(tag)
             props = block.get("properties", {})
             if not isinstance(props, dict):
                 raise ValueError(f"{path}: block {name!r}: 'properties' must be a mapping, got {props!r}")
+            tag = yaml_block_tag(block, props)
+            if tag:
+                data_tags.add(tag)
             if str(props.get("catg") or "").upper() == "SCIENCE":
                 has_science = True
             wf = None
             tech = str(props.get("tech") or "")
             if tech:
-                wf = TECH_TO_WORKFLOW.get(_normalize_tech(tech))
-                if _normalize_tech(tech) == "LMS" and path not in legacy_tech:
+                wf = tables.get().workflow_for_tech(tech)
+                if tables.normalize_tech(tech) == "LMS" and path not in legacy_tech:
                     legacy_tech.append(path)
             if wf is None:
                 mode = str(block.get("mode") or "")
                 if mode:
-                    wf = MODE_TO_WORKFLOW.get(_normalize_mode(mode))
+                    wf = tables.get().workflow_for_mode(mode)
             if wf:
                 sub_workflows.add(wf)
 
@@ -447,7 +250,7 @@ def scan_fits_inputs(fits_dir):
     """Return ``(data_tags, sub_workflows)`` from FITS headers in *fits_dir*.
 
     Walks ``*.fits`` recursively, so an output root (``sim/``, ``pipeline/``, …) works too.
-    Each file's ``HIERARCH ESO DPR TECH`` is mapped via ``TECH_TO_WORKFLOW``
+    Each file's ``HIERARCH ESO DPR TECH`` is mapped via ``tables.TECH_TO_WORKFLOW``
     to identify which sub-workflow it belongs to.  Files whose tech is
     unrecognised contribute their classification tag (if any) but do not
     activate a sub-workflow.
@@ -476,14 +279,14 @@ def scan_fits_inputs(fits_dir):
             continue
 
         if catg:
-            tag = lookup_dpr_tag(catg, typ, tech)
+            tag = tables.get().lookup_dpr_tag(catg, typ, tech)
         else:
             tag = pro_catg or None
         if tag:
             data_tags.add(tag)
 
         if tech:
-            wf = TECH_TO_WORKFLOW.get(_normalize_tech(tech))
+            wf = tables.get().workflow_for_tech(tech)
             if wf:
                 sub_workflows.add(wf)
 
@@ -503,7 +306,7 @@ def classify_fits_file(path):
     """Return the EDPS classification tag for a single FITS file, or None.
 
     Reads ``HIERARCH ESO DPR CATG/TYPE/TECH`` and maps the triple via
-    ``DPR_TO_TAG``.  Falls back to ``HIERARCH ESO PRO CATG`` when no DPR
+    the Pipeline's classification rules.  Falls back to ``HIERARCH ESO PRO CATG`` when no DPR
     headers are present.  Returns ``None`` on any failure (missing astropy,
     unreadable file, unmatched headers).
     """
@@ -525,7 +328,7 @@ def classify_fits_file(path):
         return None
 
     if catg:
-        return lookup_dpr_tag(catg, typ, tech)
+        return tables.get().lookup_dpr_tag(catg, typ, tech)
     if pro_catg:
         return pro_catg
     return None
@@ -546,7 +349,7 @@ def infer_edps_target(workflow, data_tags, has_science):
         ["-m", "qc1calib", "-m", "science"]   # both calib and science data
         []                                     # no matching task found
     """
-    chain = WORKFLOW_TASK_CHAIN.get(workflow, [])
+    chain = tables.get().chains.get(workflow, [])
     flags = []
 
     # Find the deepest non-science task whose main input tag is present.
@@ -582,14 +385,14 @@ def infer_edps_targets_for_workflows(data_tags, has_science, sub_workflows):
     - A single ``-m qc1calib`` is emitted if any sub-workflow contributes one.
     - ``-m science`` is appended once when *has_science* is true.
 
-    Sub-workflow iteration order follows ``WORKFLOW_TASK_CHAIN`` for
+    Sub-workflow iteration order follows ``tables.get().chains`` for
     deterministic flag ordering.
     """
     flags = []
     seen_tasks = set()
     seen_qc1 = False
 
-    for wf in WORKFLOW_TASK_CHAIN:
+    for wf in tables.get().chains:
         if wf not in sub_workflows:
             continue
         # Reuse the single-workflow logic without its has_science handling
@@ -1132,7 +935,7 @@ def derive_has_science(data_tags, sub_workflows):
     return any(
         meta == "science" and tag in data_tags
         for wf in sub_workflows
-        for _, tag, meta in WORKFLOW_TASK_CHAIN.get(wf, [])
+        for _, tag, meta in tables.get().chains.get(wf, [])
     )
 
 
@@ -1539,7 +1342,11 @@ def main(argv=None):
     # come from the FITS headers in --pipeline-input, so a leftover input from
     # a previous simulate+run cannot mislead the pipeline step here.
     print(f"  Runner    : {runner}" + (f" (container: {args.container})" if args.container else ""))
-    workflow = UMBRELLA_WORKFLOW
+    if runner in ("docker", "podman"):
+        # The container runs its own Pipeline clone, which a host checkout need not match.
+        tables.use_snapshot()
+    print(f"  Tables    : {tables.get().source}")
+    workflow = tables.UMBRELLA_WORKFLOW
     has_science = False
     yaml_tags = set()
     yaml_sub_workflows = set()

@@ -1,187 +1,108 @@
-"""Contract tests: MTR's hard-coded tables against real upstream checkouts.
+"""Contract tests: MTR's bundled snapshot and policy tables against upstream checkouts.
 
-Skipped unless METIS_PIPELINE_DIR / METIS_SIMULATIONS_DIR point at checkouts
-(the weekly CI job sets them). The Pipeline's EDPS workflow files are parsed
-with ``ast`` rather than imported, so neither EDPS nor ScopeSim is needed.
+Skipped unless METIS_PIPELINE_DIR / METIS_SIMULATIONS_DIR / METIS_IRDB_DIR point
+at checkouts (the weekly CI job sets them). The Pipeline's EDPS workflow files
+are parsed with ``ast`` rather than imported, so neither EDPS nor ScopeSim is
+needed.
 """
 
 import ast
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
 import yaml
+from packaging.version import Version
 
-from metis_test_runner.archive import TASK_PRODUCTS
-from metis_test_runner.run_metis import DPR_TO_TAG, WORKFLOW_TASK_CHAIN
+from metis_test_runner import tables, upstream
+from metis_test_runner.installer import Installer
 
 pytestmark = pytest.mark.upstream
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "src" / "metis_test_runner" / "examples"
 
-# Pipeline meta-target constant -> MTR's spelling in WORKFLOW_TASK_CHAIN.
-_META = {"SCIENCE": "science", "QC1_CALIB": "qc1calib"}
-
-# Deliberate deviations from the parsed workflow, each with its reason.
-_META_EXCEPTIONS = {
-    # The raw IFU_SCI_RAW gates sci_reduce; the SCIENCE meta target sits on
-    # metis_ifu_postprocess, which has no raw main input.
-    "metis_ifu_sci_reduce": "science",
-}
-
 # Sub-workflows MTR names that metis_wkf.py does not import (upstream gap,
 # Pipeline PR #168). When this assertion fails, upstream fixed it: drop the entry.
 _NOT_IN_UMBRELLA = {"metis.metis_lm_ravc_wkf", "metis.metis_lm_app_wkf"}
 
+# TECH_TO_WORKFLOW keys whose workflow has no task for that tech, with the reason.
+# When the test says one is no longer needed, drop it.
+_TECH_EXCEPTIONS = {
+    "LMS": "legacy YAML spelling of IFU; Simulations writes it unchanged",
+    "PUP,N": "the Pipeline has an N_PUPIL_RAW rule but no task for it yet",
+}
 
-def _chain_calls(node):
-    """Flatten ``f(a).g(b).h(c)`` into ``[("f", call), ("g", call), ("h", call)]``."""
-    calls = []
-    while isinstance(node, ast.Call):
-        func = node.func
-        if isinstance(func, ast.Attribute):
-            calls.append((func.attr, node))
-            node = func.value
-        elif isinstance(func, ast.Name):
-            calls.append((func.id, node))
-            break
-        else:
-            break
-    return calls[::-1]
-
-
-def _kwd_key(node):
-    """``metis_kwd.dpr_catg`` or ``"dpr.catg"`` -> ``"dpr_catg"``."""
-    if isinstance(node, ast.Attribute):
-        return node.attr
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value.replace(".", "_")
-    return None
-
-
-def _parse_workflows(wkf_dir: Path) -> dict:
-    """Return the rules, data sources, tasks and umbrella imports of the workflow package."""
-    assigns = []  # (module stem, variable, call chain)
-    umbrella = set()
-    for py in sorted(wkf_dir.glob("*.py")):
-        tree = ast.parse(py.read_text())
-        for node in tree.body:
-            if py.stem == "metis_wkf" and isinstance(node, ast.ImportFrom) and node.level == 1:
-                umbrella.add(f"metis.{node.module}")
-            if (
-                isinstance(node, ast.Assign)
-                and len(node.targets) == 1
-                and isinstance(node.targets[0], ast.Name)
-            ):
-                assigns.append((py.stem, node.targets[0].id, _chain_calls(node.value)))
-
-    rules = {}  # variable -> (tag, {keyword: value})
-    for _, var, calls in assigns:
-        if calls and calls[0][0] == "classification_rule":
-            args = calls[0][1].args
-            keywords = {}
-            if len(args) > 1 and isinstance(args[1], ast.Dict):
-                for k, v in zip(args[1].keys, args[1].values, strict=True):
-                    if isinstance(v, ast.Constant):
-                        keywords[_kwd_key(k)] = v.value
-            rules[var] = (args[0].value, keywords)
-
-    sources = {}  # variable -> {tag}
-    for _, var, calls in assigns:
-        if calls and calls[0][0] == "data_source":
-            sources[var] = {
-                rules[a.id][0]
-                for name, call in calls
-                if name == "with_classification_rule"
-                for a in call.args
-                if isinstance(a, ast.Name) and a.id in rules
-            }
-
-    tasks = {}  # task name -> {"module", "main", "meta"}
-    for module, _, calls in assigns:
-        if not calls or calls[0][0] != "task":
-            continue
-        main, meta = None, set()
-        for name, call in calls:
-            if name == "with_main_input" and call.args and isinstance(call.args[0], ast.Name):
-                main = sources.get(call.args[0].id)
-            elif name == "with_meta_targets" and call.args and isinstance(call.args[0], ast.List):
-                meta |= {_META.get(e.id, e.id) for e in call.args[0].elts if isinstance(e, ast.Name)}
-        tasks[calls[0][1].args[0].value] = {"module": module, "main": main, "meta": meta}
-
-    return {"rules": dict(rules.values()), "tasks": tasks, "umbrella": umbrella}
+_REGENERATE = "regenerate it: python -m metis_test_runner.upstream PIPELINE_DIR IRDB_DIR"
 
 
 @pytest.fixture(scope="module")
-def pipeline(upstream_pipeline_dir):
-    wkf = upstream_pipeline_dir / "metisp" / "workflows" / "metis"
-    if not wkf.is_dir():
-        pytest.fail(f"no EDPS workflow package at {wkf}")
-    return _parse_workflows(wkf)
+def derived(upstream_pipeline_dir):
+    return upstream.derive_pipeline(upstream_pipeline_dir)
+
+
+@pytest.fixture(scope="module")
+def snapshot():
+    return json.loads(upstream.SNAPSHOT_PATH.read_text())
+
+
+@pytest.fixture(scope="module")
+def rule_tech(derived):
+    """Classification tag -> DPR.TECH for every raw rule."""
+    return {tag: tech for _, _, tech, tag in derived["dpr_to_tag"]}
 
 
 class TestPipelineContract:
-    def test_workflow_modules_exist(self, upstream_pipeline_dir):
-        wkf = upstream_pipeline_dir / "metisp" / "workflows"
-        missing = [w for w in WORKFLOW_TASK_CHAIN if not (wkf / (w.replace(".", "/") + ".py")).is_file()]
-        assert missing == []
+    @pytest.mark.parametrize("key", ["dpr_to_tag", "chains", "task_products"])
+    def test_snapshot_matches_pipeline(self, derived, snapshot, key):
+        assert snapshot[key] == derived[key], f"bundled snapshot is out of date; {_REGENERATE}"
 
-    def test_umbrella_imports_the_sub_workflows(self, pipeline):
-        missing = set(WORKFLOW_TASK_CHAIN) - pipeline["umbrella"] - {"metis.metis_wkf"}
-        assert missing == _NOT_IN_UMBRELLA
+    def test_umbrella_imports_the_sub_workflows(self, upstream_pipeline_dir):
+        umbrella = upstream_pipeline_dir / "metisp" / "workflows" / "metis" / "metis_wkf.py"
+        imported = {
+            f"metis.{node.module}"
+            for node in ast.parse(umbrella.read_text()).body
+            if isinstance(node, ast.ImportFrom) and node.level == 1
+        }
+        assert set(tables.TECH_TO_WORKFLOW.values()) - imported == _NOT_IN_UMBRELLA
 
-    def test_chain_tasks_exist(self, pipeline):
-        missing = sorted(
-            f"{wf}: {task}"
-            for wf, chain in WORKFLOW_TASK_CHAIN.items()
-            for task, _, _ in chain
-            if task not in pipeline["tasks"]
-        )
-        assert missing == []
+    def test_every_pipeline_tech_is_routed(self, rule_tech):
+        assert sorted(set(rule_tech.values()) - set(tables.TECH_TO_WORKFLOW)) == []
 
-    def test_chain_main_input_tags_match(self, pipeline):
-        wrong = []
-        for wf, chain in WORKFLOW_TASK_CHAIN.items():
-            for task, tag, _ in chain:
-                upstream = pipeline["tasks"].get(task, {}).get("main")
-                if upstream is not None and tag not in upstream:
-                    wrong.append(f"{task}: MTR {tag}, pipeline {sorted(upstream)}")
-        assert wrong == []
+    def test_each_tech_reaches_a_task_in_its_workflow(self, derived, rule_tech):
+        unreached = set()
+        for tech, wf in tables.TECH_TO_WORKFLOW.items():
+            dpr_tech = tables.YAML_TECH_TO_DPR_TECH.get(tech, tech)
+            if not any(rule_tech.get(tag) == dpr_tech for _, tag, _ in derived["chains"].get(wf, [])):
+                unreached.add(tech)
+        assert unreached == set(_TECH_EXCEPTIONS)
 
-    def test_chain_meta_targets_match(self, pipeline):
-        wrong = []
-        for chain in WORKFLOW_TASK_CHAIN.values():
-            for task, _, meta in chain:
-                if task not in pipeline["tasks"] or _META_EXCEPTIONS.get(task) == meta:
-                    continue
-                upstream = pipeline["tasks"][task]["meta"]
-                expected = {meta} if meta else set()
-                if upstream != expected:
-                    wrong.append(f"{task}: MTR {meta}, pipeline {sorted(upstream)}")
-        assert wrong == []
 
-    def test_dpr_to_tag_matches_the_rules(self, pipeline):
-        wrong = []
-        for (catg, typ, tech), tag in DPR_TO_TAG.items():
-            kw = pipeline["rules"].get(tag)
-            if kw is None:
-                wrong.append(f"{tag}: no such classification rule")
-            elif (kw.get("dpr_catg"), kw.get("dpr_type"), kw.get("dpr_tech")) != (catg, typ, tech):
-                wrong.append(f"{tag}: MTR {(catg, typ, tech)}, pipeline {kw}")
-        assert wrong == []
-
-    def test_every_raw_rule_is_in_dpr_to_tag(self, pipeline):
-        raw = {tag for tag, kw in pipeline["rules"].items() if "dpr_type" in kw and "dpr_tech" in kw}
-        assert sorted(raw - set(DPR_TO_TAG.values())) == []
-
-    def test_task_products_are_classification_tags(self, pipeline):
-        wrong = sorted(
-            f"{task}: {catg}"
-            for task, entry in TASK_PRODUCTS.items()
-            for catg in entry.produces
-            if catg not in pipeline["rules"]
-        )
-        assert wrong == []
+def _update_headers_tech_rewrite(sims_dir: Path) -> dict[str, str]:
+    """``if tech == "X": header[... "DPR TECH"] = "Y"`` pairs from Simulations' updateHeaders."""
+    tree = ast.parse((sims_dir / "metis_simulations" / "scopesimWrapper.py").read_text())
+    func = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "updateHeaders")
+    rewrite = {}
+    for node in ast.walk(func):
+        test = getattr(node, "test", None)
+        if not (
+            isinstance(node, ast.If)
+            and isinstance(test, ast.Compare)
+            and isinstance(test.left, ast.Name)
+            and test.left.id == "tech"
+            and isinstance(test.comparators[0], ast.Constant)
+        ):
+            continue
+        for stmt in node.body:
+            target = stmt.targets[0] if isinstance(stmt, ast.Assign) else None
+            if (
+                isinstance(target, ast.Subscript)
+                and isinstance(target.slice, ast.Constant)
+                and str(target.slice.value).endswith("DPR TECH")
+                and isinstance(stmt.value, ast.Constant)
+            ):
+                rewrite[test.comparators[0].value] = stmt.value.value
+    return rewrite
 
 
 def _simulations_list(sims_dir: Path, name: str) -> list:
@@ -194,6 +115,11 @@ def _simulations_list(sims_dir: Path, name: str) -> list:
 
 
 class TestSimulationsContract:
+    def test_yaml_tech_rewrite_matches_simulations(self, upstream_simulations_dir):
+        rewrite = _update_headers_tech_rewrite(upstream_simulations_dir)
+        assert rewrite, "found no DPR TECH rewrite in scopesimWrapper.updateHeaders"
+        assert {k: v for k, v in rewrite.items() if k != v} == tables.YAML_TECH_TO_DPR_TECH
+
     @pytest.mark.parametrize("example", sorted(EXAMPLES.glob("*.yaml")), ids=lambda p: p.name)
     def test_bundled_yaml_uses_known_values(self, upstream_simulations_dir, example):
         # typeVals is not checked: upstream it lacks DARK, so it is incomplete.
@@ -216,3 +142,14 @@ class TestSimulationsContract:
         csv_parser = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(csv_parser)
         assert csv_parser.loadCSV(str(example))
+
+
+class TestIrdbContract:
+    def test_snapshot_modes_match_the_pinned_release(self, upstream_irdb_dir, snapshot):
+        assert snapshot["mode_to_tech"] == upstream.derive_irdb_modes(upstream_irdb_dir), _REGENERATE
+
+    def test_pinned_scopesim_loads_the_pinned_release(self, upstream_irdb_dir):
+        default = yaml.safe_load_all((upstream_irdb_dir / "METIS" / "default.yaml").read_text())
+        needs = next(d["needs_scopesim"] for d in default if isinstance(d, dict) and "needs_scopesim" in d)
+        pin = next(r for r in Installer.PIP_REQUIREMENTS if r.startswith("scopesim=="))
+        assert Version(needs.lstrip("v")) <= Version(pin.split("==")[1])
