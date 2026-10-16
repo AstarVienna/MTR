@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.1 — 2026-10-16
 
 ### Changed
 - **Classification tags, task chains and master products now come from
