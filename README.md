@@ -544,7 +544,7 @@ an older version left behind.
 `subDir` parameters, and its command-line defaults started overwriting the
 calibration count and dry-run settings MTR passes in.
 
-**Fixed after 0.7.1** (not yet released): MTR sets both parameters and passes
+**Fixed in 0.7.2:** MTR sets both parameters and passes
 `--calib` / `--csv-to-yaml` in a way that still works with older checkouts.
 
 **What to do:** upgrade. Until then, pin the last compatible commit:

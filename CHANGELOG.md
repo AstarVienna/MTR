@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.2 — 2026-10-19
 
 ### Fixed
 - **Simulations work with METIS_Simulations from 2026-10-19 on** (PR #216).
