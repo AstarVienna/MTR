@@ -535,6 +535,24 @@ Newest first. Each entry says which version fixed it, and how to clean up what
 an older version left behind.
 
 <details>
+<summary><b>Simulation fails with <code>KeyError: 'progID'</code>, or <code>--calib</code> / <code>--csv-to-yaml</code> are ignored</b></summary>
+
+**Affects:** MTR 0.7.1 and earlier, with a METIS_Simulations checkout from
+2026-10-19 or later (commit `b6b1b3b`, PR #216).
+
+**What went wrong:** METIS_Simulations started requiring the `progID` and
+`subDir` parameters, and its command-line defaults started overwriting the
+calibration count and dry-run settings MTR passes in.
+
+**Fixed after 0.7.1** (not yet released): MTR sets both parameters and passes
+`--calib` / `--csv-to-yaml` in a way that still works with older checkouts.
+
+**What to do:** upgrade. Until then, pin the last compatible commit:
+`mtr-install --simulations-ref 6a33f24`.
+
+</details>
+
+<details>
 <summary><b><code>pipx install</code> on ARM Linux: "No matching distribution found for PyQt6-Qt6==6.6.0"</b></summary>
 
 **Affects:** MTR 0.5.0 and earlier, on Linux aarch64 (e.g. Graviton or Ampere

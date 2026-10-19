@@ -980,9 +980,27 @@ class TestBuildSimScript:
         assert "from metis_simulations import runSimulationBlock" in script
         assert "\nimport runSimulationBlock" not in script
 
-    def test_script_passes_args_to_runSimulationBlock(self):
+    @pytest.mark.parametrize(
+        ("do_calib", "write_yaml", "args"),
+        [
+            (False, False, ["--doCalib", "0"]),
+            (3, False, ["--doCalib", "3"]),
+            (1, True, ["--doCalib", "1", "--testRun", "--writeYaml"]),
+        ],
+    )
+    def test_script_repeats_overridden_params_as_args(self, do_calib, write_yaml, args):
+        """Since METIS_Simulations PR #216 its argparse defaults overwrite the
+        params dict, so --calib and --csv-to-yaml must also be passed as args."""
+        kwargs = {**self._base_kwargs, "do_calib": do_calib, "write_yaml": write_yaml}
+        assert f"params, {args!r})" in _build_sim_script(**kwargs)
+
+    def test_script_sets_progid_and_subdir_without_k_flag(self):
+        # Required since PR #216; -k would make a parser from before #216 exit.
         script = _build_sim_script(**self._base_kwargs)
-        assert "params, [])" in script
+        assert "progID    = None," in script
+        assert "subDir    = ''," in script
+        assert "'-k'" not in script
+        assert "'--progID'" not in script
 
     def test_script_do_static_never_set_in_params(self):
         # doStatic is always False in the params dict — static calibration
@@ -991,7 +1009,7 @@ class TestBuildSimScript:
         for val in (True, False, 1, 0):
             script = _build_sim_script(**{**self._base_kwargs, "do_static": val})
             assert "doStatic  = False" in script
-            assert "params, [])" in script
+            assert "--doStatic" not in script
 
     def test_script_generates_static_calibs_to_cache(self):
         script = _build_sim_script(
@@ -1170,6 +1188,10 @@ class TestSpawnSafety:
             exec(code, ns)
 
         mock_rsb.runSimulationBlock.assert_called_once()
+        inputs, params, args = mock_rsb.runSimulationBlock.call_args.args
+        assert inputs == ["/data/obs.yaml"]
+        assert (params["progID"], params["subDir"]) == (None, "")
+        assert args == ["--doCalib", "0"]
 
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,9 @@ needed.
 import ast
 import importlib.util
 import json
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -17,6 +20,7 @@ from packaging.version import Version
 
 from metis_test_runner import tables, upstream
 from metis_test_runner.installer import Installer
+from metis_test_runner.run_metis import _build_sim_script
 
 pytestmark = pytest.mark.upstream
 
@@ -142,6 +146,76 @@ class TestSimulationsContract:
         csv_parser = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(csv_parser)
         assert csv_parser.loadCSV(str(example))
+
+
+# Runs MTR's simulation script with ScopeSim stubbed out and simulate() logging
+# its arguments instead of simulating. Pool workers are forked, so they log to a file.
+_SIM_RUNNER = """\
+import json, runpy, sys, types
+sims, script, log = sys.argv[1:]
+sys.path.insert(0, sims)
+scopesim = types.ModuleType("scopesim")
+scopesim.rc = types.SimpleNamespace(__config__={})
+sys.modules["scopesim"] = scopesim
+sys.modules["scopesim_templates"] = types.ModuleType("scopesim_templates")
+import metis_simulations
+wrapper = types.ModuleType("metis_simulations.scopesimWrapper")
+def simulate(fname, rcp, small=False, skip_psf=False, progID=None, subDir=None):
+    with open(log, "a") as fh:
+        fh.write(json.dumps([str(fname), progID, subDir]) + "\\n")
+simulate.__module__ = wrapper.__name__  # picklable for Pool
+wrapper.simulate = simulate
+sys.modules[wrapper.__name__] = wrapper
+runpy.run_path(script, run_name="__main__")
+"""
+
+
+class TestSimulationRunContract:
+    """MTR's params reach METIS_Simulations' simulate() unchanged."""
+
+    @staticmethod
+    def _run(sims_dir, tmp_path, inputs, do_calib=0, write_yaml=False):
+        out = tmp_path / f"out-{do_calib}-{write_yaml}"
+        script, runner, log = tmp_path / "sim.py", tmp_path / "runner.py", tmp_path / "calls.jsonl"
+        script.write_text(
+            _build_sim_script(
+                out_dir=str(out),
+                do_calib=do_calib,
+                do_static=False,
+                n_cores=1,
+                input_list=[str(p) for p in inputs],
+                sims_root=str(sims_dir),
+                write_yaml=write_yaml,
+            )
+        )
+        runner.write_text(_SIM_RUNNER)
+        log.unlink(missing_ok=True)
+        cp = subprocess.run(
+            [sys.executable, "-B", str(runner), str(sims_dir), str(script), str(log)],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            cwd=tmp_path,
+        )
+        assert cp.returncode == 0, cp.stderr[-3000:]
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+    def test_params_reach_simulate(self, upstream_simulations_dir, tmp_path):
+        calls = self._run(upstream_simulations_dir, tmp_path, [EXAMPLES / "small_test.yaml"])
+        assert calls
+        # A non-None upstream --progID default would override MTR's value; MTR would then have to pass -k.
+        assert {(prog_id, sub_dir) for _, prog_id, sub_dir in calls} == {(None, "")}
+
+    def test_calib_frames_are_generated(self, upstream_simulations_dir, tmp_path):
+        inputs = [EXAMPLES / "small_test.yaml"]
+        without = self._run(upstream_simulations_dir, tmp_path, inputs, do_calib=0)
+        with_calib = self._run(upstream_simulations_dir, tmp_path, inputs, do_calib=1)
+        assert len(with_calib) > len(without)
+
+    def test_csv_to_yaml_does_not_simulate(self, upstream_simulations_dir, tmp_path):
+        csv = shutil.copy(EXAMPLES / "small_test_img_lm.csv", tmp_path)
+        assert self._run(upstream_simulations_dir, tmp_path, [csv], do_calib=1, write_yaml=True) == []
+        assert (tmp_path / "small_test_img_lm.yaml").is_file()
 
 
 class TestIrdbContract:

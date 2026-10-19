@@ -604,6 +604,12 @@ def _build_sim_script(
         "    pass",
     ]
     if do_sim:
+        # Since METIS_Simulations PR #216 its argparse defaults are not None and
+        # overwrite these params, so repeat them as CLI args. Never pass -k: the
+        # parsers before #216 reject it, and its default None keeps progID below.
+        sim_args = ["--doCalib", str(int(do_calib))]
+        if write_yaml:
+            sim_args += ["--testRun", "--writeYaml"]
         lines += [
             "    from metis_simulations import runSimulationBlock as rsb",
             "    params = dict(",
@@ -619,9 +625,13 @@ def _build_sim_script(
             # simulation entirely (METIS_Simulations PR #202).
             f"        testRun   = {write_yaml!r},",
             f"        writeYaml = {write_yaml!r},",
+            # Required since PR #216 (ESO PROG ID and DIR ID headers); subDir
+            # must be a str. Older checkouts ignore both.
+            "        progID    = None,",
+            "        subDir    = '',",
             "    )",
             "    try:",
-            f"        rsb.runSimulationBlock({input_list!r}, params, [])",
+            f"        rsb.runSimulationBlock({input_list!r}, params, {sim_args!r})",
             "    except ValueError as _exc:",
             "        if 'Package could not be found' in str(_exc):",
             "            import sys as _sys",

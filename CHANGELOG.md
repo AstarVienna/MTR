@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- **Simulations work with METIS_Simulations from 2026-10-19 on** (PR #216).
+  It requires `progID` / `subDir`, which MTR now sets (`ESO PROG ID` stays
+  empty), and its argparse defaults overwrote MTR's settings: `--calib N` made no
+  calibration frames and `--csv-to-yaml` ran the simulation. Older checkouts
+  still work. The weekly upstream contract job now runs MTR's simulation script
+  against Simulations main, with ScopeSim stubbed out.
+
 ## 0.7.1 — 2026-10-16
 
 ### Changed
