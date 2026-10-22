@@ -1055,47 +1055,19 @@ class MetisWISEInstallWorker(QThread):
     log  = pyqtSignal(str, str)
     done = pyqtSignal(bool)
     # fmt: on
-    # Emitted when neither the field nor the keyring provides credentials;
-    # the slot runs on the main thread (queued connection) and shows a dialog.
-    needs_input = pyqtSignal(str)
 
     #: Deadline for each pip command.
     TIMEOUT_S = 1800
 
-    def __init__(self, pip_credentials: str | None) -> None:
-        """*pip_credentials* is the typed ``user:pass``, or None to use the
-        entry stored in the OS keyring (resolved here, on the worker thread,
-        so a blocking keyring-unlock prompt never freezes the UI)."""
-        super().__init__()
-        self._credentials = pip_credentials
-
     def run(self) -> None:
-        from . import credentials as credstore
         from .archive import install_metiswise_command
-
-        creds = self._credentials
-        if creds is None:
-            try:
-                creds = credstore.get_pip_credentials()
-            except credstore.CredentialsUnavailable:
-                creds = None
-            if not creds:
-                self.needs_input.emit(
-                    "No OmegaCEN credentials stored in the OS keyring — "
-                    "enter username:password in the field above.",
-                )
-                self.done.emit(False)
-                return
-            self.log.emit("Using OmegaCEN credentials from keyring.\n", "")
 
         try:
             # install_metiswise_command returns a SEQUENCE of pip commands
             # (deps first, then metiswise --no-deps — see archive.py for why)
-            # plus env overrides carrying the credentialed index URL, which
-            # must stay out of argv (and out of this log).
-            cmds, env_overrides = install_metiswise_command(creds)
-            # pipx venvs ship without pip; bootstrap it first (no credentialed
-            # index needed for ensurepip, so run it with the plain environment).
+            # plus env overrides carrying the extra index URLs.
+            cmds, env_overrides = install_metiswise_command()
+            # pipx venvs ship without pip; bootstrap it first.
             boot = ensurepip_command_if_needed()
             if boot:
                 cmds = [boot, *cmds]
@@ -1118,19 +1090,6 @@ class MetisWISEInstallWorker(QThread):
                     self.log.emit(f"\n✗ Install failed: {exc}\n", "red")
                     self.done.emit(False)
                     return
-            if self._credentials is not None:
-                # Persist typed credentials only after a successful install.
-                try:
-                    credstore.set_pip_credentials(self._credentials)
-                    self.log.emit(
-                        "Saved OmegaCEN credentials to the OS keyring.\n",
-                        "green",
-                    )
-                except credstore.CredentialsUnavailable:
-                    self.log.emit(
-                        "Keyring unavailable — credentials kept for this session only.\n",
-                        "yellow",
-                    )
             self.log.emit("\n✓ MetisWISE installed successfully.\n", "green")
             self.done.emit(True)
         except Exception as exc:
@@ -1423,11 +1382,11 @@ class ArchiveTab(WorkerHost, QWidget):
             "<b>Install MetisWISE & connect to the remote archive</b><br><br>"
             "The Archive tab talks to the METIS AIT archive via the "
             "<a href='https://github.com/AstarVienna/MetisWISE'>MetisWISE</a> "
-            "Python client. Paste the OmegaCEN credentials from the "
+            "Python client. Install the package, then fill in the five "
+            "database fields from the "
             "<a href='https://metis.strw.leidenuniv.nl/wiki/doku.php?id=ait:archive'>"
-            "METIS wiki</a> to pip-install the package, then fill in the five "
-            "database fields (also from the wiki) and click Save &amp; Test. "
-            "After a successful test all credentials are stored in your OS "
+            "METIS wiki</a> and click Save &amp; Test. "
+            "After a successful test the credentials are stored in your OS "
             "keyring (never on disk) — on later runs, leave fields blank to "
             "use the stored values. <code>data_server</code>, port and "
             "protocol are inherited from the MetisWISE-packaged default "
@@ -1441,20 +1400,10 @@ class ArchiveTab(WorkerHost, QWidget):
         # -- 1. MetisWISE install --
         mw_grp = QGroupBox("1. Install MetisWISE")
         mw_lay = QVBoxLayout(mw_grp)
-        cred_row = QHBoxLayout()
-        cred_row.addWidget(QLabel("OmegaCEN credentials (user:pass):"))
-        self._cred_edit = QLineEdit()
-        self._cred_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self._cred_edit.setPlaceholderText(
-            "username:password (blank = use stored keyring entry)",
-        )
-        cred_row.addWidget(self._cred_edit)
-        mw_lay.addLayout(cred_row)
         mw_btn_row = QHBoxLayout()
         self._install_btn = QPushButton("Install MetisWISE")
         self._install_btn.setProperty("role", "success")
-        self._install_btn.setMinimumHeight(32)
-        self._install_btn.setMaximumWidth(200)
+        self._install_btn.setMinimumSize(260, 44)
         self._install_btn.clicked.connect(self._on_install_metiswise)
         mw_btn_row.addWidget(self._install_btn)
         self._mw_status = QLabel()
@@ -1742,30 +1691,10 @@ class ArchiveTab(WorkerHost, QWidget):
     def _on_install_metiswise(self) -> None:
         if self._reject_if_busy() or self.reject_if_blocked("the MetisWISE install"):
             return
-        # NB: not .strip() — a credential with leading/trailing whitespace is
-        # rejected below rather than silently altered.
-        creds = self._cred_edit.text()
-        if creds:
-            from .archive import encode_pip_credentials
-
-            try:
-                encode_pip_credentials(creds)
-            except ValueError as exc:
-                QMessageBox.warning(
-                    self,
-                    "Malformed credentials",
-                    f"{exc}\n\nLeave the field blank to use the keyring entry.",
-                )
-                return
         self._log.clear()
         self._install_btn.setEnabled(False)
-        # Blank field → the worker resolves the keyring entry on its own
-        # thread, so a keyring-unlock prompt never blocks the GUI.
-        self._worker = self.track_worker(MetisWISEInstallWorker(creds or None))
+        self._worker = self.track_worker(MetisWISEInstallWorker())
         self._worker.log.connect(lambda t, c: log_append(self._log, t, c))
-        self._worker.needs_input.connect(
-            lambda msg: QMessageBox.warning(self, "Missing credentials", msg),
-        )
         self._worker.done.connect(self._on_metiswise_installed)
         self._worker.start()
 

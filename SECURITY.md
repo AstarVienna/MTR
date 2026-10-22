@@ -8,8 +8,8 @@ rather than opening a public issue.
 
 ## Scope
 
-MTR handles two kinds of credential, and both are worth understanding if you
-are reviewing or extending the code.
+MTR handles archive credentials, which are worth understanding if you are
+reviewing or extending the code.
 
 ### Archive database credentials
 
@@ -27,19 +27,6 @@ would be inherited by `edps`, `pyesorex`, ScopeSim and the interactive
 
 **If you add a new way to spawn a subprocess, route its environment through
 `env.resolve_runtime_env()`.** Do not use a bare `os.environ.copy()`.
-
-### OmegaCEN pip credentials
-
-Used only to install MetisWISE from the credentialed package index. They travel
-in `PIP_EXTRA_INDEX_URL` and **never in `argv`**: a command line is readable by
-any local user via `/proc/<pid>/cmdline` and gets echoed into the GUI log,
-whereas `/proc/<pid>/environ` is owner-only. `tests/test_archive.py` enforces
-this.
-
-They are percent-encoded by `archive.encode_pip_credentials()` before being
-interpolated into the index URL. This matters: an unescaped `@` in a password
-re-splits the URL authority, which would send the remaining credential material
-to a host taken from the password itself.
 
 ### Legacy `~/.awe/Environment.cfg`
 

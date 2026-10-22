@@ -38,31 +38,16 @@ class TestLazyImport:
         assert "keyring" not in vars(credentials)
 
 
-class TestPipCredentials:
-    def test_round_trip(self):
-        with patch.dict(sys.modules, _keyring_mocks()):
-            credentials.set_pip_credentials("alice:p4ss")
-            assert credentials.get_pip_credentials() == "alice:p4ss"
-
-    def test_absent_returns_none(self):
-        with patch.dict(sys.modules, _keyring_mocks()):
-            assert credentials.get_pip_credentials() is None
-
-    def test_delete(self):
-        with patch.dict(sys.modules, _keyring_mocks()):
-            credentials.set_pip_credentials("alice:p4ss")
+class TestLegacyPipCredentials:
+    def test_delete_removes_legacy_entry(self):
+        store = {("metis-test-runner", "omegacen-pip"): "u:p"}
+        with patch.dict(sys.modules, _keyring_mocks(store)):
             credentials.delete_pip_credentials()
-            assert credentials.get_pip_credentials() is None
+        assert store == {}
 
     def test_delete_absent_is_noop(self):
         with patch.dict(sys.modules, _keyring_mocks()):
             credentials.delete_pip_credentials()
-
-    def test_uses_expected_service_and_entry(self):
-        store = {}
-        with patch.dict(sys.modules, _keyring_mocks(store)):
-            credentials.set_pip_credentials("u:p")
-        assert store == {("metis-test-runner", "omegacen-pip"): "u:p"}
 
 
 class TestDbCredentials:
@@ -123,14 +108,10 @@ class TestBackendFailures:
     def test_get_raises_credentials_unavailable(self):
         with patch.dict(sys.modules, self._broken_keyring()):
             with pytest.raises(credentials.CredentialsUnavailable):
-                credentials.get_pip_credentials()
-            with pytest.raises(credentials.CredentialsUnavailable):
                 credentials.get_db_credentials()
 
     def test_set_raises_credentials_unavailable(self):
         with patch.dict(sys.modules, self._broken_keyring()):
-            with pytest.raises(credentials.CredentialsUnavailable):
-                credentials.set_pip_credentials("u:p")
             with pytest.raises(credentials.CredentialsUnavailable):
                 credentials.set_db_credentials({"database_user": "x"})
 

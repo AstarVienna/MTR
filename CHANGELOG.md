@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Removed
+- **OmegaCEN pip credentials.** The entropynaut index now serves `metiswise`
+  and `commonwise` without a login, so the Archive tab's credentials field is
+  gone and *Install MetisWISE* (now a larger button) works with one click.
+  Uninstall still deletes an `omegacen-pip` keyring entry left by older
+  releases.
+
 ## 0.7.2 — 2026-10-19
 
 ### Fixed

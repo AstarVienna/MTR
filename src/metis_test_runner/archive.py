@@ -21,11 +21,10 @@ import sys
 import threading
 from collections.abc import Callable
 from pathlib import Path
-from urllib.parse import quote
 
 from . import credentials, paths, tables
 from .env import ENV_CFG_FIELDS as _ENV_CFG_FIELDS
-from .indexes import ESO_INDEX, PYCPL_INDEX
+from .indexes import ENTROPYNAUT_INDEX, ESO_INDEX, PYCPL_INDEX
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -52,7 +51,7 @@ def metiswise_available() -> bool:
 
 # metiswise 0.0.4 is the first release that imports the ``metis_drld`` pip
 # package (instead of a git-cloned ``codes.drld_parser``); installed from the
-# credentialed entropynaut index.
+# entropynaut index.
 METISWISE_REQUIREMENT = "metiswise>=0.0.4"
 
 # metiswise's runtime dependencies, MINUS ``pymetis`` (provided as an
@@ -77,41 +76,17 @@ _METISWISE_RUNTIME_DEPS: tuple[str, ...] = (
 )
 
 
-def encode_pip_credentials(raw: str) -> str:
-    """Return ``user:password`` percent-encoded for use in a URL authority.
-
-    Interpolating the raw string is unsafe: a space splits
-    ``PIP_EXTRA_INDEX_URL`` into two indexes, and an ``@`` re-splits the
-    authority so pip would connect to a host taken from the password — with
-    the rest of the credential in the userinfo. Both are reachable with an
-    ordinary awkward password, so validate the shape and escape both halves.
-    """
-    if any(c.isspace() for c in raw):
-        raise ValueError("Credentials must not contain spaces or newlines.")
-    user, sep, password = raw.partition(":")
-    if not sep or not user or not password:
-        raise ValueError("Credentials must be in the form 'username:password'.")
-    return f"{quote(user, safe='')}:{quote(password, safe='')}"
-
-
-def install_metiswise_command(
-    pip_credentials: str,
-) -> tuple[list[list[str]], dict[str, str]]:
+def install_metiswise_command() -> tuple[list[list[str]], dict[str, str]]:
     """Return ``(pip_commands, env_overrides)`` to install MetisWISE >=0.0.4.
 
     Installs into the same interpreter that hosts MTR (sys.executable points at
-    pipx's isolated venv or whatever venv the user installed MTR into).
-    *pip_credentials* should be ``"username:password"`` for the OmegaCEN pip
-    channel; the credentialed entropynaut index also serves MetisWISE's
-    ``commonwise`` and ``metis-drld`` dependencies.
+    pipx's isolated venv or whatever venv the user installed MTR into).  The
+    entropynaut index also serves MetisWISE's ``commonwise`` and
+    ``metis-drld`` dependencies.
 
-    The index URLs (including the credentialed one) travel in
-    ``env_overrides["PIP_EXTRA_INDEX_URL"]`` (space-separated, the env form
-    of ``--extra-index-url``), never in argv: a command line is readable by
-    every local user via ``/proc/<pid>/cmdline`` while pip runs, and gets
-    echoed into logs.  pip redacts the password in its own "Looking in
-    indexes" output (the username may still appear).  Run the commands with
-    ``env=os.environ | env_overrides``.
+    The index URLs travel in ``env_overrides["PIP_EXTRA_INDEX_URL"]``
+    (space-separated, the env form of ``--extra-index-url``).  Run the
+    commands with ``env=os.environ | env_overrides``.
 
     Two commands, run in order:
 
@@ -135,13 +110,7 @@ def install_metiswise_command(
     single ``pip install <metiswise>`` with normal resolution.
     """
     env_overrides = {
-        "PIP_EXTRA_INDEX_URL": " ".join(
-            (
-                ESO_INDEX,
-                PYCPL_INDEX,
-                f"https://{encode_pip_credentials(pip_credentials)}@pip.entropynaut.com/packages/",
-            )
-        ),
+        "PIP_EXTRA_INDEX_URL": " ".join((ESO_INDEX, PYCPL_INDEX, ENTROPYNAUT_INDEX)),
     }
     deps_cmd = [
         sys.executable,

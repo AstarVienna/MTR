@@ -14,7 +14,6 @@ import stat
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-from urllib.parse import unquote, urlsplit
 
 import pytest
 
@@ -96,10 +95,10 @@ class TestMetisWISEAvailable:
 class TestInstallMetisWiseCommand:
     # install_metiswise_command returns (pip_commands, env_overrides):
     #   commands[0] runtime deps (normal resolution), [1] metiswise (--no-deps);
-    #   the index URLs (incl. credentials) travel in PIP_EXTRA_INDEX_URL.
+    #   the extra index URLs travel in PIP_EXTRA_INDEX_URL.
 
     def test_returns_two_commands_and_env(self):
-        cmds, env = archive.install_metiswise_command("user:secret")
+        cmds, env = archive.install_metiswise_command()
         assert isinstance(cmds, list) and len(cmds) == 2
         assert isinstance(env, dict)
         for cmd in cmds:
@@ -109,8 +108,8 @@ class TestInstallMetisWiseCommand:
             assert cmd[1:4] == ["-m", "pip", "install"]
 
     def test_deps_command_pulls_index_deps_not_pycpl(self):
-        (deps_cmd, _), _ = archive.install_metiswise_command("u:p")
-        # commonwise + metis-drld come from the credentialed index; psycopg2 is
+        (deps_cmd, _), _ = archive.install_metiswise_command()
+        # commonwise + metis-drld come from the entropynaut index; psycopg2 is
         # the DB driver. pycpl is deliberately absent so it is never downgraded.
         assert "commonwise" in deps_cmd
         assert "metis-drld" in deps_cmd
@@ -120,67 +119,23 @@ class TestInstallMetisWiseCommand:
         assert "--no-deps" not in deps_cmd
 
     def test_metiswise_command_is_no_deps_index_requirement(self):
-        (_, mw_cmd), _ = archive.install_metiswise_command("u:p")
+        (_, mw_cmd), _ = archive.install_metiswise_command()
         # --no-deps keeps pymetis's stale pycpl pin out of the resolver.
         assert "--no-deps" in mw_cmd
         # Resolved from the entropynaut index, not a GitHub tarball.
         assert mw_cmd[-1] == "metiswise>=0.0.4"
 
-    def test_credentials_only_in_env_never_argv(self):
-        cmds, env = archive.install_metiswise_command("alice:p4ss")
-        assert "alice:p4ss@pip.entropynaut.com" in env["PIP_EXTRA_INDEX_URL"]
-        # argv is visible in /proc/<pid>/cmdline and gets echoed to logs —
-        # it must carry neither credentials nor index URLs.
-        for cmd in cmds:
-            assert "--extra-index-url" not in cmd
-            assert not any("alice" in a or "entropynaut" in a for a in cmd)
-
-    @pytest.mark.parametrize("password", [
-        "p ass",      # a space would split PIP_EXTRA_INDEX_URL into two indexes
-        "p@ss",       # an @ would re-split the authority -> attacker-chosen host
-        "p/ss",       # a / would truncate the authority
-        "p#ss",       # a # would start a fragment
-        "p?ss",       # a ? would start a query
-        "p%ss",       # a % would be read as a percent-escape
-        "p:ss",       # a colon in the password must stay in the password
-    ])  # fmt: skip
-    def test_awkward_passwords_cannot_break_out_of_the_authority(self, password):
-        raw = f"alice:{password}"
-        if any(c.isspace() for c in raw):
-            with pytest.raises(ValueError):
-                archive.install_metiswise_command(raw)
-            return
-        _, env = archive.install_metiswise_command(raw)
-        urls = env["PIP_EXTRA_INDEX_URL"].split(" ")
-        # Still exactly three indexes, and the credentialed one still points
-        # at the real host with the whole credential inside its userinfo.
-        assert len(urls) == 3
-        cred_url = urls[-1]
-        assert urlsplit(cred_url).hostname == "pip.entropynaut.com"
-        assert unquote(urlsplit(cred_url).password) == password
-        # The raw password never appears verbatim where it could be reparsed.
-        assert password not in cred_url or password.isalnum()
-
-    @pytest.mark.parametrize("bad", ["alice", "", ":secret", "alice:", "a b:c"])
-    def test_malformed_credentials_rejected(self, bad):
-        with pytest.raises(ValueError):
-            archive.install_metiswise_command(bad)
-
-    def test_hostile_password_never_reaches_argv(self):
-        cmds, _ = archive.install_metiswise_command("alice:p@ss/evil.com")
-        for cmd in cmds:
-            assert not any("evil.com" in a or "alice" in a for a in cmd)
-
     def test_extra_index_urls_in_env(self):
-        _, env = archive.install_metiswise_command("u:p")
-        urls = env["PIP_EXTRA_INDEX_URL"].split(" ")
-        assert len(urls) == 3
-        assert any("ftp.eso.org" in u for u in urls)
-        assert any("ivh.github.io" in u for u in urls)
-        assert any("entropynaut" in u for u in urls)
+        _, env = archive.install_metiswise_command()
+        assert env["PIP_EXTRA_INDEX_URL"].split(" ") == [
+            "https://ftp.eso.org/pub/dfs/pipelines/libraries/",
+            "https://ivh.github.io/pycpl/simple/",
+            # Public index: no userinfo in the URL.
+            "https://pip.entropynaut.com/packages/",
+        ]
 
     def test_does_not_include_pymetis(self):
-        cmds, _ = archive.install_metiswise_command("u:p")
+        cmds, _ = archive.install_metiswise_command()
         for cmd in cmds:
             git_args = [a for a in cmd if a.startswith("git+")]
             assert len(git_args) == 0

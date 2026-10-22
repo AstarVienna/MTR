@@ -1,14 +1,14 @@
 """OS-keyring storage for archive credentials.
 
-Two secrets live under the ``metis-test-runner`` keyring service:
+One secret lives under the ``metis-test-runner`` keyring service:
 
-- ``omegacen-pip`` — the OmegaCEN pip-channel credentials as a single
-  ``"username:password"`` string (used to build the credentialed
-  entropynaut index URL for installing MetisWISE).
 - ``archive-db`` — a JSON object holding the five database fields that
   commonwise needs (``database_user``, ``database_password``, ``project``,
   ``database_tablespacename``, ``database_name``).  One entry instead of
   five keeps it to a single unlock/ACL prompt and makes saves atomic.
+
+Older releases also stored ``omegacen-pip`` (OmegaCEN pip-channel
+credentials, no longer needed); only its deletion remains, for Uninstall.
 
 ``keyring`` is imported lazily inside the helpers, never at module scope:
 merely importing this module (e.g. via ``archive.py``) must not initialize
@@ -70,16 +70,7 @@ def _delete_secret(entry: str) -> None:
         raise CredentialsUnavailable(f"Could not delete '{entry}' from the OS keyring: {exc}") from exc
 
 
-# ── OmegaCEN pip credentials ("username:password") ──────────────────────────
-
-
-def get_pip_credentials() -> str | None:
-    """Return the stored ``user:pass`` string, or None if not stored."""
-    return _get_secret(PIP_ENTRY)
-
-
-def set_pip_credentials(credentials: str) -> None:
-    _set_secret(PIP_ENTRY, credentials)
+# ── Legacy OmegaCEN pip credentials (cleanup only) ──────────────────────────
 
 
 def delete_pip_credentials() -> None:

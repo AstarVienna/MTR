@@ -1076,7 +1076,7 @@ class Uninstaller:
         # ── clear keyring credentials ─────────────────────────────────────
         self._step("Clearing stored archive credentials…")
         for label, deleter in (
-            ("OmegaCEN pip", credstore.delete_pip_credentials),
+            ("legacy OmegaCEN pip", credstore.delete_pip_credentials),
             ("archive DB",   credstore.delete_db_credentials),
         ):  # fmt: skip
             try:
