@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Changed
+- **No more `--no-deps` installs.** METIS_Pipeline #240 replaced pymetis's
+  `pycpl==1.0.3.post11` pin with `>=1.0.4.post4,<1.0.5`, which admits the
+  pycpl MTR installs, so the editable pymetis and MetisWISE now install with
+  normal resolution. The Archive tab requires `metiswise>=0.0.5` (depends on
+  `pymetis`, not `eso-pymetis`) in a single `pip install`, which also brings
+  in its new `dataserverwise` dependency. Pipeline refs older than #240
+  downgrade pycpl to their pin.
+- *Uninstall* removes only MetisWISE's own packages (`metiswise`,
+  `commonwise`, `metis-drld`, `dataserverwise`, `psycopg2-binary`), no longer
+  generic ones like `numpy` or `astropy`.
+
 ### Removed
 - **OmegaCEN pip credentials.** The entropynaut index now serves `metiswise`
   and `commonwise` without a login, so the Archive tab's credentials field is

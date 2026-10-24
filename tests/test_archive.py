@@ -93,37 +93,25 @@ class TestMetisWISEAvailable:
 
 
 class TestInstallMetisWiseCommand:
-    # install_metiswise_command returns (pip_commands, env_overrides):
-    #   commands[0] runtime deps (normal resolution), [1] metiswise (--no-deps);
-    #   the extra index URLs travel in PIP_EXTRA_INDEX_URL.
+    # install_metiswise_command returns (pip_commands, env_overrides): a single
+    # metiswise install with normal resolution; the extra index URLs travel in
+    # PIP_EXTRA_INDEX_URL.
 
-    def test_returns_two_commands_and_env(self):
+    def test_returns_one_command_and_env(self):
         cmds, env = archive.install_metiswise_command()
-        assert isinstance(cmds, list) and len(cmds) == 2
+        assert isinstance(cmds, list) and len(cmds) == 1
         assert isinstance(env, dict)
-        for cmd in cmds:
-            # `<python> -m pip install ...` — installs into the same interpreter
-            # that hosts MTR (sys.executable).
-            assert cmd[0] == sys.executable
-            assert cmd[1:4] == ["-m", "pip", "install"]
+        # `<python> -m pip install ...` — installs into the same interpreter
+        # that hosts MTR (sys.executable).
+        assert cmds[0][0] == sys.executable
+        assert cmds[0][1:4] == ["-m", "pip", "install"]
 
-    def test_deps_command_pulls_index_deps_not_pycpl(self):
-        (deps_cmd, _), _ = archive.install_metiswise_command()
-        # commonwise + metis-drld come from the entropynaut index; psycopg2 is
-        # the DB driver. pycpl is deliberately absent so it is never downgraded.
-        assert "commonwise" in deps_cmd
-        assert "metis-drld" in deps_cmd
-        assert "psycopg2-binary" in deps_cmd
-        assert not any(a.startswith("pycpl") for a in deps_cmd)
-        # The deps step must NOT carry --no-deps (it needs full resolution).
-        assert "--no-deps" not in deps_cmd
-
-    def test_metiswise_command_is_no_deps_index_requirement(self):
-        (_, mw_cmd), _ = archive.install_metiswise_command()
-        # --no-deps keeps pymetis's stale pycpl pin out of the resolver.
-        assert "--no-deps" in mw_cmd
+    def test_metiswise_command_resolves_deps(self):
+        ([mw_cmd], _) = archive.install_metiswise_command()
+        assert "--no-deps" not in mw_cmd
+        # >=0.0.5 depends on the cloned ``pymetis``, not ``eso-pymetis``.
         # Resolved from the entropynaut index, not a GitHub tarball.
-        assert mw_cmd[-1] == "metiswise>=0.0.4"
+        assert mw_cmd[-1] == "metiswise>=0.0.5"
 
     def test_extra_index_urls_in_env(self):
         _, env = archive.install_metiswise_command()

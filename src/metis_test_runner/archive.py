@@ -49,85 +49,46 @@ def metiswise_available() -> bool:
         return False
 
 
-# metiswise 0.0.4 is the first release that imports the ``metis_drld`` pip
-# package (instead of a git-cloned ``codes.drld_parser``); installed from the
-# entropynaut index.
-METISWISE_REQUIREMENT = "metiswise>=0.0.4"
+# metiswise 0.0.5 is the first release that depends on ``pymetis`` — the
+# Install tab's editable clone — rather than ``eso-pymetis``, which would pull
+# a second copy of the package from the entropynaut index.
+METISWISE_REQUIREMENT = "metiswise>=0.0.5"
 
-# metiswise's runtime dependencies, MINUS ``pymetis`` (provided as an
-# editable install of the cloned pymetis by the Install tab) and MINUS its
-# jupyter/sphinx/pytest/coverage/mock/build dev/notebook deps (which the
-# archive client does not need).  We install these first, with normal
-# resolution, then install metiswise itself with ``--no-deps`` — see the long
-# comment in install_metiswise_command for why.
-_METISWISE_RUNTIME_DEPS: tuple[str, ...] = (
+# MetisWISE-only packages (all from the entropynaut index) plus its DB driver,
+# for the Uninstaller; the generic deps pip pulls in alongside stay installed.
+METISWISE_PACKAGES: tuple[str, ...] = (
+    "metiswise",
     "commonwise",
     "metis-drld",
+    "dataserverwise",
     "psycopg2-binary",
-    "astropy",
-    "numpy",
-    "scipy",
-    "matplotlib",
-    "pooch",
-    "docutils",
-    "httpx",
-    "httpcore",
-    "lxml",
 )
 
 
 def install_metiswise_command() -> tuple[list[list[str]], dict[str, str]]:
-    """Return ``(pip_commands, env_overrides)`` to install MetisWISE >=0.0.4.
+    """Return ``(pip_commands, env_overrides)`` to install MetisWISE >=0.0.5.
 
     Installs into the same interpreter that hosts MTR (sys.executable points at
-    pipx's isolated venv or whatever venv the user installed MTR into).  The
-    entropynaut index also serves MetisWISE's ``commonwise`` and
-    ``metis-drld`` dependencies.
+    pipx's isolated venv or whatever venv the user installed MTR into), with
+    normal dependency resolution.  Its ``pymetis`` dependency must already be
+    satisfied by the Install tab's editable clone: otherwise pip picks the
+    unrelated graph-partitioning ``pymetis`` from PyPI.
 
     The index URLs travel in ``env_overrides["PIP_EXTRA_INDEX_URL"]``
     (space-separated, the env form of ``--extra-index-url``).  Run the
     commands with ``env=os.environ | env_overrides``.
-
-    Two commands, run in order:
-
-      1. Install metiswise's runtime deps (``_METISWISE_RUNTIME_DEPS``) with
-         normal resolution.  None of these depend on ``pycpl`` or
-         ``pymetis``, so this neither downgrades pycpl nor pulls a second
-         pymetis copy.
-      2. Install metiswise itself with ``--no-deps``.
-
-    Why ``--no-deps`` for metiswise: metiswise declares ``pymetis``
-    (``eso-pymetis`` in 0.0.4), and the cloned pymetis the Install tab installs
-    editable pins ``pycpl==1.0.3.post11``.  A normal ``pip install metiswise``
-    would let that pin downgrade the newer pycpl the Install tab deliberately
-    resolved, and a bare ``pymetis`` would also match the unrelated
-    graph-partitioning package on PyPI.  ``--no-deps`` keeps pip from ever
-    seeing pymetis's pycpl pin.
-
-    TODO: the Install tab deliberately installs a newer pycpl than upstream
-    pymetis pins (``==1.0.3.post11``), and the entropynaut-published pymetis
-    likely carries the same pin.  Once both catch up, collapse this back into a
-    single ``pip install <metiswise>`` with normal resolution.
     """
     env_overrides = {
         "PIP_EXTRA_INDEX_URL": " ".join((ESO_INDEX, PYCPL_INDEX, ENTROPYNAUT_INDEX)),
     }
-    deps_cmd = [
-        sys.executable,
-        "-m",
-        "pip",
-        "install",
-        *_METISWISE_RUNTIME_DEPS,
-    ]
     metiswise_cmd = [
         sys.executable,
         "-m",
         "pip",
         "install",
-        "--no-deps",
         METISWISE_REQUIREMENT,
     ]
-    return [deps_cmd, metiswise_cmd], env_overrides
+    return [metiswise_cmd], env_overrides
 
 
 def _ensure_awetarget() -> None:

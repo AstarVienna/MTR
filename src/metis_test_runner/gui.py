@@ -1063,8 +1063,7 @@ class MetisWISEInstallWorker(QThread):
         from .archive import install_metiswise_command
 
         try:
-            # install_metiswise_command returns a SEQUENCE of pip commands
-            # (deps first, then metiswise --no-deps — see archive.py for why)
+            # install_metiswise_command returns a sequence of pip commands
             # plus env overrides carrying the extra index URLs.
             cmds, env_overrides = install_metiswise_command()
             # pipx venvs ship without pip; bootstrap it first.

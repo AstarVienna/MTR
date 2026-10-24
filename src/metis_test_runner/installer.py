@@ -509,27 +509,24 @@ class Installer:
             self._run(self._pip_deps_command(), cwd=REPO_ROOT)
 
             self._step("Installing pymetis (editable)…")
-            # metiswise (Archive tab) depends on ``pymetis`` (``eso-pymetis`` in
-            # 0.0.4), which is just the pip build of the clone above.
-            # Install the clone editable with --no-deps so that:
-            #   (a) ``pymetis`` is importable in-process (metiswise imports it), and
-            #   (b) the Archive-tab metiswise install finds ``pymetis`` already
-            #       satisfied — avoiding a 2nd pymetis copy and the clash between
-            #       pymetis's pycpl==1.0.3.post11 pin and the newer pycpl the
-            #       step above just resolved.
-            # --no-deps keeps the pycpl/edps/pyesorex versions installed above
-            # authoritative.
-            # TODO: remove/revisit if metiswise drops the pymetis dependency
-            # or pymetis stops pinning pycpl.
+            # metiswise (Archive tab) depends on ``pymetis``, which is just the
+            # pip build of the clone above; installing it editable makes it
+            # importable in-process and satisfies that dependency.  Since
+            # METIS_Pipeline #240 its pycpl range admits the pycpl installed
+            # above; older refs pin an older pycpl, which pip then downgrades to
+            # (hence the indexes — none of these packages are on PyPI).
             self._run(
                 [
                     sys.executable,
                     "-m",
                     "pip",
                     "install",
+                    "--extra-index-url",
+                    PYCPL_INDEX,
+                    "--extra-index-url",
+                    ESO_INDEX,
                     "--editable",
                     str(TARGET_A / "metisp" / "pymetis"),
-                    "--no-deps",
                 ],
                 cwd=REPO_ROOT,
             )
@@ -1026,10 +1023,7 @@ class Uninstaller:
 
     def _run_steps(self) -> bool:
         from . import credentials as credstore
-
-        # _METISWISE_RUNTIME_DEPS is the single source of truth for what the
-        # Archive tab installs; reuse it so the two lists never drift apart.
-        from .archive import _METISWISE_RUNTIME_DEPS
+        from .archive import METISWISE_PACKAGES
 
         ok = True
 
@@ -1040,7 +1034,7 @@ class Uninstaller:
             "transitive sub-dependencies are left in place.\n",
             "yellow",
         )
-        packages = [*self.PIPELINE_PACKAGES, "metiswise", *_METISWISE_RUNTIME_DEPS]
+        packages = [*self.PIPELINE_PACKAGES, *METISWISE_PACKAGES]
         try:
             # pipx venvs have no pip; bootstrap it so the uninstall can run
             # (the packages live in the venv even when pip itself is absent).
