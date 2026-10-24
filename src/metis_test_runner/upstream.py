@@ -228,15 +228,7 @@ class _Package:
 
 def _chain(pkg: _Package, members: set[tuple[str, str]], sci_tags: set[str]) -> list[list]:
     """Raw-input tasks in calibration-plan order: ``[task, main tag, meta target]``."""
-    ancestors: dict[tuple[str, str], set] = {}
     depth: dict[tuple[str, str], int] = {}
-
-    def anc(ref):
-        if ref not in ancestors:
-            ancestors[ref] = set()
-            for p in pkg.tasks[ref].parents & members:
-                ancestors[ref] |= {p} | anc(p)
-        return ancestors[ref]
 
     def dep(ref):
         if ref not in depth:
@@ -256,10 +248,6 @@ def _chain(pkg: _Package, members: set[tuple[str, str]], sci_tags: set[str]) -> 
     for ref in members:
         task = pkg.tasks[ref]
         if not task.raw:
-            continue
-        # A raw task fed the same raws as a raw ancestor re-reduces them
-        # (the IFU telluric tasks); the ancestor is the one to target.
-        if any(pkg.tasks[a].raw and pkg.tasks[a].main_tags == task.main_tags for a in anc(ref)):
             continue
         m = meta(task)
         rows += [(dep(ref), m == "science", task.name, tag, m) for tag in task.main_tags]

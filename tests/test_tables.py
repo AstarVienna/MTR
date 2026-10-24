@@ -54,8 +54,7 @@ _FILES = {
         sky = (task("x_sky").with_main_input(raw_sky)
                .with_associated_input(flat, [master_flat_class])
                .with_meta_targets([SCIENCE]).build())
-        telluric = (task("x_telluric").with_main_input(raw_sci)
-                    .with_associated_input(sci, [sci_reduced_class]).build())
+        telluric = task("x_telluric").with_main_input(sci, [sci_reduced_class]).build()
 
         def unused():
             ghost = task("x_ghost").with_main_input(raw_sci).build()
@@ -85,7 +84,7 @@ class TestDerivePipeline:
         chain = upstream.derive_pipeline(pipeline)["chains"]["metis.metis_x_wkf"]
         # Ordered by dependency depth, science last within a depth. The ungated
         # x_sci reduces a SCIENCE raw, so it counts as science; x_telluric
-        # re-reduces x_sci's raws and x_ghost is never instantiated.
+        # has no raw input and x_ghost is never instantiated.
         assert chain == [
             ["x_dark", "DARK_RAW", None],
             ["x_flat", "FLAT_RAW", None],

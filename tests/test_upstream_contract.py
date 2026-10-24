@@ -12,14 +12,15 @@ import json
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
 import yaml
 from packaging.version import Version
 
-from metis_test_runner import tables, upstream
-from metis_test_runner.installer import Installer
+from metis_test_runner import installer, tables, upstream
+from metis_test_runner.installer import Installer, Uninstaller
 from metis_test_runner.run_metis import _build_sim_script
 
 pytestmark = pytest.mark.upstream
@@ -80,6 +81,15 @@ class TestPipelineContract:
             if not any(rule_tech.get(tag) == dpr_tech for _, tag, _ in derived["chains"].get(wf, [])):
                 unreached.add(tech)
         assert unreached == set(_TECH_EXCEPTIONS)
+
+    def test_uninstaller_knows_pymetis_index_deps(self, upstream_pipeline_dir, monkeypatch):
+        # The installer reads pymetis's deps; the uninstaller names the non-PyPI ones itself.
+        monkeypatch.setattr(installer, "TARGET_A", upstream_pipeline_dir)
+        assert Installer._pip_deps_command()
+        pyproject = tomllib.loads(
+            (upstream_pipeline_dir / "metisp" / "pymetis" / "pyproject.toml").read_text()
+        )
+        assert set(pyproject["tool"]["uv"]["sources"]) <= set(Uninstaller.PIPELINE_PACKAGES)
 
 
 def _update_headers_tech_rewrite(sims_dir: Path) -> dict[str, str]:

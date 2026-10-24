@@ -1,5 +1,5 @@
 {
- "pipeline_commit": "4d5a033c",
+ "pipeline_commit": "a05cf6ce",
  "irdb_release": "2026-09-23",
  "dpr_to_tag": [
   [
@@ -105,6 +105,12 @@
    "LM_FLAT_LAMP_RAW"
   ],
   [
+   "CALIB",
+   "FLAT,TWILIGHT",
+   "IMAGE,LM",
+   "LM_FLAT_TWILIGHT_RAW"
+  ],
+  [
    "SCIENCE",
    "OBJECT",
    "IMAGE,LM",
@@ -172,12 +178,6 @@
   ],
   [
    "CALIB",
-   "FLAT,TWILIGHT",
-   "IMAGE,LM",
-   "LM_TWILIGHT_FLAT"
-  ],
-  [
-   "CALIB",
    "DARK,WCUOFF",
    "IMAGE,LM",
    "LM_WCU_OFF_RAW"
@@ -199,6 +199,12 @@
    "FLAT,LAMP",
    "IMAGE,N",
    "N_FLAT_LAMP_RAW"
+  ],
+  [
+   "CALIB",
+   "FLAT,TWILIGHT",
+   "IMAGE,N",
+   "N_FLAT_TWILIGHT_RAW"
   ],
   [
    "SCIENCE",
@@ -259,12 +265,6 @@
    "PUPIL",
    "PUP,N",
    "N_PUPIL_RAW"
-  ],
-  [
-   "CALIB",
-   "FLAT,TWILIGHT",
-   "IMAGE,N",
-   "N_TWILIGHT_FLAT"
   ],
   [
    "CALIB",

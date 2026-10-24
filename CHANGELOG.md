@@ -8,8 +8,17 @@
   pycpl MTR installs, so the editable pymetis and MetisWISE now install with
   normal resolution. The Archive tab requires `metiswise>=0.0.5` (depends on
   `pymetis`, not `eso-pymetis`) in a single `pip install`, which also brings
-  in its new `dataserverwise` dependency. Pipeline refs older than #240
-  downgrade pycpl to their pin.
+  in its new `dataserverwise` dependency.
+- **Pipeline dependencies come from pymetis's `pyproject.toml`.** *Install*
+  reads the cloned ref's `[project] dependencies` (`pycpl` range, `edps`,
+  `pyesorex`, `adari_core`, …) instead of MTR's own list, so each ref gets its
+  own pycpl directly; `scopesim` / `scopesim_templates` stay MTR's pins. Refs
+  before 2025-11-29 declare none and are refused.
+- **Bundled snapshot follows Pipeline #240**: the twilight-flat raws are
+  `LM_FLAT_TWILIGHT_RAW` / `N_FLAT_TWILIGHT_RAW`. The workflow parser no longer
+  drops tasks that re-reduce an ancestor's raws, which only the pre-#240 IFU
+  telluric tasks did: with a pre-#240 checkout, IFU standard-star input now
+  targets `metis_ifu_std_telluric` rather than `metis_ifu_std_reduce`.
 - *Uninstall* removes only MetisWISE's own packages (`metiswise`,
   `commonwise`, `metis-drld`, `dataserverwise`, `psycopg2-binary`), no longer
   generic ones like `numpy` or `astropy`.

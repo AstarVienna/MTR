@@ -19,6 +19,7 @@ import subprocess
 import sys
 import threading
 import time
+import tomllib
 import traceback
 from collections.abc import Callable
 from pathlib import Path
@@ -428,28 +429,28 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
 class Installer:
     """Executes all install steps sequentially, reporting through *log*."""
 
-    # Pipeline dependencies installed from the ESO/ivh mirrors, as pip
-    # requirement strings (cf. Uninstaller.PIPELINE_PACKAGES, which lists
-    # bare distribution names).
-    # TODO: ``pycpl`` is deliberately UNPINNED only while ivh's index churns —
-    # re-pin it once that settles (0.4.4's 1.0.4.post6 pin was withdrawn there).
+    # MTR's own pins, installed alongside pymetis's dependencies. Bumped
+    # together with run_metis.IRDB_RELEASES: each irdb release names the
+    # oldest ScopeSim that loads it.
     PIP_REQUIREMENTS = [
-        "pycpl",
-        "edps",
-        "pyesorex",
-        "adari_core",
-        # Bumped together with run_metis.IRDB_RELEASES: each irdb release
-        # names the oldest ScopeSim that loads it.
         "scopesim==0.12.0",
         "scopesim_templates==0.9.0",
     ]
 
     @classmethod
     def _pip_deps_command(cls) -> list[str]:
-        """``pip install`` argv for the ESO-mirror pipeline dependencies."""
-        # --upgrade is what makes the unpinned requirements actually track the
-        # newest release: a bare ``pip install pycpl`` leaves an already-installed
-        # older pycpl in place ("Requirement already satisfied").
+        """``pip install`` argv for the cloned pymetis's dependencies plus MTR's pins."""
+        # pymetis's pyproject.toml names the pipeline dependencies (pycpl,
+        # edps, pyesorex, adari_core, ...) and the pycpl range for this ref.
+        # --upgrade makes a re-install track their newest releases: a bare
+        # ``pip install edps`` leaves an already-installed older one in place.
+        pyproject = TARGET_A / "metisp" / "pymetis" / "pyproject.toml"
+        deps = tomllib.loads(pyproject.read_text()).get("project", {}).get("dependencies")
+        if not deps:
+            raise RuntimeError(
+                f"{pyproject} declares no [project] dependencies: the selected "
+                f"ref predates 2025-11-29 — pick a newer one."
+            )
         return [
             sys.executable,
             "-m",
@@ -460,6 +461,7 @@ class Installer:
             PYCPL_INDEX,
             "--extra-index-url",
             ESO_INDEX,
+            *deps,
             *cls.PIP_REQUIREMENTS,
         ]
 
@@ -511,23 +513,10 @@ class Installer:
             self._step("Installing pymetis (editable)…")
             # metiswise (Archive tab) depends on ``pymetis``, which is just the
             # pip build of the clone above; installing it editable makes it
-            # importable in-process and satisfies that dependency.  Since
-            # METIS_Pipeline #240 its pycpl range admits the pycpl installed
-            # above; older refs pin an older pycpl, which pip then downgrades to
-            # (hence the indexes — none of these packages are on PyPI).
+            # importable in-process and satisfies that dependency.  The step
+            # above installed its dependencies, so nothing is fetched here.
             self._run(
-                [
-                    sys.executable,
-                    "-m",
-                    "pip",
-                    "install",
-                    "--extra-index-url",
-                    PYCPL_INDEX,
-                    "--extra-index-url",
-                    ESO_INDEX,
-                    "--editable",
-                    str(TARGET_A / "metisp" / "pymetis"),
-                ],
+                [sys.executable, "-m", "pip", "install", "--editable", str(TARGET_A / "metisp" / "pymetis")],
                 cwd=REPO_ROOT,
             )
 

@@ -99,8 +99,9 @@ the last configuration is two clicks away.
 
 *Install / Update* clones both repositories into the user data directory
 (`~/.local/share/metis-test-runner/`, override with `METIS_DATA_DIR`),
-pip-installs `pycpl`, `edps`, `pyesorex`, `adari_core`, `scopesim` and
-`scopesim_templates` into MTR's own venv, and initialises EDPS on port 4444.
+pip-installs the dependencies the cloned pymetis declares (`pycpl`, `edps`,
+`pyesorex`, `adari_core`, …), `scopesim` and `scopesim_templates` into MTR's
+own venv, and initialises EDPS on port 4444.
 Re-running updates the clones in place rather than re-cloning, and out-of-band
 installs such as MetisWISE are preserved. *Uninstall* reverses all of it.
 
@@ -258,7 +259,7 @@ Regardless of whether you drive the runner from the GUI or the CLI, the underlyi
 **Option A — pipx install** (runner `default`, the default)
 
 The Install tab (or `mtr-install`) takes care of this automatically. It pip-installs all pipeline
-dependencies (`pycpl`, `edps`, `pyesorex`, `adari_core`, `scopesim`,
+dependencies (those pymetis declares, plus `scopesim` and
 `scopesim_templates`) into the same isolated venv that hosts MTR, clones
 `METIS_Pipeline` and `METIS_Simulations` into the user data directory
 (`~/.local/share/metis-test-runner/` by default). The `default` runner then

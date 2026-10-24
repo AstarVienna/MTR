@@ -352,47 +352,52 @@ class TestEdpsConfigLifecycle:
 
 
 class TestPipDepsCommand:
-    def _cmd(self):
-        from metis_test_runner.installer import Installer
+    PYMETIS_DEPS = ["pycpl>=1.0.4.post4,<1.0.5", "edps", "pyesorex", "adari_core", "numpy"]
 
-        return Installer._pip_deps_command()
+    def _cmd(self, tmp_path, monkeypatch, pyproject=None):
+        pymetis = tmp_path / "metisp" / "pymetis"
+        pymetis.mkdir(parents=True)
+        deps = ", ".join(f'"{d}"' for d in self.PYMETIS_DEPS)
+        (pymetis / "pyproject.toml").write_text(
+            pyproject or f'[project]\nname = "pymetis"\ndependencies = [{deps}]\n'
+        )
+        monkeypatch.setattr(installer, "TARGET_A", tmp_path)
+        return installer.Installer._pip_deps_command()
 
-    def test_runs_pip_in_mtrs_own_interpreter(self):
-        cmd = self._cmd()
+    def test_runs_pip_in_mtrs_own_interpreter(self, tmp_path, monkeypatch):
+        cmd = self._cmd(tmp_path, monkeypatch)
         assert cmd[0] == sys.executable
         assert cmd[1:4] == ["-m", "pip", "install"]
 
-    def test_pycpl_is_unpinned(self):
-        # pycpl is deliberately unpinned while ivh's index churns; a bare
-        # "pycpl" token (no ==/>=/~=) is the whole point of the change.
-        cmd = self._cmd()
-        assert "pycpl" in cmd
-        assert not any(a.startswith("pycpl") and a != "pycpl" for a in cmd)
+    def test_installs_pymetis_deps_verbatim(self, tmp_path, monkeypatch):
+        # The clone's pyproject is the truth for the pipeline deps and the
+        # pycpl range; MTR adds only its own pins.
+        cmd = self._cmd(tmp_path, monkeypatch)
+        assert cmd[-len(self.PYMETIS_DEPS) - 2 : -2] == self.PYMETIS_DEPS
+        assert cmd[-2:] == installer.Installer.PIP_REQUIREMENTS
 
-    def test_upgrade_flag_present(self):
-        # Without --upgrade an already-installed older pycpl would survive as
-        # "Requirement already satisfied", defeating the unpin.
-        assert "--upgrade" in self._cmd()
+    def test_upgrade_flag_present(self, tmp_path, monkeypatch):
+        # Without --upgrade an already-installed older edps would survive as
+        # "Requirement already satisfied".
+        assert "--upgrade" in self._cmd(tmp_path, monkeypatch)
 
-    def test_both_extra_indexes_present(self):
+    def test_both_extra_indexes_present(self, tmp_path, monkeypatch):
         from metis_test_runner.installer import ESO_INDEX, PYCPL_INDEX
 
-        cmd = self._cmd()
+        cmd = self._cmd(tmp_path, monkeypatch)
         assert cmd.count("--extra-index-url") == 2
         assert PYCPL_INDEX in cmd
         assert ESO_INDEX in cmd
 
-    def test_scopesim_stays_pinned(self):
-        # Only pycpl was unpinned; scopesim must still carry an exact pin. The
-        # version itself is not asserted so a routine bump needn't touch tests.
-        cmd = self._cmd()
+    def test_scopesim_stays_pinned(self, tmp_path, monkeypatch):
+        # The version itself is not asserted so a routine bump needn't touch tests.
+        cmd = self._cmd(tmp_path, monkeypatch)
         for dist in ("scopesim", "scopesim_templates"):
             assert any(a.startswith(f"{dist}==") for a in cmd)
 
-    def test_all_pipeline_deps_requested(self):
-        cmd = self._cmd()
-        for dist in ("pycpl", "edps", "pyesorex", "adari_core"):
-            assert any(a == dist or a.startswith(f"{dist}==") for a in cmd)
+    def test_ref_without_declared_deps_is_rejected(self, tmp_path, monkeypatch):
+        with pytest.raises(RuntimeError, match="no \\[project\\] dependencies"):
+            self._cmd(tmp_path, monkeypatch, pyproject='[tool.poetry]\nname = "pymetis"\n')
 
 
 # ---------------------------------------------------------------------------
