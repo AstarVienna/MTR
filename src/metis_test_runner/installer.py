@@ -893,30 +893,16 @@ class Installer:
             )
 
     def _init_edps(self) -> None:
-        """Run edps once to generate ~/.edps/application.properties, then stop it.
+        """Run edps once to generate ~/.edps/application.properties.
 
-        EDPS prompts for a bookkeeping directory on first run; we send a newline
-        to accept the default.  After edps daemonises the process exits, then we
-        issue -s to stop the background server.
+        With no config present (``_backup_edps_config`` ensures that), edps only
+        prompts for a bookkeeping directory (we send a newline to accept the
+        default), writes the config and exits without starting a server. Don't
+        follow up with ``edps -s``: that would *start* a server on the config's
+        default port and then fail to stop it.
         """
         edps_bin = Path(sys.executable).parent / "edps"
-        base = [str(edps_bin), "-P", "4444"]
-        try:
-            self._run(base, cwd=REPO_ROOT, stdin_text="\n", timeout=60)
-        finally:
-            # Guarded: if edps is missing, the try raises FileNotFoundError and
-            # an unguarded stop here would raise a *second* one that replaces
-            # it — the user would see the stop command's error, not the cause.
-            try:
-                subprocess.run(
-                    base + ["-s"],
-                    cwd=str(REPO_ROOT),
-                    capture_output=True,
-                    timeout=15,
-                    env=resolve_runtime_env(),
-                )
-            except Exception as exc:
-                self._log(f"(could not stop the EDPS server: {exc})\n", "yellow")
+        self._run([str(edps_bin)], cwd=REPO_ROOT, stdin_text="\n", timeout=60)
 
     def _patch_edps_config(self) -> None:
         props = Path.home() / ".edps" / "application.properties"
