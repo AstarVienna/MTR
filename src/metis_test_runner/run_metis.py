@@ -627,7 +627,7 @@ def _build_sim_script(
             f"        writeYaml = {write_yaml!r},",
             # Required since PR #216 (ESO PROG ID and DIR ID headers); subDir
             # must be a str. Older checkouts ignore both.
-            "        progID    = None,",
+            "        progID    = 'MTR',",
             "        subDir    = '',",
             "    )",
             "    try:",

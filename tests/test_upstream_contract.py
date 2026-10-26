@@ -214,7 +214,7 @@ class TestSimulationRunContract:
         calls = self._run(upstream_simulations_dir, tmp_path, [EXAMPLES / "small_test.yaml"])
         assert calls
         # A non-None upstream --progID default would override MTR's value; MTR would then have to pass -k.
-        assert {(prog_id, sub_dir) for _, prog_id, sub_dir in calls} == {(None, "")}
+        assert {(prog_id, sub_dir) for _, prog_id, sub_dir in calls} == {("MTR", "")}
 
     def test_calib_frames_are_generated(self, upstream_simulations_dir, tmp_path):
         inputs = [EXAMPLES / "small_test.yaml"]

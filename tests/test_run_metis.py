@@ -997,7 +997,7 @@ class TestBuildSimScript:
     def test_script_sets_progid_and_subdir_without_k_flag(self):
         # Required since PR #216; -k would make a parser from before #216 exit.
         script = _build_sim_script(**self._base_kwargs)
-        assert "progID    = None," in script
+        assert "progID    = 'MTR'," in script
         assert "subDir    = ''," in script
         assert "'-k'" not in script
         assert "'--progID'" not in script
@@ -1190,7 +1190,7 @@ class TestSpawnSafety:
         mock_rsb.runSimulationBlock.assert_called_once()
         inputs, params, args = mock_rsb.runSimulationBlock.call_args.args
         assert inputs == ["/data/obs.yaml"]
-        assert (params["progID"], params["subDir"]) == (None, "")
+        assert (params["progID"], params["subDir"]) == ("MTR", "")
         assert args == ["--doCalib", "0"]
 
 
