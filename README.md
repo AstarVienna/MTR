@@ -5,7 +5,7 @@
   <a href="https://pypi.org/project/metis-test-runner/"><img src="https://img.shields.io/pypi/v/metis-test-runner?style=for-the-badge&labelColor=1e1e2e&color=89b4fa&logo=pypi&logoColor=cdd6f4" alt="PyPI"></a>
   <a href="https://pypi.org/project/metis-test-runner/"><img src="https://img.shields.io/pypi/pyversions/metis-test-runner?style=for-the-badge&labelColor=1e1e2e&color=89b4fa&logo=python&logoColor=cdd6f4" alt="Python versions"></a>
   <a href="https://github.com/AstarVienna/MTR/commits/main"><img src="https://img.shields.io/github/last-commit/AstarVienna/MTR?style=for-the-badge&labelColor=1e1e2e&color=cba6f7&logo=git&logoColor=cdd6f4" alt="Last Commit"></a>
-  <a href="https://github.com/AstarVienna/MTR"><img src="https://img.shields.io/badge/platform-linux-fab387?style=for-the-badge&labelColor=1e1e2e&logo=linux&logoColor=cdd6f4" alt="Platform"></a>
+  <a href="https://github.com/AstarVienna/MTR"><img src="https://img.shields.io/badge/platform-linux%20%7C%20macOS-fab387?style=for-the-badge&labelColor=1e1e2e&logo=linux&logoColor=cdd6f4" alt="Platform"></a>
 </p>
 
 A graphical front-end for end-to-end testing of the [METIS instrument pipeline](https://github.com/AstarVienna/METIS_Pipeline). It generates synthetic FITS observations via [ScopeSim](https://scopesim.readthedocs.io/) and then runs the matching [EDPS](https://www.eso.org/sci/software/edps/) reduction workflow — all from a single, self-contained GUI. A command-line interface (`mtr-cli`) is also shipped as a fallback for scripted or headless use.
@@ -89,7 +89,8 @@ Add YAML observation blocks and/or AIT-format CSV sequences — they can be mixe
 freely in one run, and a live tally appears under the list. Every control is
 labelled with the CLI flag it maps to. The line under *Output directory* shows
 exactly where simulation frames and pipeline products will land, updating as you
-type. **Run** becomes **Stop**; output streams into the log below with ANSI
+type. **Stop** ends the run and its EDPS server, and **Open Folder** opens the
+output directory. Output streams into the log below with ANSI
 colouring stripped and stderr highlighted. Settings persist to `QSettings`, so
 the last configuration is two clicks away.
 
@@ -109,6 +110,8 @@ Leave **Repository version (advanced)** blank to track each repository's default
 branch. Set it to install a specific branch, tag or commit instead — for people
 developing *on* those repositories. To use a checkout you already have instead,
 see [Using your own checkout](#using-your-own-metis_pipeline--metis_simulations-checkout).
+Pipeline refs older than 2025-11-29 are refused, since their pymetis declares
+no dependencies.
 
 Both buttons have headless equivalents, `mtr-install` and `mtr-uninstall`; see
 the [Quickstart](#quickstart).
@@ -120,7 +123,8 @@ the [Quickstart](#quickstart).
 Connects to the remote METIS AIT archive via the
 [MetisWISE](https://github.com/AstarVienna/MetisWISE) client: install the
 package, store your credentials in the OS keyring, then query and download
-files. To pull missing master calibrations automatically during a run, tick
+files, or upload local FITS files (the class is detected from the headers and
+can be overridden). To pull missing master calibrations automatically during a run, tick
 *Auto-fetch missing calibrations* on the Run tab instead.
 
 
@@ -137,7 +141,9 @@ files. To pull missing master calibrations automatically during a run, tick
 | `metis_lm_app_wkf` | `APP,LM` |
 | `metis_pupil_imaging_wkf` | `PUP,LM`, `PUP,N` |
 
-This routing is MTR's own choice. Everything else (classification tags, task
+EDPS always runs the umbrella `metis.metis_wkf`; the table picks which
+sub-workflows' tasks become the `-t` / `-m` targets. This routing is MTR's own
+choice. Everything else (classification tags, task
 chains, master products) is read from the Pipeline's workflow files: the
 `workflow_dir` EDPS is configured with, else the Pipeline checkout, else a
 snapshot bundled with MTR (always for `docker` / `podman`). Each run prints the
@@ -145,7 +151,7 @@ source as `Tables :`.
 
 ## Output Layout
 
-Output is written under the chosen output directory (default: `./output/<timestamp>/`):
+Output is written under the chosen output directory (default: `./output/<timestamp>/` for `mtr-cli`, `<data dir>/output/<timestamp>/` in the GUI):
 
 - `<output-dir>/sim/` — synthetic FITS frames from ScopeSim
 - `<output-dir>/pipeline/` — reduced data products from EDPS
@@ -378,7 +384,7 @@ YAML and CSV inputs may be mixed in any combination.
 | `--static {0,1}` | `1` | Ensure static calibration prototypes (`PERSISTENCE_MAP_*`, `ATM_PROFILE`, `REF_STD_CAT`, …) exist in a cache directory and pass it to EDPS: `<data dir>/static_calibs` for the `default`/`native` runners, `<output-dir>/static_calibs` for `docker`/`podman` (see [Output Layout](#output-layout)). Reused across runs, and regenerated when METIS_Simulations' `makeCalibPrototypes.py` changes. Pass `--static 0` or `--no-static` to disable. |
 | `--cores N` | `4` | CPU cores used for parallel simulations |
 | `--no-sim` | off | Skip simulation; run pipeline on existing FITS data (source defaults to `<output>/sim/` — override with `--pipeline-input`) |
-| `--pipeline-input DIR` | `<output>/sim/` | Directory containing FITS files to feed the pipeline (only with `--no-sim`; env: `METIS_PIPELINE_INPUT`) |
+| `--pipeline-input DIR` | `<output>/sim/` | Directory containing FITS files to feed the pipeline; repeatable (only with `--no-sim`; env: `METIS_PIPELINE_INPUT`) |
 | `--no-pipeline` | off | Run simulation only; skip EDPS pipeline |
 | `--csv-to-yaml` | off | Dry run: translate CSV input(s) to YAML via METIS_Simulations (`testRun`+`writeYaml`) and stop — writes `<name>.yaml` next to each CSV, with no simulation and no pipeline. Only CSV inputs are affected. Refuses to run if the target YAML already exists. |
 | `--csv-lines START:END` | all rows | Restrict CSV inputs to a range of 1-based file lines (e.g. `6:12`, `6:` from line 6 to end, `:12` from start to line 12). The header block (column-name row + `component`/`description`/`type` rows) is always kept; MTR writes a sliced copy under `<output>/sliced_inputs/` and feeds that to the simulation. Applies to `.csv` inputs only; ignored with `--no-sim`. With `--csv-to-yaml`, the YAML is written next to the original CSV as `<name>_lines<START>-<END>.yaml` (open bounds become `1` / `end`). Also exposed in the GUI Run tab. |
@@ -450,11 +456,11 @@ mtr-cli --cores 12 ~/mtr-examples/LMS_RAD_06.yaml
 # Only simulate, inspect the FITS files manually
 mtr-cli --no-pipeline ~/mtr-examples/LMS_RAD_06.yaml
 
-# Only run the pipeline on previously simulated data
-mtr-cli --no-sim -o /tmp/myrun ~/mtr-examples/LMS_RAD_06.yaml
+# Only run the pipeline on previously simulated data (read from <output>/sim/)
+mtr-cli --no-sim -o /tmp/myrun
 
-# Pipeline-only with FITS files from a custom location
-mtr-cli --no-sim --pipeline-input /data/sim_fits -o /tmp/myrun
+# Pipeline-only with FITS files from one or more custom locations
+mtr-cli --no-sim --pipeline-input /data/sim_fits --pipeline-input /data/masters -o /tmp/myrun
 
 # CSV-only input, simulate only (workflow auto-detection not needed)
 mtr-cli --no-pipeline ~/mtr-examples/small_test_img_lm.csv
@@ -517,7 +523,11 @@ MTR/
 │   ├── direct.py           # mtr-exec / mtr-shell direct environment access
 │   ├── env.py              # Shared runtime-environment resolution
 │   ├── paths.py            # User data directory resolution (platformdirs)
-│   ├── indexes.py          # ESO mirror pip-index URL constants
+│   ├── tables.py           # Workflow routing and lookup tables (tags, task chains, products)
+│   ├── upstream.py         # Derives those tables from METIS_Pipeline; refreshes the snapshot
+│   ├── upstream_snapshot.json  # Bundled fallback tables
+│   ├── indexes.py          # pip-index URLs (pycpl, ESO, entropynaut)
+│   ├── __main__.py         # `python -m metis_test_runner` starts the GUI
 │   └── examples/           # Bundled YAML / CSV example inputs
 ├── tests/                  # Unit tests (pytest)
 └── pyproject.toml          # Project metadata (hatchling build backend)

@@ -1171,7 +1171,7 @@ def parse_args(argv=None):
         choices=["default", "native", "docker", "podman"],
         default=os.environ.get("METIS_RUNNER", "default"),
         help="Execution mode: default runs subprocesses inside MTR's own "
-        "pipx/venv and loads the Install-tab .env; native calls tools "
+        "pipx/venv with an environment derived from the install; native calls tools "
         "directly from PATH (bare-metal or inside a container); "
         "docker/podman exec commands into a running container "
         "(env: METIS_RUNNER)",
