@@ -16,6 +16,7 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -827,7 +828,7 @@ class TestInstrumentPackageReleases:
 
 
 class TestBuildSimScript:
-    _base_kwargs = dict(
+    _base_kwargs: dict[str, Any] = dict(
         out_dir="/tmp/sim",
         do_calib=False,
         do_static=True,
@@ -1150,7 +1151,7 @@ class TestSpawnSafety:
             "metis_simulations.runSimulationBlock": mock_rsb_module,
         }, mock_rsb_module
 
-    _base_kwargs = dict(
+    _base_kwargs: dict[str, Any] = dict(
         out_dir="/tmp/sim",
         do_calib=False,
         do_static=False,
@@ -1779,7 +1780,7 @@ class TestSigtermCleanup:
         try:
             deadline = time.monotonic() + 15
             while not ready.exists():
-                assert proc.poll() is None, proc.stdout.read()
+                assert proc.poll() is None, proc.stdout.read()  # pyright: ignore[reportOptionalMemberAccess]
                 assert time.monotonic() < deadline, "stand-in never got ready"
                 time.sleep(0.05)
             grandchild = int(pid_file.read_text())
@@ -1922,6 +1923,7 @@ class TestHardlinkMismatch:
         self._props(tmp_path, monkeypatch, f"[executor]\nbase_dir={store}\n[packager]\nmode=link\n")
         self._split_devices(monkeypatch, store)
         msg = rm.hardlink_mismatch(tmp_path / "out" / "pipeline")
+        assert msg is not None
         assert "different filesystems" in msg
         assert str(store) in msg and "-o DIR" in msg
 
@@ -2144,7 +2146,7 @@ class TestMainCsvToYaml:
         sliced = []
 
         def fake(runner, container, sim_code, sims_cwd):
-            sliced.append(Path(re.search(r"'([^']*sliced_inputs/seq\.csv)'", sim_code).group(1)))
+            sliced.append(Path(re.search(r"'([^']*sliced_inputs/seq\.csv)'", sim_code).group(1)))  # pyright: ignore[reportOptionalMemberAccess]
             assert sliced[0].is_file()
             sliced[0].with_suffix(".yaml").write_text("x: 1\n")
             return 0

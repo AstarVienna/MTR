@@ -147,7 +147,7 @@ class _Package:
                     key = self._keyword(ref[0], k) if k is not None else None
                     if key and isinstance(v, ast.Constant) and isinstance(v.value, str):
                         keywords[key] = v.value
-            self.rules[ref] = (args[0].value, keywords)
+            self.rules[ref] = (args[0].value, keywords)  # pyright: ignore[reportAttributeAccessIssue]  # always an ast.Constant
         return self.rules[ref]
 
     def _rule_tags(self, stem: str, nodes) -> list[str]:
@@ -167,7 +167,7 @@ class _Package:
         ]
 
     @staticmethod
-    def _categories(call: ast.Call) -> list[ast.AST]:
+    def _categories(call: ast.Call) -> list[ast.expr]:
         node = (
             call.args[1]
             if len(call.args) > 1
@@ -179,7 +179,7 @@ class _Package:
         if ref in self.tasks:
             return self.tasks[ref]
         stem, calls = ref[0], self._calls(ref)
-        task = _Task(name=calls[0][1].args[0].value, main_tags=[], raw=False, meta=set(), parents=set())
+        task = _Task(name=calls[0][1].args[0].value, main_tags=[], raw=False, meta=set(), parents=set())  # pyright: ignore[reportAttributeAccessIssue]  # always an ast.Constant
         self.tasks[ref] = task
         for name, call in calls:
             if name == "with_meta_targets" and call.args and isinstance(call.args[0], ast.List):
@@ -187,7 +187,7 @@ class _Package:
                     if isinstance(e, ast.Name):
                         task.meta.add(_META.get(e.id, e.id.lower()))
                     elif isinstance(e, ast.Constant):
-                        task.meta.add(e.value)
+                        task.meta.add(e.value)  # pyright: ignore[reportArgumentType]
             elif name in ("with_main_input", "with_associated_input") and call.args:
                 src = self._resolve(stem, call.args[0])
                 if src is None:

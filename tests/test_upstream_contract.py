@@ -110,7 +110,8 @@ def _update_headers_tech_rewrite(sims_dir: Path) -> dict[str, str]:
         for stmt in node.body:
             target = stmt.targets[0] if isinstance(stmt, ast.Assign) else None
             if (
-                isinstance(target, ast.Subscript)
+                isinstance(stmt, ast.Assign)
+                and isinstance(target, ast.Subscript)
                 and isinstance(target.slice, ast.Constant)
                 and str(target.slice.value).endswith("DPR TECH")
                 and isinstance(stmt.value, ast.Constant)
@@ -153,6 +154,7 @@ class TestSimulationsContract:
         spec = importlib.util.spec_from_file_location(
             "_mtr_csvparser", upstream_simulations_dir / "metis_simulations" / "csvParser.py"
         )
+        assert spec is not None and spec.loader is not None
         csv_parser = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(csv_parser)
         assert csv_parser.loadCSV(str(example))

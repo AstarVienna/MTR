@@ -850,9 +850,8 @@ class TestUploadFile:
         _write_fits(fits, {"HIERARCH ESO PRO CATG": "FAKE_MASTER"})
 
         class _DataItem:
-            pass
+            filename = MagicMock()
 
-        _DataItem.filename = MagicMock()
         _DataItem.filename.__eq__ = MagicMock(return_value=[])
 
         class _Pro(_DataItem):
@@ -914,9 +913,8 @@ class TestUploadFile:
         )
 
         class _DataItem:
-            pass
+            filename = MagicMock()
 
-        _DataItem.filename = MagicMock()
         _DataItem.filename.__eq__ = MagicMock(return_value=[])
 
         class _Pro(_DataItem):
@@ -1004,9 +1002,8 @@ class TestUploadFile:
         )
 
         class _DataItem:
-            pass
+            filename = MagicMock()
 
-        _DataItem.filename = MagicMock()
         _DataItem.filename.__eq__ = MagicMock(return_value=[])
 
         class _Pro(_DataItem):
@@ -1072,9 +1069,8 @@ class TestUploadFile:
         _write_fits(fits, {"HIERARCH ESO PRO CATG": "WEIRD_CATG"})
 
         class _DataItem:
-            pass
+            filename = MagicMock()
 
-        _DataItem.filename = MagicMock()
         _DataItem.filename.__eq__ = MagicMock(return_value=[])
 
         class _Pro(_DataItem):
@@ -1101,9 +1097,8 @@ class TestUploadFile:
         _write_fits(fits, {})  # neither DPR nor PRO CATG
 
         class _DataItem:
-            pass
+            filename = MagicMock()
 
-        _DataItem.filename = MagicMock()
         _DataItem.filename.__eq__ = MagicMock(return_value=[])
 
         constructed: list = []
@@ -1137,9 +1132,8 @@ class TestUploadFile:
         _write_fits(fits, {})
 
         class _DataItem:
-            pass
+            filename = MagicMock()
 
-        _DataItem.filename = MagicMock()
         _DataItem.filename.__eq__ = MagicMock(return_value=[])
 
         logs: list[str] = []
@@ -1157,9 +1151,8 @@ class TestUploadFile:
         _write_fits(fits, {})
 
         class _DataItem:
-            pass
+            filename = MagicMock()
 
-        _DataItem.filename = MagicMock()
         _DataItem.filename.__eq__ = MagicMock(return_value=[])
 
         logs: list[str] = []
@@ -1437,7 +1430,7 @@ class TestFetchMissingCalibrations:
         "IFU_STD_RAW",
     }
 
-    def _patch(self, monkeypatch, *, items, downloaded=Ellipsis):
+    def _patch(self, monkeypatch, *, items, downloaded: object = Ellipsis):
         calls = {"queried": [], "downloaded": []}
 
         def fake_query(category=None, on_log=None):
@@ -1694,6 +1687,7 @@ class TestDownloadAtomicity:
         dest_dir = tmp_path / "out"
         out = self._run(monkeypatch, src, dest_dir)
         assert out == dest_dir / "m.fits"
+        assert out is not None
         assert out.read_bytes() == b"x" * 64
         assert [p.name for p in dest_dir.iterdir()] == ["m.fits"]
 

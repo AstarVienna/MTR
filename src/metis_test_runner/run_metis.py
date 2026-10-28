@@ -266,7 +266,7 @@ def scan_fits_inputs(fits_dir):
     for f in Path(fits_dir).rglob("*.fits"):
         try:
             with afits.open(f, memmap=True) as hdul:
-                hdr = hdul[0].header
+                hdr = hdul[0].header  # pyright: ignore[reportAttributeAccessIssue]  # astropy stub gap
                 catg = hdr.get("HIERARCH ESO DPR CATG", "").strip()
                 typ = hdr.get("HIERARCH ESO DPR TYPE", "").strip()
                 tech = hdr.get("HIERARCH ESO DPR TECH", "").strip()
@@ -317,7 +317,7 @@ def classify_fits_file(path):
 
     try:
         with afits.open(path, memmap=True) as hdul:
-            hdr = hdul[0].header
+            hdr = hdul[0].header  # pyright: ignore[reportAttributeAccessIssue]  # astropy stub gap
             # fmt: off
             catg = hdr.get("HIERARCH ESO DPR CATG", "").strip()
             typ  = hdr.get("HIERARCH ESO DPR TYPE", "").strip()
@@ -1509,7 +1509,7 @@ def main(argv=None):
             if produced != target:
                 shutil.move(produced, target)
             written.append(target)
-        scratch.cleanup()
+        scratch.cleanup()  # pyright: ignore[reportOptionalMemberAccess]  # set when csv_to_yaml
         print("\nDone. YAML written to:")
         for t in written:
             print(f"  {t}")

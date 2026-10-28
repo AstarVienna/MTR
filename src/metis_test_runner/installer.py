@@ -385,16 +385,16 @@ def stream_subprocess(
         try:
             if stdin_text is not None:
                 try:
-                    proc.stdin.write(stdin_text)
-                    proc.stdin.flush()
+                    proc.stdin.write(stdin_text)  # pyright: ignore[reportOptionalMemberAccess]  # stdin is a PIPE here
+                    proc.stdin.flush()  # pyright: ignore[reportOptionalMemberAccess]
                 except BrokenPipeError:
                     pass
                 finally:
                     try:
-                        proc.stdin.close()
+                        proc.stdin.close()  # pyright: ignore[reportOptionalMemberAccess]
                     except BrokenPipeError:
                         pass
-            for line in proc.stdout:
+            for line in proc.stdout:  # pyright: ignore[reportOptionalIterable]  # stdout is a PIPE
                 on_line(strip_ansi(line), "")
             proc.wait()
         finally:

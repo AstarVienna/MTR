@@ -9,11 +9,15 @@ Three-tab graphical front-end:
   Archive  — install MetisWISE and upload/download FITS files
 """
 
+# PyQt6 stubs type most widget getters as Optional; they are never None here.
+# pyright: reportOptionalMemberAccess=false
+
 import os
 import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from PyQt6.QtCore import (
@@ -534,6 +538,9 @@ class WorkerHost:
     #: How long to wait for a worker to notice an interruption request.
     WORKER_STOP_MS = 5_000
 
+    #: Installed by MainWindow; see jobs_blocking().
+    _jobs_blocking_hook: "Callable[[WorkerHost, str], list[str]] | None" = None
+
     @property
     def _workers(self) -> set:
         # Created lazily so subclasses need no __init__ cooperation.
@@ -541,7 +548,7 @@ class WorkerHost:
             self._worker_set: set = set()
         return self._worker_set
 
-    def track_worker(self, worker: QThread) -> QThread:
+    def track_worker[W: QThread](self, worker: W) -> W:
         """Register *worker* and drop it again once it finishes."""
         self._workers.add(worker)
         worker.finished.connect(lambda w=worker: self._workers.discard(w))
@@ -559,7 +566,7 @@ class WorkerHost:
 
         MainWindow installs the hook; a tab used on its own has none.
         """
-        hook = getattr(self, "_jobs_blocking_hook", None)
+        hook = self._jobs_blocking_hook
         return hook(self, action) if hook else []
 
     def reject_if_blocked(self, action: str) -> bool:
@@ -568,7 +575,7 @@ class WorkerHost:
         if not jobs:
             return False
         QMessageBox.information(
-            self,
+            self,  # pyright: ignore[reportArgumentType]  # mixed into QWidget subclasses
             "Another job is running",
             f"Wait for {' and '.join(jobs)} to finish before starting {action}.",
         )
@@ -663,7 +670,7 @@ class RefComboBox(QComboBox):
         text = self.currentText().strip()
         return bool(text) and self.findText(text) < 0
 
-    def eventFilter(self, obj, event) -> bool:
+    def eventFilter(self, obj, event) -> bool:  # pyright: ignore[reportIncompatibleMethodOverride]
         if obj is self.lineEdit() and self.count() and not self._holds_custom_text():
             # Open on RELEASE, not press. Showing the popup from the press
             # handler leaves the matching release to land on the freshly-shown
@@ -732,7 +739,7 @@ class InstallTab(WorkerHost, QWidget):
         self._build_ui()
         self._load_settings()
 
-    def showEvent(self, event) -> None:
+    def showEvent(self, event) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
         super().showEvent(event)
         # Unlike ArchiveTab.showEvent this is a NETWORK probe, so it runs once
         # per session rather than on every tab switch. Deferred via a timer
@@ -1331,7 +1338,7 @@ class ArchiveTab(WorkerHost, QWidget):
         self._load_settings()
         self._refresh_install_status()
 
-    def showEvent(self, event) -> None:
+    def showEvent(self, event) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
         # Re-check whether MetisWISE is still installed every time the tab
         # becomes visible — re-running the Install tab can remove it (its pip
         # reinstall of the pipeline deps doesn't include MetisWISE), and the
@@ -2713,7 +2720,7 @@ class RunTab(WorkerHost, QWidget):
 class _ExpandingTabBar(QTabBar):
     """Tab bar that divides its width equally among all tabs, overriding QSS."""
 
-    def resizeEvent(self, event):
+    def resizeEvent(self, event):  # pyright: ignore[reportIncompatibleMethodOverride]
         super().resizeEvent(event)
         count = self.count()
         if count > 0:
@@ -2723,7 +2730,7 @@ class _ExpandingTabBar(QTabBar):
 
     def sizeHint(self):
         sh = super().sizeHint()
-        parent = self.parent()
+        parent = self.parentWidget()
         if parent and parent.width() > 0:
             sh.setWidth(parent.width())
         return sh
@@ -2785,7 +2792,7 @@ class MainWindow(QMainWindow):
             self._current_theme = self._home_dark
         else:
             self._current_theme = self._home_light
-        apply_theme(QApplication.instance(), self._current_theme)
+        apply_theme(QApplication.instance(), self._current_theme)  # pyright: ignore[reportArgumentType]
         self._update_theme_btn_label()
 
     def _busy_jobs(self, tabs=None) -> list[str]:
@@ -2818,7 +2825,7 @@ class MainWindow(QMainWindow):
             blocking = (self._install_tab,)
         return self._busy_jobs(blocking)
 
-    def closeEvent(self, event) -> None:
+    def closeEvent(self, event) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
         # Destroying a tab while one of its QThreads is still running aborts
         # with "QThread: Destroyed while thread is still running", and the
         # worker's queued log signal targets a QTextEdit that is going away.

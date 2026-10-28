@@ -495,7 +495,7 @@ def query_archive(
             return []
         results = cls.select_all()
     else:
-        results = DataItem.select_all()
+        results = DataItem.select_all()  # pyright: ignore[reportAttributeAccessIssue]
 
     # ``results`` may be a MetisWISE Select query object whose __bool__ raises
     # "Select object cannot be used without an operator in conditional
@@ -541,13 +541,14 @@ def download_file(
         on_log(f"Retrieving {filename} from archive…")
 
     try:
+        # MetisWISE overloads == to build a query, which pyright types as bool.
         results = DataItem.filename == filename
-        if len(results) == 0:
+        if len(results) == 0:  # pyright: ignore[reportArgumentType]
             if on_log:
                 on_log(f"File not found in archive: {filename}")
             return None
 
-        di = results[0]
+        di = results[0]  # pyright: ignore[reportIndexIssue]
         di.retrieve()
 
         src = Path(di.pathname) / di.filename
@@ -617,7 +618,7 @@ def _build_pro_dataitem(path: Path):
     )
 
     with fits.open(str(path)) as hdus:
-        header = hdus[0].header
+        header = hdus[0].header  # pyright: ignore[reportAttributeAccessIssue]  # astropy stub gap
 
     pro_catg = header.get("ESO PRO CATG")
     if not pro_catg:
@@ -702,7 +703,7 @@ def upload_file(
 
     try:
         existing = DataItem.filename == path.name
-        if len(existing):
+        if len(existing):  # pyright: ignore[reportArgumentType]
             if on_log:
                 on_log(f"{path.name}: already in archive — skipping")
             return True
@@ -711,7 +712,7 @@ def upload_file(
             on_log(f"Ingesting {path.name}…")
 
         with fits.open(str(path)) as hdus:
-            header = hdus[0].header
+            header = hdus[0].header  # pyright: ignore[reportAttributeAccessIssue]  # astropy stub gap
 
         if "ESO PRO CATG" in header:
             di = _build_pro_dataitem(path)

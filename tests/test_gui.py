@@ -14,6 +14,9 @@ All tests run with QT_QPA_PLATFORM=offscreen (set in conftest.py) so no
 display is required.
 """
 
+# PyQt6 stubs type most widget getters as Optional; they are never None here.
+# pyright: reportOptionalMemberAccess=false
+
 import subprocess
 from pathlib import Path
 
@@ -698,7 +701,7 @@ class TestUploadWorker:
 
         from metis_test_runner.gui import UploadWorker
 
-        entries = [
+        entries: list[tuple[Path, str | None]] = [
             (tmp_path / "a.fits", "LM_FLAT_LAMP_RAW"),
             (tmp_path / "b.fits", "DARK_IFU_RAW"),
         ]
@@ -718,7 +721,7 @@ class TestUploadWorker:
 
         from metis_test_runner.gui import UploadWorker
 
-        entries = [
+        entries: list[tuple[Path, str | None]] = [
             (tmp_path / "a.fits", "X"),
             (tmp_path / "b.fits", "Y"),
             (tmp_path / "c.fits", "Z"),
@@ -748,7 +751,7 @@ class TestUploadWorker:
 
         from metis_test_runner.gui import UploadWorker
 
-        entries = [(tmp_path / f"{n}.fits", "X") for n in ("a", "b", "c")]
+        entries: list[tuple[Path, str | None]] = [(tmp_path / f"{n}.fits", "X") for n in ("a", "b", "c")]
         worker = UploadWorker(entries)
         emitted = self._connect(worker)
         with mock_patch("metis_test_runner.archive.upload_file", return_value=True):
@@ -1183,12 +1186,10 @@ class TestComboArrowIsNotSuppressed:
         # which is an editable combo's only mouse affordance for its list.
         import re
 
-        from PyQt6.QtWidgets import QApplication
-
-        gui.apply_theme(QApplication.instance(), "dark")
+        gui.apply_theme(qapp, "dark")
         # Strip /* … */ comments: the stylesheet explains this rule's absence
         # by naming the subcontrol.
-        qss = re.sub(r"/\*.*?\*/", "", QApplication.instance().styleSheet(), flags=re.S)
+        qss = re.sub(r"/\*.*?\*/", "", qapp.styleSheet(), flags=re.S)
         assert "QComboBox::drop-down" not in qss
         assert "QComboBox::down-arrow" not in qss
 
@@ -1426,7 +1427,7 @@ class TestRunTabStop:
     def test_kills_a_run_that_ignores_sigterm(self, qapp, monkeypatch):
         code = "import signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\nprint('ready'.upper()); time.sleep(30)\n"
         tab = self._start(qapp, monkeypatch, code)
-        tab.STOP_GRACE_MS = 200
+        monkeypatch.setattr(tab, "STOP_GRACE_MS", 200)
         tab._stop()
         _wait_for(qapp, lambda: tab.run_btn.isEnabled())
         assert "killing the process" in tab.log_view.toPlainText()
