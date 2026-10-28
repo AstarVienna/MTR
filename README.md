@@ -129,6 +129,8 @@ can be overridden). To pull missing master calibrations automatically during a r
 
 ### Data flow window
 
+<p align="center"><img src="https://raw.githubusercontent.com/AstarVienna/MTR/main/docs/images/mtr-dataflow.png" alt="MTR data flow window" width="900"></p>
+
 **Data flow** opens a zoomable (wheel) and pannable (drag) diagram of how data moves
 from the simulations through every Pipeline task to the archive, derived from the
 installed Pipeline's EDPS workflow files (or MTR's bundled snapshot). The archive
