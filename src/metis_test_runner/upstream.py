@@ -89,6 +89,9 @@ class _Task:
     raw: bool
     meta: set[str]
     parents: set[tuple[str, str]]
+    recipe: str | None = None
+    #: ``(task or data-source ref, "main" | "assoc", tags)`` in declaration order
+    inputs: list[tuple[tuple[str, str], str, list[str]]] = field(default_factory=list)
 
 
 class _Package:
@@ -188,19 +191,26 @@ class _Package:
                         task.meta.add(_META.get(e.id, e.id.lower()))
                     elif isinstance(e, ast.Constant):
                         task.meta.add(e.value)  # pyright: ignore[reportArgumentType]
+            elif name == "with_recipe" and call.args and isinstance(call.args[0], ast.Constant):
+                task.recipe = call.args[0].value  # pyright: ignore[reportAttributeAccessIssue]
             elif name in ("with_main_input", "with_associated_input") and call.args:
                 src = self._resolve(stem, call.args[0])
                 if src is None:
                     continue
                 kind = self._kind(src)
-                if kind == "data_source" and name == "with_main_input":
-                    task.main_tags, task.raw = self._source_tags(src), True
+                role = "main" if name == "with_main_input" else "assoc"
+                if kind == "data_source":
+                    tags = self._source_tags(src)
+                    task.inputs.append((src, role, tags))
+                    if role == "main":
+                        task.main_tags, task.raw = tags, True
                 elif kind == "task":
                     task.parents.add(src)
                     self.task(src)
                     wanted = self._rule_tags(stem, self._categories(call))
                     self.products.setdefault(src, set()).update(wanted)
-                    if name == "with_main_input":
+                    task.inputs.append((src, role, wanted))
+                    if role == "main":
                         task.main_tags = wanted
         return task
 
@@ -254,6 +264,37 @@ def _chain(pkg: _Package, members: set[tuple[str, str]], sci_tags: set[str]) -> 
     return [[name, tag, m] for *_, name, tag, m in sorted(rows)]
 
 
+def _graph(pkg: _Package, prefix: str) -> dict:
+    """The umbrella's tasks and their inputs, for the GUI's data-flow view.
+
+    Lanes are the sub-workflows the umbrella imports; a task's own module is its first lane.
+    """
+    lanes = [stem for stem in pkg.mods[_UMBRELLA_STEM].star if stem.endswith("_wkf")]
+    lane_tasks = {stem: pkg.workflow_tasks(stem) for stem in lanes}
+    tasks, inputs, sources = {}, [], {}
+    for ref in sorted(pkg.workflow_tasks(_UMBRELLA_STEM), key=lambda r: pkg.tasks[r].name):
+        task = pkg.tasks[ref]
+        own = sorted((s for s in lanes if ref in lane_tasks[s]), key=lambda s: s != ref[0]) or [ref[0]]
+        tasks[task.name] = {
+            "recipe": task.recipe,
+            "meta": sorted(task.meta),
+            "lanes": [f"{prefix}.{s}" for s in own],
+        }
+        for src, role, tags in task.inputs:
+            if pkg._kind(src) == "task":
+                origin = f"task:{pkg.tasks[src].name}"
+            else:
+                origin = f"source:{src[1]}"
+                sources[src[1]] = pkg._source_tags(src)
+            inputs.append([origin, task.name, role, tags])
+    return {
+        "lanes": [f"{prefix}.{s}" for s in lanes],
+        "sources": dict(sorted(sources.items())),
+        "tasks": tasks,
+        "inputs": inputs,
+    }
+
+
 def derive_pipeline(pipeline_dir: Path) -> dict:
     """Return the Pipeline-derived tables for the checkout at *pipeline_dir*.
 
@@ -297,6 +338,7 @@ def derive_pipeline(pipeline_dir: Path) -> dict:
         "dpr_to_tag": [[*key, tag] for key, tag in sorted(dpr_to_tag.items(), key=lambda kv: kv[1])],
         "chains": chains,
         "task_products": dict(sorted(task_products.items())),
+        "graph": _graph(pkg, pkg_dir.name),
     }
 
 

@@ -58,7 +58,7 @@ def rule_tech(derived):
 
 
 class TestPipelineContract:
-    @pytest.mark.parametrize("key", ["dpr_to_tag", "chains", "task_products"])
+    @pytest.mark.parametrize("key", ["dpr_to_tag", "chains", "task_products", "graph"])
     def test_snapshot_matches_pipeline(self, derived, snapshot, key):
         assert snapshot[key] == derived[key], f"bundled snapshot is out of date; {_REGENERATE}"
 

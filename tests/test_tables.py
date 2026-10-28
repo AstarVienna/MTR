@@ -33,6 +33,7 @@ _FILES = {
         master_dark_class = classification_rule("MASTER_DARK")
         master_flat_class = classification_rule("MASTER_FLAT")
         sci_reduced_class = classification_rule("SCI_REDUCED")
+        static_map_class = classification_rule("STATIC_MAP")
     """,
     "metis_datasources.py": """
         from edps import data_source
@@ -41,13 +42,15 @@ _FILES = {
         raw_flat = data_source().with_classification_rule(flat_class).build()
         raw_sci = data_source().with_classification_rule(sci_class).build()
         raw_sky = data_source().with_classification_rule(sky_class).build()
+        static_map = data_source().with_classification_rule(static_map_class).build()
     """,
     "metis_x_wkf.py": """
         from edps import task, SCIENCE, QC1_CALIB
         from .metis_datasources import *
-        dark = task("x_dark").with_main_input(raw_dark).build()
+        dark = task("x_dark").with_main_input(raw_dark).with_recipe("x_det_dark").build()
         flat = (task("x_flat").with_main_input(raw_flat)
-                .with_associated_input(dark, [master_dark_class]).build())
+                .with_associated_input(dark, [master_dark_class])
+                .with_associated_input(static_map).build())
         sci = (task("x_sci").with_main_input(raw_sci)
                .with_associated_input(flat, [master_flat_class])
                .with_associated_input(dark, [master_dark_class]).build())
@@ -95,6 +98,25 @@ class TestDerivePipeline:
     def test_task_products_are_what_consumers_ask_for(self, pipeline):
         products = upstream.derive_pipeline(pipeline)["task_products"]
         assert products == {"x_dark": ["MASTER_DARK"], "x_flat": ["MASTER_FLAT"]}
+
+    def test_graph_has_every_input_recipe_and_lane(self, pipeline):
+        graph = upstream.derive_pipeline(pipeline)["graph"]
+        assert graph["lanes"] == ["metis.metis_x_wkf"]
+        assert sorted(graph["tasks"]) == ["x_dark", "x_flat", "x_sci", "x_sky", "x_telluric"]
+        assert graph["tasks"]["x_dark"] == {
+            "recipe": "x_det_dark",
+            "meta": [],
+            "lanes": ["metis.metis_x_wkf"],
+        }
+        assert graph["tasks"]["x_sky"]["meta"] == ["science"]
+        assert graph["sources"]["static_map"] == ["STATIC_MAP"]
+        flat_inputs = [row for row in graph["inputs"] if row[1] == "x_flat"]
+        assert flat_inputs == [
+            ["source:raw_flat", "x_flat", "main", ["FLAT_RAW"]],
+            ["task:x_dark", "x_flat", "assoc", ["MASTER_DARK"]],
+            ["source:static_map", "x_flat", "assoc", ["STATIC_MAP"]],
+        ]
+        assert ["task:x_sci", "x_telluric", "main", ["SCI_REDUCED"]] in graph["inputs"]
 
     def test_accepts_the_workflow_folder_too(self, pipeline):
         whole = upstream.derive_pipeline(pipeline)

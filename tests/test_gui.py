@@ -20,6 +20,8 @@ display is required.
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from metis_test_runner import gui, installer
 
 # ---------------------------------------------------------------------------
@@ -1530,4 +1532,165 @@ class TestCrossTabGuard:
             assert win._run_tab.jobs_blocking("a pipeline run") == []
         finally:
             win._archive_tab.stop_workers()
+            win.close()
+
+
+class TestDataFlowWindow:
+    def _open(self, monkeypatch, installed=True):
+        monkeypatch.setattr("metis_test_runner.archive.metiswise_available", lambda: installed)
+        win = gui.MainWindow()
+        win._flow_btn.click()
+        return win, win._flow_window
+
+    def test_button_opens_one_window_and_close_closes_it(self, qapp, monkeypatch):
+        win, flow_win = self._open(monkeypatch)
+        try:
+            assert flow_win is not None and flow_win.isVisible()
+            win._flow_btn.click()
+            assert win._flow_window is flow_win
+        finally:
+            win.close()
+        assert not flow_win.isVisible()
+
+    def test_archive_shown_only_when_metiswise_is_installed(self, qapp, monkeypatch):
+        from metis_test_runner import flow
+
+        win, flow_win = self._open(monkeypatch, installed=False)
+        try:
+            assert flow.ARCHIVE_ID not in flow_win.flow.nodes
+            monkeypatch.setattr("metis_test_runner.archive.metiswise_available", lambda: True)
+            flow_win.rebuild()
+            assert flow.ARCHIVE_ID in flow_win.flow.nodes
+        finally:
+            win.close()
+
+    def test_theme_toggle_reaches_the_window(self, qapp, monkeypatch):
+        win, flow_win = self._open(monkeypatch)
+        try:
+            win._toggle_theme()
+            assert flow_win.colors is gui.THEMES[win._current_theme]
+        finally:
+            win._toggle_theme()
+            win.close()
+
+    def test_highlight_follows_the_run_tab(self, qapp, monkeypatch):
+        win, flow_win = self._open(monkeypatch)
+        try:
+            # Earlier tests' saved settings may have left another mode selected.
+            examples = Path(gui.__file__).parent / "examples"
+            win._run_tab.input_list.clear()
+            win._run_tab.input_list.addItem(str(examples / "small_test.yaml"))
+            win._run_tab.rb_both.setChecked(True)
+            win._run_tab.csv_to_yaml_cb.setChecked(False)
+            flow_win.overlay_cb.setChecked(True)
+            assert flow_win.flow.nodes["group:metis.metis_ifu_wkf"].state == "target"
+            flow_win.toggle_lane("metis.metis_ifu_wkf")
+            assert flow_win.flow.nodes["task:metis_ifu_dark"].state == "target"
+            win._run_tab.rb_sim_only.setChecked(True)
+            flow_win.rebuild()
+            assert flow_win.flow.nodes["task:metis_ifu_dark"].state == "idle"
+        finally:
+            win.close()
+
+    def test_clicking_a_lane_expands_and_collapses_it(self, qapp, monkeypatch):
+        from metis_test_runner import flow
+        from metis_test_runner.flow_view import _LaneHeader
+
+        lane = "metis.metis_n_img_wkf"
+        win, flow_win = self._open(monkeypatch)
+        try:
+            assert not any(n.kind == "task" for n in flow_win.flow.nodes.values())
+            flow_win.click(flow_win._nodes[f"group:{lane}"])
+            assert "task:metis_n_img_dark" in flow_win.flow.nodes
+            assert "task:metis_ifu_dark" not in flow_win.flow.nodes
+            header = next(i for i in flow_win.scene.items() if isinstance(i, _LaneHeader) and i.lane == lane)
+            flow_win.click(header)
+            assert f"group:{lane}" in flow_win.flow.nodes
+            flow_win.set_expanded(set(flow.lanes()))
+            assert "task:metis_ifu_dark" in flow_win.flow.nodes
+        finally:
+            win.close()
+
+    def test_pin_traces_a_task(self, qapp, monkeypatch):
+        win, flow_win = self._open(monkeypatch)
+        try:
+            flow_win.toggle_lane("metis.metis_n_img_wkf")
+            flow_win.pin("task:metis_n_img_dark")
+            items = flow_win._nodes
+            assert items["task:metis_n_img_lingain"].opacity() == 1.0
+            assert items["task:metis_n_img_flat"].opacity() == 1.0
+            assert items["raw:n_image_sci_raw"].opacity() < 1.0
+            flow_win.pin("task:metis_n_img_dark")
+            assert items["raw:n_image_sci_raw"].opacity() == 1.0
+        finally:
+            win.close()
+
+    def test_trace_waits_for_the_pointer_to_rest(self, qapp, monkeypatch):
+        from PyQt6.QtTest import QTest
+
+        from metis_test_runner.flow_view import HOVER_MS
+
+        win, flow_win = self._open(monkeypatch)
+        try:
+            flow_win.toggle_lane("metis.metis_n_img_wkf")
+
+            # Fit redraws the scene when the window settles, so look the item up each time.
+            def unrelated():
+                return flow_win._nodes["raw:n_image_sci_raw"].opacity()
+
+            flow_win.hover("task:metis_n_img_dark")
+            assert unrelated() == 1.0
+            QTest.qWait(HOVER_MS + 150)
+            assert unrelated() < 1.0
+            # Leaving clears it at once.
+            flow_win.hover(None)
+            assert unrelated() == 1.0
+            # Passing over a node quicker than the delay shows nothing.
+            flow_win.hover("task:metis_n_img_dark")
+            flow_win.hover(None)
+            QTest.qWait(HOVER_MS + 150)
+            assert unrelated() == 1.0
+        finally:
+            win.close()
+
+    def test_fit_fills_the_view(self, qapp, monkeypatch):
+        from metis_test_runner import flow
+
+        win, flow_win = self._open(monkeypatch)
+        try:
+            flow_win.resize(1600, 1000)
+            qapp.processEvents()
+            viewport = flow_win.view.viewport().rect()
+            for expanded in (set(), {"metis.metis_ifu_wkf"}, set(flow.lanes())):
+                flow_win.set_expanded(expanded)
+                shown = flow_win.view.mapFromScene(flow_win.scene.itemsBoundingRect()).boundingRect()
+                assert shown.width() > 0.85 * viewport.width(), expanded
+                assert shown.height() > 0.85 * viewport.height(), expanded
+        finally:
+            win.close()
+
+    def test_fit_holds_through_resizes_until_the_user_zooms(self, qapp, monkeypatch):
+        from PyQt6.QtTest import QTest
+
+        from metis_test_runner.flow_view import RESIZE_MS
+
+        win, flow_win = self._open(monkeypatch)
+        try:
+            flow_win.resize(1600, 1000)
+            QTest.qWait(RESIZE_MS + 150)
+            big = flow_win.view.transform().m11()
+            assert flow_win.fit_btn.isChecked()
+            flow_win.resize(900, 600)
+            QTest.qWait(RESIZE_MS + 150)
+            assert flow_win.view.transform().m11() < big
+            flow_win.view.zoom(1.25)
+            zoomed = flow_win.view.transform().m11()
+            assert not flow_win.fit_btn.isChecked()
+            flow_win.resize(1600, 1000)
+            QTest.qWait(RESIZE_MS + 150)
+            assert flow_win.view.transform().m11() == zoomed
+            flow_win.fit_btn.click()
+            assert flow_win.fit_btn.isChecked()
+            assert flow_win.view.transform().m11() == pytest.approx(big, rel=0.02)
+        finally:
             win.close()

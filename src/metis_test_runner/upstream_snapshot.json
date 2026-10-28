@@ -646,6 +646,2751 @@
    "N_LSS_TRACE"
   ]
  },
+ "graph": {
+  "lanes": [
+   "metis.metis_lm_img_wkf",
+   "metis.metis_pupil_imaging_wkf",
+   "metis.metis_ifu_wkf",
+   "metis.metis_lm_lss_wkf",
+   "metis.metis_n_lss_wkf",
+   "metis.metis_n_img_wkf",
+   "metis.metis_chophome_wkf"
+  ],
+  "sources": {
+   "ao_psf_model": [
+    "AO_PSF_MODEL"
+   ],
+   "atm_line_cat": [
+    "ATM_LINE_CAT"
+   ],
+   "atm_profile": [
+    "ATM_PROFILE"
+   ],
+   "badpix_map_ifu": [
+    "BADPIX_MAP_IFU"
+   ],
+   "dark_2rg_raw": [
+    "DARK_2RG_RAW"
+   ],
+   "dark_geo_raw": [
+    "DARK_GEO_RAW"
+   ],
+   "dark_ifu_raw": [
+    "DARK_IFU_RAW"
+   ],
+   "detlin_2rg_raw": [
+    "DETLIN_2RG_RAW"
+   ],
+   "detlin_geo_raw": [
+    "DETLIN_GEO_RAW"
+   ],
+   "detlin_ifu_raw": [
+    "DETLIN_IFU_RAW"
+   ],
+   "fluxstd_catalog": [
+    "FLUXSTD_CATALOG"
+   ],
+   "ifu_distortion_raw": [
+    "IFU_DISTORTION_RAW"
+   ],
+   "ifu_rsrf_raw": [
+    "IFU_RSRF_RAW"
+   ],
+   "ifu_sci_raw": [
+    "IFU_SCI_RAW"
+   ],
+   "ifu_sky_raw": [
+    "IFU_SKY_RAW"
+   ],
+   "ifu_std_raw": [
+    "IFU_STD_RAW"
+   ],
+   "ifu_wave_raw": [
+    "IFU_WAVE_RAW"
+   ],
+   "ifu_wcu_off_raw": [
+    "IFU_WCU_OFF_RAW"
+   ],
+   "laser_tab": [
+    "LASER_TAB"
+   ],
+   "lm_adc_slitloss_raw": [
+    "LM_ADC_SLITLOSS_RAW"
+   ],
+   "lm_distortion_raw": [
+    "LM_DISTORTION_RAW"
+   ],
+   "lm_flat_lamp_raw": [
+    "LM_FLAT_LAMP_RAW"
+   ],
+   "lm_image_sci_raw": [
+    "LM_IMAGE_SCI_RAW"
+   ],
+   "lm_image_sky_raw": [
+    "LM_IMAGE_SKY_RAW"
+   ],
+   "lm_image_std_raw": [
+    "LM_IMAGE_STD_RAW"
+   ],
+   "lm_lss_dist_sol": [
+    "LM_LSS_DIST_SOL"
+   ],
+   "lm_lss_rsrf_pinh_raw": [
+    "LM_LSS_RSRF_PINH_RAW"
+   ],
+   "lm_lss_rsrf_raw": [
+    "LM_LSS_RSRF_RAW"
+   ],
+   "lm_lss_sci_raw": [
+    "LM_LSS_SCI_RAW"
+   ],
+   "lm_lss_std_raw": [
+    "LM_LSS_STD_RAW"
+   ],
+   "lm_lss_wave_guess": [
+    "LM_LSS_WAVE_GUESS"
+   ],
+   "lm_lss_wave_raw": [
+    "LM_LSS_WAVE_RAW"
+   ],
+   "lm_raw_chophome": [
+    "LM_CHOPHOME_RAW"
+   ],
+   "lm_raw_pupil": [
+    "LM_PUPIL_RAW"
+   ],
+   "lm_synth_trans": [
+    "LM_SYNTH_TRANS"
+   ],
+   "lm_wcu_off_raw": [
+    "LM_WCU_OFF_RAW"
+   ],
+   "lsf_kernel": [
+    "LSF_KERNEL"
+   ],
+   "n_adc_slitloss_raw": [
+    "N_ADC_SLITLOSS_RAW"
+   ],
+   "n_distortion_raw": [
+    "N_DISTORTION_RAW"
+   ],
+   "n_flat_lamp_raw": [
+    "N_FLAT_LAMP_RAW"
+   ],
+   "n_image_sci_raw": [
+    "N_IMAGE_SCI_RAW"
+   ],
+   "n_image_std_raw": [
+    "N_IMAGE_STD_RAW"
+   ],
+   "n_lss_dist_sol": [
+    "N_LSS_DIST_SOL"
+   ],
+   "n_lss_rsrf_pinh_raw": [
+    "N_LSS_RSRF_PINH_RAW"
+   ],
+   "n_lss_rsrf_raw": [
+    "N_LSS_RSRF_RAW"
+   ],
+   "n_lss_sci_raw": [
+    "N_LSS_SCI_RAW"
+   ],
+   "n_lss_std_raw": [
+    "N_LSS_STD_RAW"
+   ],
+   "n_lss_wave_guess": [
+    "N_LSS_WAVE_GUESS"
+   ],
+   "n_synth_trans": [
+    "N_SYNTH_TRANS"
+   ],
+   "n_wcu_off_raw": [
+    "N_WCU_OFF_RAW"
+   ],
+   "persistence_map": [
+    "PERSISTENCE_MAP"
+   ],
+   "pinhole_table": [
+    "PINHOLE_TABLE"
+   ],
+   "ref_std_cat": [
+    "REF_STD_CAT"
+   ]
+  },
+  "tasks": {
+   "metis_chophome_imaging": {
+    "recipe": "metis_cal_chophome",
+    "meta": [
+     "science"
+    ],
+    "lanes": [
+     "metis.metis_chophome_wkf"
+    ]
+   },
+   "metis_ifu_calibrate": {
+    "recipe": "metis_ifu_calibrate",
+    "meta": [],
+    "lanes": [
+     "metis.metis_ifu_wkf"
+    ]
+   },
+   "metis_ifu_dark": {
+    "recipe": "metis_det_dark",
+    "meta": [],
+    "lanes": [
+     "metis.metis_ifu_wkf"
+    ]
+   },
+   "metis_ifu_distortion": {
+    "recipe": "metis_ifu_distortion",
+    "meta": [],
+    "lanes": [
+     "metis.metis_ifu_wkf"
+    ]
+   },
+   "metis_ifu_lingain": {
+    "recipe": "metis_det_lingain",
+    "meta": [],
+    "lanes": [
+     "metis.metis_ifu_wkf"
+    ]
+   },
+   "metis_ifu_postprocess": {
+    "recipe": "metis_ifu_postprocess",
+    "meta": [
+     "science"
+    ],
+    "lanes": [
+     "metis.metis_ifu_wkf"
+    ]
+   },
+   "metis_ifu_rsrf": {
+    "recipe": "metis_ifu_rsrf",
+    "meta": [],
+    "lanes": [
+     "metis.metis_ifu_wkf"
+    ]
+   },
+   "metis_ifu_sci_reduce": {
+    "recipe": "metis_ifu_reduce",
+    "meta": [],
+    "lanes": [
+     "metis.metis_ifu_wkf"
+    ]
+   },
+   "metis_ifu_sci_telluric": {
+    "recipe": "metis_ifu_telluric",
+    "meta": [],
+    "lanes": [
+     "metis.metis_ifu_wkf"
+    ]
+   },
+   "metis_ifu_std_reduce": {
+    "recipe": "metis_ifu_reduce",
+    "meta": [],
+    "lanes": [
+     "metis.metis_ifu_wkf"
+    ]
+   },
+   "metis_ifu_std_telluric": {
+    "recipe": "metis_ifu_telluric",
+    "meta": [],
+    "lanes": [
+     "metis.metis_ifu_wkf"
+    ]
+   },
+   "metis_ifu_wavecal": {
+    "recipe": "metis_ifu_wavecal",
+    "meta": [],
+    "lanes": [
+     "metis.metis_ifu_wkf"
+    ]
+   },
+   "metis_lm_img_background_sci": {
+    "recipe": "metis_lm_img_background",
+    "meta": [
+     "science"
+    ],
+    "lanes": [
+     "metis.metis_lm_img_wkf"
+    ]
+   },
+   "metis_lm_img_background_std": {
+    "recipe": "metis_lm_img_background",
+    "meta": [
+     "science"
+    ],
+    "lanes": [
+     "metis.metis_lm_img_wkf"
+    ]
+   },
+   "metis_lm_img_basic_reduce_sci": {
+    "recipe": "metis_lm_img_basic_reduce",
+    "meta": [
+     "science"
+    ],
+    "lanes": [
+     "metis.metis_lm_img_wkf"
+    ]
+   },
+   "metis_lm_img_basic_reduce_sky": {
+    "recipe": "metis_lm_img_basic_reduce",
+    "meta": [
+     "science"
+    ],
+    "lanes": [
+     "metis.metis_lm_img_wkf"
+    ]
+   },
+   "metis_lm_img_basic_reduce_std": {
+    "recipe": "metis_lm_img_basic_reduce",
+    "meta": [
+     "science"
+    ],
+    "lanes": [
+     "metis.metis_lm_img_wkf"
+    ]
+   },
+   "metis_lm_img_calib": {
+    "recipe": "metis_lm_img_calibrate",
+    "meta": [
+     "science"
+    ],
+    "lanes": [
+     "metis.metis_lm_img_wkf"
+    ]
+   },
+   "metis_lm_img_coadd": {
+    "recipe": "metis_lm_img_sci_postprocess",
+    "meta": [
+     "science"
+    ],
+    "lanes": [
+     "metis.metis_lm_img_wkf"
+    ]
+   },
+   "metis_lm_img_dark": {
+    "recipe": "metis_det_dark",
+    "meta": [],
+    "lanes": [
+     "metis.metis_lm_img_wkf",
+     "metis.metis_pupil_imaging_wkf"
+    ]
+   },
+   "metis_lm_img_distortion": {
+    "recipe": "metis_lm_img_distortion",
+    "meta": [],
+    "lanes": [
+     "metis.metis_lm_img_wkf"
+    ]
+   },
+   "metis_lm_img_flat": {
+    "recipe": "metis_lm_img_flat",
+    "meta": [],
+    "lanes": [
+     "metis.metis_lm_img_wkf",
+     "metis.metis_pupil_imaging_wkf"
+    ]
+   },
+   "metis_lm_img_lingain": {
+    "recipe": "metis_det_lingain",
+    "meta": [],
+    "lanes": [
+     "metis.metis_lm_img_wkf",
+     "metis.metis_pupil_imaging_wkf"
+    ]
+   },
+   "metis_lm_img_standard_flux": {
+    "recipe": "metis_lm_img_std_process",
+    "meta": [
+     "science"
+    ],
+    "lanes": [
+     "metis.metis_lm_img_wkf"
+    ]
+   },
+   "metis_lm_lss_adc_slitloss": {
+    "recipe": "metis_lm_adc_slitloss",
+    "meta": [
+     "qc1calib"
+    ],
+    "lanes": [
+     "metis.metis_lm_lss_wkf"
+    ]
+   },
+   "metis_lm_lss_dark": {
+    "recipe": "metis_det_dark",
+    "meta": [
+     "qc1calib"
+    ],
+    "lanes": [
+     "metis.metis_lm_lss_wkf"
+    ]
+   },
+   "metis_lm_lss_lingain": {
+    "recipe": "metis_det_lingain",
+    "meta": [
+     "qc1calib"
+    ],
+    "lanes": [
+     "metis.metis_lm_lss_wkf"
+    ]
+   },
+   "metis_lm_lss_mf_calctrans": {
+    "recipe": "metis_lm_lss_mf_calctrans",
+    "meta": [
+     "qc1calib"
+    ],
+    "lanes": [
+     "metis.metis_lm_lss_wkf"
+    ]
+   },
+   "metis_lm_lss_mf_correct": {
+    "recipe": "metis_lm_lss_mf_correct",
+    "meta": [
+     "qc1calib",
+     "science"
+    ],
+    "lanes": [
+     "metis.metis_lm_lss_wkf"
+    ]
+   },
+   "metis_lm_lss_mf_model": {
+    "recipe": "metis_lm_lss_mf_model",
+    "meta": [
+     "qc1calib"
+    ],
+    "lanes": [
+     "metis.metis_lm_lss_wkf"
+    ]
+   },
+   "metis_lm_lss_rsrf": {
+    "recipe": "metis_lm_lss_rsrf",
+    "meta": [
+     "qc1calib"
+    ],
+    "lanes": [
+     "metis.metis_lm_lss_wkf"
+    ]
+   },
+   "metis_lm_lss_sci": {
+    "recipe": "metis_lm_lss_sci",
+    "meta": [
+     "science"
+    ],
+    "lanes": [
+     "metis.metis_lm_lss_wkf"
+    ]
+   },
+   "metis_lm_lss_std": {
+    "recipe": "metis_lm_lss_std",
+    "meta": [
+     "science"
+    ],
+    "lanes": [
+     "metis.metis_lm_lss_wkf"
+    ]
+   },
+   "metis_lm_lss_trace": {
+    "recipe": "metis_lm_lss_trace",
+    "meta": [
+     "qc1calib"
+    ],
+    "lanes": [
+     "metis.metis_lm_lss_wkf"
+    ]
+   },
+   "metis_lm_lss_wave": {
+    "recipe": "metis_lm_lss_wave",
+    "meta": [
+     "qc1calib"
+    ],
+    "lanes": [
+     "metis.metis_lm_lss_wkf"
+    ]
+   },
+   "metis_n_adc_slitloss": {
+    "recipe": "metis_n_adc_slitloss",
+    "meta": [
+     "qc1calib"
+    ],
+    "lanes": [
+     "metis.metis_n_lss_wkf"
+    ]
+   },
+   "metis_n_img_calib": {
+    "recipe": "metis_n_img_calibrate",
+    "meta": [
+     "science"
+    ],
+    "lanes": [
+     "metis.metis_n_img_wkf"
+    ]
+   },
+   "metis_n_img_chopnod_sci": {
+    "recipe": "metis_n_img_chopnod",
+    "meta": [
+     "science"
+    ],
+    "lanes": [
+     "metis.metis_n_img_wkf"
+    ]
+   },
+   "metis_n_img_chopnod_std": {
+    "recipe": "metis_n_img_chopnod",
+    "meta": [
+     "science"
+    ],
+    "lanes": [
+     "metis.metis_n_img_wkf"
+    ]
+   },
+   "metis_n_img_dark": {
+    "recipe": "metis_det_dark",
+    "meta": [],
+    "lanes": [
+     "metis.metis_n_img_wkf"
+    ]
+   },
+   "metis_n_img_distortion": {
+    "recipe": "metis_n_img_distortion",
+    "meta": [],
+    "lanes": [
+     "metis.metis_n_img_wkf"
+    ]
+   },
+   "metis_n_img_flat": {
+    "recipe": "metis_n_img_flat",
+    "meta": [],
+    "lanes": [
+     "metis.metis_n_img_wkf"
+    ]
+   },
+   "metis_n_img_lingain": {
+    "recipe": "metis_det_lingain",
+    "meta": [],
+    "lanes": [
+     "metis.metis_n_img_wkf"
+    ]
+   },
+   "metis_n_img_restore": {
+    "recipe": "metis_n_img_restore",
+    "meta": [
+     "science"
+    ],
+    "lanes": [
+     "metis.metis_n_img_wkf"
+    ]
+   },
+   "metis_n_img_standard_flux": {
+    "recipe": "metis_n_img_std_process",
+    "meta": [
+     "science"
+    ],
+    "lanes": [
+     "metis.metis_n_img_wkf"
+    ]
+   },
+   "metis_n_lss_dark": {
+    "recipe": "metis_det_dark",
+    "meta": [
+     "qc1calib"
+    ],
+    "lanes": [
+     "metis.metis_n_lss_wkf"
+    ]
+   },
+   "metis_n_lss_lingain": {
+    "recipe": "metis_det_lingain",
+    "meta": [
+     "qc1calib"
+    ],
+    "lanes": [
+     "metis.metis_n_lss_wkf"
+    ]
+   },
+   "metis_n_lss_mf_calctrans": {
+    "recipe": "metis_n_lss_mf_calctrans",
+    "meta": [
+     "qc1calib"
+    ],
+    "lanes": [
+     "metis.metis_n_lss_wkf"
+    ]
+   },
+   "metis_n_lss_mf_correct": {
+    "recipe": "metis_n_lss_mf_correct",
+    "meta": [
+     "qc1calib",
+     "science"
+    ],
+    "lanes": [
+     "metis.metis_n_lss_wkf"
+    ]
+   },
+   "metis_n_lss_mf_model": {
+    "recipe": "metis_n_lss_mf_model",
+    "meta": [
+     "qc1calib"
+    ],
+    "lanes": [
+     "metis.metis_n_lss_wkf"
+    ]
+   },
+   "metis_n_lss_rsrf": {
+    "recipe": "metis_n_lss_rsrf",
+    "meta": [
+     "qc1calib"
+    ],
+    "lanes": [
+     "metis.metis_n_lss_wkf"
+    ]
+   },
+   "metis_n_lss_sci": {
+    "recipe": "metis_n_lss_sci",
+    "meta": [
+     "science"
+    ],
+    "lanes": [
+     "metis.metis_n_lss_wkf"
+    ]
+   },
+   "metis_n_lss_std": {
+    "recipe": "metis_n_lss_std",
+    "meta": [
+     "science"
+    ],
+    "lanes": [
+     "metis.metis_n_lss_wkf"
+    ]
+   },
+   "metis_n_lss_trace": {
+    "recipe": "metis_n_lss_trace",
+    "meta": [
+     "qc1calib"
+    ],
+    "lanes": [
+     "metis.metis_n_lss_wkf"
+    ]
+   },
+   "metis_pupil_imaging": {
+    "recipe": "metis_pupil_imaging",
+    "meta": [
+     "science"
+    ],
+    "lanes": [
+     "metis.metis_pupil_imaging_wkf"
+    ]
+   }
+  },
+  "inputs": [
+   [
+    "source:lm_raw_chophome",
+    "metis_chophome_imaging",
+    "main",
+    [
+     "LM_CHOPHOME_RAW"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_chophome_imaging",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "source:lm_wcu_off_raw",
+    "metis_chophome_imaging",
+    "assoc",
+    [
+     "LM_WCU_OFF_RAW"
+    ]
+   ],
+   [
+    "task:metis_ifu_sci_reduce",
+    "metis_ifu_calibrate",
+    "main",
+    [
+     "IFU_SCI_REDUCED"
+    ]
+   ],
+   [
+    "task:metis_ifu_sci_telluric",
+    "metis_ifu_calibrate",
+    "assoc",
+    [
+     "IFU_TELLURIC"
+    ]
+   ],
+   [
+    "task:metis_ifu_std_telluric",
+    "metis_ifu_calibrate",
+    "assoc",
+    [
+     "FLUXCAL_TAB"
+    ]
+   ],
+   [
+    "source:dark_ifu_raw",
+    "metis_ifu_dark",
+    "main",
+    [
+     "DARK_IFU_RAW"
+    ]
+   ],
+   [
+    "source:badpix_map_ifu",
+    "metis_ifu_dark",
+    "assoc",
+    [
+     "BADPIX_MAP_IFU"
+    ]
+   ],
+   [
+    "task:metis_ifu_lingain",
+    "metis_ifu_dark",
+    "assoc",
+    [
+     "LINEARITY_IFU",
+     "GAIN_MAP_IFU"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_ifu_dark",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "source:ifu_distortion_raw",
+    "metis_ifu_distortion",
+    "main",
+    [
+     "IFU_DISTORTION_RAW"
+    ]
+   ],
+   [
+    "source:badpix_map_ifu",
+    "metis_ifu_distortion",
+    "assoc",
+    [
+     "BADPIX_MAP_IFU"
+    ]
+   ],
+   [
+    "task:metis_ifu_lingain",
+    "metis_ifu_distortion",
+    "assoc",
+    [
+     "LINEARITY_IFU",
+     "GAIN_MAP_IFU"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_ifu_distortion",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "task:metis_ifu_dark",
+    "metis_ifu_distortion",
+    "assoc",
+    [
+     "MASTER_DARK_IFU"
+    ]
+   ],
+   [
+    "source:detlin_ifu_raw",
+    "metis_ifu_lingain",
+    "main",
+    [
+     "DETLIN_IFU_RAW"
+    ]
+   ],
+   [
+    "source:badpix_map_ifu",
+    "metis_ifu_lingain",
+    "assoc",
+    [
+     "BADPIX_MAP_IFU"
+    ]
+   ],
+   [
+    "task:metis_ifu_calibrate",
+    "metis_ifu_postprocess",
+    "main",
+    []
+   ],
+   [
+    "source:ifu_rsrf_raw",
+    "metis_ifu_rsrf",
+    "main",
+    [
+     "IFU_RSRF_RAW"
+    ]
+   ],
+   [
+    "source:badpix_map_ifu",
+    "metis_ifu_rsrf",
+    "assoc",
+    [
+     "BADPIX_MAP_IFU"
+    ]
+   ],
+   [
+    "task:metis_ifu_lingain",
+    "metis_ifu_rsrf",
+    "assoc",
+    [
+     "LINEARITY_IFU",
+     "GAIN_MAP_IFU"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_ifu_rsrf",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "task:metis_ifu_dark",
+    "metis_ifu_rsrf",
+    "assoc",
+    [
+     "MASTER_DARK_IFU"
+    ]
+   ],
+   [
+    "task:metis_ifu_distortion",
+    "metis_ifu_rsrf",
+    "assoc",
+    [
+     "IFU_DISTORTION_TABLE"
+    ]
+   ],
+   [
+    "source:ifu_wcu_off_raw",
+    "metis_ifu_rsrf",
+    "assoc",
+    [
+     "IFU_WCU_OFF_RAW"
+    ]
+   ],
+   [
+    "task:metis_ifu_wavecal",
+    "metis_ifu_rsrf",
+    "assoc",
+    [
+     "IFU_WAVECAL"
+    ]
+   ],
+   [
+    "source:ifu_sci_raw",
+    "metis_ifu_sci_reduce",
+    "main",
+    [
+     "IFU_SCI_RAW"
+    ]
+   ],
+   [
+    "source:badpix_map_ifu",
+    "metis_ifu_sci_reduce",
+    "assoc",
+    [
+     "BADPIX_MAP_IFU"
+    ]
+   ],
+   [
+    "task:metis_ifu_lingain",
+    "metis_ifu_sci_reduce",
+    "assoc",
+    [
+     "LINEARITY_IFU",
+     "GAIN_MAP_IFU"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_ifu_sci_reduce",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "task:metis_ifu_dark",
+    "metis_ifu_sci_reduce",
+    "assoc",
+    [
+     "MASTER_DARK_IFU"
+    ]
+   ],
+   [
+    "task:metis_ifu_distortion",
+    "metis_ifu_sci_reduce",
+    "assoc",
+    [
+     "IFU_DISTORTION_TABLE"
+    ]
+   ],
+   [
+    "task:metis_ifu_wavecal",
+    "metis_ifu_sci_reduce",
+    "assoc",
+    [
+     "IFU_WAVECAL"
+    ]
+   ],
+   [
+    "task:metis_ifu_rsrf",
+    "metis_ifu_sci_reduce",
+    "assoc",
+    [
+     "RSRF_IFU"
+    ]
+   ],
+   [
+    "source:ifu_sky_raw",
+    "metis_ifu_sci_reduce",
+    "assoc",
+    [
+     "IFU_SKY_RAW"
+    ]
+   ],
+   [
+    "task:metis_ifu_sci_reduce",
+    "metis_ifu_sci_telluric",
+    "main",
+    [
+     "IFU_SCI_COMBINED"
+    ]
+   ],
+   [
+    "source:fluxstd_catalog",
+    "metis_ifu_sci_telluric",
+    "assoc",
+    [
+     "FLUXSTD_CATALOG"
+    ]
+   ],
+   [
+    "source:lsf_kernel",
+    "metis_ifu_sci_telluric",
+    "assoc",
+    [
+     "LSF_KERNEL"
+    ]
+   ],
+   [
+    "source:atm_profile",
+    "metis_ifu_sci_telluric",
+    "assoc",
+    [
+     "ATM_PROFILE"
+    ]
+   ],
+   [
+    "source:ifu_std_raw",
+    "metis_ifu_std_reduce",
+    "main",
+    [
+     "IFU_STD_RAW"
+    ]
+   ],
+   [
+    "source:badpix_map_ifu",
+    "metis_ifu_std_reduce",
+    "assoc",
+    [
+     "BADPIX_MAP_IFU"
+    ]
+   ],
+   [
+    "task:metis_ifu_lingain",
+    "metis_ifu_std_reduce",
+    "assoc",
+    [
+     "LINEARITY_IFU",
+     "GAIN_MAP_IFU"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_ifu_std_reduce",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "task:metis_ifu_dark",
+    "metis_ifu_std_reduce",
+    "assoc",
+    [
+     "MASTER_DARK_IFU"
+    ]
+   ],
+   [
+    "task:metis_ifu_distortion",
+    "metis_ifu_std_reduce",
+    "assoc",
+    [
+     "IFU_DISTORTION_TABLE"
+    ]
+   ],
+   [
+    "task:metis_ifu_wavecal",
+    "metis_ifu_std_reduce",
+    "assoc",
+    [
+     "IFU_WAVECAL"
+    ]
+   ],
+   [
+    "task:metis_ifu_rsrf",
+    "metis_ifu_std_reduce",
+    "assoc",
+    [
+     "RSRF_IFU"
+    ]
+   ],
+   [
+    "source:ifu_sky_raw",
+    "metis_ifu_std_reduce",
+    "assoc",
+    [
+     "IFU_SKY_RAW"
+    ]
+   ],
+   [
+    "task:metis_ifu_std_reduce",
+    "metis_ifu_std_telluric",
+    "main",
+    [
+     "IFU_STD_COMBINED"
+    ]
+   ],
+   [
+    "source:fluxstd_catalog",
+    "metis_ifu_std_telluric",
+    "assoc",
+    [
+     "FLUXSTD_CATALOG"
+    ]
+   ],
+   [
+    "source:lsf_kernel",
+    "metis_ifu_std_telluric",
+    "assoc",
+    [
+     "LSF_KERNEL"
+    ]
+   ],
+   [
+    "source:atm_profile",
+    "metis_ifu_std_telluric",
+    "assoc",
+    [
+     "ATM_PROFILE"
+    ]
+   ],
+   [
+    "source:ifu_wave_raw",
+    "metis_ifu_wavecal",
+    "main",
+    [
+     "IFU_WAVE_RAW"
+    ]
+   ],
+   [
+    "source:badpix_map_ifu",
+    "metis_ifu_wavecal",
+    "assoc",
+    [
+     "BADPIX_MAP_IFU"
+    ]
+   ],
+   [
+    "task:metis_ifu_lingain",
+    "metis_ifu_wavecal",
+    "assoc",
+    [
+     "LINEARITY_IFU",
+     "GAIN_MAP_IFU"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_ifu_wavecal",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "task:metis_ifu_dark",
+    "metis_ifu_wavecal",
+    "assoc",
+    [
+     "MASTER_DARK_IFU"
+    ]
+   ],
+   [
+    "task:metis_ifu_distortion",
+    "metis_ifu_wavecal",
+    "assoc",
+    [
+     "IFU_DISTORTION_TABLE"
+    ]
+   ],
+   [
+    "task:metis_lm_img_basic_reduce_sci",
+    "metis_lm_img_background_sci",
+    "main",
+    [
+     "LM_SCI_BASIC_REDUCED"
+    ]
+   ],
+   [
+    "task:metis_lm_img_basic_reduce_sky",
+    "metis_lm_img_background_sci",
+    "assoc",
+    [
+     "LM_SKY_BASIC_REDUCED"
+    ]
+   ],
+   [
+    "task:metis_lm_img_basic_reduce_std",
+    "metis_lm_img_background_std",
+    "main",
+    [
+     "LM_STD_BASIC_REDUCED"
+    ]
+   ],
+   [
+    "task:metis_lm_img_basic_reduce_sky",
+    "metis_lm_img_background_std",
+    "assoc",
+    [
+     "LM_SKY_BASIC_REDUCED"
+    ]
+   ],
+   [
+    "source:lm_image_sci_raw",
+    "metis_lm_img_basic_reduce_sci",
+    "main",
+    [
+     "LM_IMAGE_SCI_RAW"
+    ]
+   ],
+   [
+    "task:metis_lm_img_lingain",
+    "metis_lm_img_basic_reduce_sci",
+    "assoc",
+    [
+     "LINEARITY_2RG",
+     "GAIN_MAP_2RG"
+    ]
+   ],
+   [
+    "task:metis_lm_img_dark",
+    "metis_lm_img_basic_reduce_sci",
+    "assoc",
+    [
+     "MASTER_DARK_2RG"
+    ]
+   ],
+   [
+    "task:metis_lm_img_flat",
+    "metis_lm_img_basic_reduce_sci",
+    "assoc",
+    [
+     "MASTER_IMG_FLAT_LAMP_LM"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_lm_img_basic_reduce_sci",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "source:lm_image_sky_raw",
+    "metis_lm_img_basic_reduce_sky",
+    "main",
+    [
+     "LM_IMAGE_SKY_RAW"
+    ]
+   ],
+   [
+    "task:metis_lm_img_lingain",
+    "metis_lm_img_basic_reduce_sky",
+    "assoc",
+    [
+     "LINEARITY_2RG",
+     "GAIN_MAP_2RG"
+    ]
+   ],
+   [
+    "task:metis_lm_img_dark",
+    "metis_lm_img_basic_reduce_sky",
+    "assoc",
+    [
+     "MASTER_DARK_2RG"
+    ]
+   ],
+   [
+    "task:metis_lm_img_flat",
+    "metis_lm_img_basic_reduce_sky",
+    "assoc",
+    [
+     "MASTER_IMG_FLAT_LAMP_LM"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_lm_img_basic_reduce_sky",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "source:lm_image_std_raw",
+    "metis_lm_img_basic_reduce_std",
+    "main",
+    [
+     "LM_IMAGE_STD_RAW"
+    ]
+   ],
+   [
+    "task:metis_lm_img_lingain",
+    "metis_lm_img_basic_reduce_std",
+    "assoc",
+    [
+     "LINEARITY_2RG",
+     "GAIN_MAP_2RG"
+    ]
+   ],
+   [
+    "task:metis_lm_img_dark",
+    "metis_lm_img_basic_reduce_std",
+    "assoc",
+    [
+     "MASTER_DARK_2RG"
+    ]
+   ],
+   [
+    "task:metis_lm_img_flat",
+    "metis_lm_img_basic_reduce_std",
+    "assoc",
+    [
+     "MASTER_IMG_FLAT_LAMP_LM"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_lm_img_basic_reduce_std",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "task:metis_lm_img_background_sci",
+    "metis_lm_img_calib",
+    "main",
+    [
+     "LM_SCI_BKG_SUBTRACTED"
+    ]
+   ],
+   [
+    "task:metis_lm_img_standard_flux",
+    "metis_lm_img_calib",
+    "assoc",
+    [
+     "FLUXCAL_TAB"
+    ]
+   ],
+   [
+    "task:metis_lm_img_distortion",
+    "metis_lm_img_calib",
+    "assoc",
+    [
+     "LM_DISTORTION_TABLE"
+    ]
+   ],
+   [
+    "task:metis_lm_img_calib",
+    "metis_lm_img_coadd",
+    "main",
+    [
+     "LM_SCI_CALIBRATED"
+    ]
+   ],
+   [
+    "source:dark_2rg_raw",
+    "metis_lm_img_dark",
+    "main",
+    [
+     "DARK_2RG_RAW"
+    ]
+   ],
+   [
+    "task:metis_lm_img_lingain",
+    "metis_lm_img_dark",
+    "assoc",
+    [
+     "LINEARITY_2RG",
+     "GAIN_MAP_2RG"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_lm_img_dark",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "source:lm_distortion_raw",
+    "metis_lm_img_distortion",
+    "main",
+    [
+     "LM_DISTORTION_RAW"
+    ]
+   ],
+   [
+    "source:lm_wcu_off_raw",
+    "metis_lm_img_distortion",
+    "assoc",
+    [
+     "LM_WCU_OFF_RAW"
+    ]
+   ],
+   [
+    "source:pinhole_table",
+    "metis_lm_img_distortion",
+    "assoc",
+    [
+     "PINHOLE_TABLE"
+    ]
+   ],
+   [
+    "task:metis_lm_img_flat",
+    "metis_lm_img_distortion",
+    "assoc",
+    [
+     "MASTER_IMG_FLAT_LAMP_LM"
+    ]
+   ],
+   [
+    "task:metis_lm_img_lingain",
+    "metis_lm_img_distortion",
+    "assoc",
+    [
+     "LINEARITY_2RG",
+     "GAIN_MAP_2RG"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_lm_img_distortion",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "source:lm_flat_lamp_raw",
+    "metis_lm_img_flat",
+    "main",
+    [
+     "LM_FLAT_LAMP_RAW"
+    ]
+   ],
+   [
+    "task:metis_lm_img_dark",
+    "metis_lm_img_flat",
+    "assoc",
+    [
+     "MASTER_DARK_2RG"
+    ]
+   ],
+   [
+    "task:metis_lm_img_lingain",
+    "metis_lm_img_flat",
+    "assoc",
+    [
+     "LINEARITY_2RG",
+     "GAIN_MAP_2RG"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_lm_img_flat",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "source:detlin_2rg_raw",
+    "metis_lm_img_lingain",
+    "main",
+    [
+     "DETLIN_2RG_RAW"
+    ]
+   ],
+   [
+    "task:metis_lm_img_background_std",
+    "metis_lm_img_standard_flux",
+    "main",
+    [
+     "LM_STD_BKG_SUBTRACTED"
+    ]
+   ],
+   [
+    "source:fluxstd_catalog",
+    "metis_lm_img_standard_flux",
+    "assoc",
+    [
+     "FLUXSTD_CATALOG"
+    ]
+   ],
+   [
+    "source:lm_adc_slitloss_raw",
+    "metis_lm_lss_adc_slitloss",
+    "main",
+    [
+     "LM_ADC_SLITLOSS_RAW"
+    ]
+   ],
+   [
+    "source:lm_wcu_off_raw",
+    "metis_lm_lss_adc_slitloss",
+    "assoc",
+    [
+     "LM_WCU_OFF_RAW"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_lm_lss_adc_slitloss",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_lingain",
+    "metis_lm_lss_adc_slitloss",
+    "assoc",
+    [
+     "LINEARITY_2RG",
+     "GAIN_MAP_2RG"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_dark",
+    "metis_lm_lss_adc_slitloss",
+    "assoc",
+    [
+     "MASTER_DARK_2RG"
+    ]
+   ],
+   [
+    "source:dark_2rg_raw",
+    "metis_lm_lss_dark",
+    "main",
+    [
+     "DARK_2RG_RAW"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_lingain",
+    "metis_lm_lss_dark",
+    "assoc",
+    [
+     "LINEARITY_2RG",
+     "GAIN_MAP_2RG"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_lm_lss_dark",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "source:detlin_2rg_raw",
+    "metis_lm_lss_lingain",
+    "main",
+    [
+     "DETLIN_2RG_RAW"
+    ]
+   ],
+   [
+    "source:lm_wcu_off_raw",
+    "metis_lm_lss_lingain",
+    "assoc",
+    [
+     "LM_WCU_OFF_RAW"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_mf_model",
+    "metis_lm_lss_mf_calctrans",
+    "main",
+    [
+     "MF_BEST_FIT_TAB"
+    ]
+   ],
+   [
+    "source:atm_line_cat",
+    "metis_lm_lss_mf_calctrans",
+    "assoc",
+    [
+     "ATM_LINE_CAT"
+    ]
+   ],
+   [
+    "source:lsf_kernel",
+    "metis_lm_lss_mf_calctrans",
+    "assoc",
+    [
+     "LSF_KERNEL"
+    ]
+   ],
+   [
+    "source:atm_profile",
+    "metis_lm_lss_mf_calctrans",
+    "assoc",
+    [
+     "ATM_PROFILE"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_sci",
+    "metis_lm_lss_mf_correct",
+    "main",
+    [
+     "LM_LSS_SCI_FLUX_1D"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_mf_calctrans",
+    "metis_lm_lss_mf_correct",
+    "assoc",
+    [
+     "LM_LSS_SYNTH_TRANS"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_sci",
+    "metis_lm_lss_mf_model",
+    "main",
+    [
+     "LM_LSS_SCI_FLUX_1D"
+    ]
+   ],
+   [
+    "source:atm_line_cat",
+    "metis_lm_lss_mf_model",
+    "assoc",
+    [
+     "ATM_LINE_CAT"
+    ]
+   ],
+   [
+    "source:lsf_kernel",
+    "metis_lm_lss_mf_model",
+    "assoc",
+    [
+     "LSF_KERNEL"
+    ]
+   ],
+   [
+    "source:atm_profile",
+    "metis_lm_lss_mf_model",
+    "assoc",
+    [
+     "ATM_PROFILE"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_sci",
+    "metis_lm_lss_mf_model",
+    "assoc",
+    [
+     "LM_LSS_SCI_FLUX_1D"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_std",
+    "metis_lm_lss_mf_model",
+    "assoc",
+    [
+     "LM_LSS_STD_1D"
+    ]
+   ],
+   [
+    "source:lm_lss_rsrf_raw",
+    "metis_lm_lss_rsrf",
+    "main",
+    [
+     "LM_LSS_RSRF_RAW"
+    ]
+   ],
+   [
+    "source:lm_wcu_off_raw",
+    "metis_lm_lss_rsrf",
+    "assoc",
+    [
+     "LM_WCU_OFF_RAW"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_dark",
+    "metis_lm_lss_rsrf",
+    "assoc",
+    [
+     "MASTER_DARK_2RG"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_lingain",
+    "metis_lm_lss_rsrf",
+    "assoc",
+    [
+     "LINEARITY_2RG",
+     "GAIN_MAP_2RG"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_lm_lss_rsrf",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "source:lm_lss_sci_raw",
+    "metis_lm_lss_sci",
+    "main",
+    [
+     "LM_LSS_SCI_RAW"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_lingain",
+    "metis_lm_lss_sci",
+    "assoc",
+    [
+     "LINEARITY_2RG",
+     "GAIN_MAP_2RG"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_lm_lss_sci",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_dark",
+    "metis_lm_lss_sci",
+    "assoc",
+    [
+     "MASTER_DARK_2RG"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_rsrf",
+    "metis_lm_lss_sci",
+    "assoc",
+    [
+     "MASTER_LM_LSS_RSRF"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_trace",
+    "metis_lm_lss_sci",
+    "assoc",
+    [
+     "LM_LSS_TRACE"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_wave",
+    "metis_lm_lss_sci",
+    "assoc",
+    [
+     "LM_LSS_DIST_SOL",
+     "LM_LSS_WAVE_GUESS"
+    ]
+   ],
+   [
+    "source:lm_lss_dist_sol",
+    "metis_lm_lss_sci",
+    "assoc",
+    [
+     "LM_LSS_DIST_SOL"
+    ]
+   ],
+   [
+    "source:lm_lss_wave_guess",
+    "metis_lm_lss_sci",
+    "assoc",
+    [
+     "LM_LSS_WAVE_GUESS"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_std",
+    "metis_lm_lss_sci",
+    "assoc",
+    [
+     "MASTER_LM_RESPONSE",
+     "STD_TRANSMISSION"
+    ]
+   ],
+   [
+    "source:atm_line_cat",
+    "metis_lm_lss_sci",
+    "assoc",
+    [
+     "ATM_LINE_CAT"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_adc_slitloss",
+    "metis_lm_lss_sci",
+    "assoc",
+    [
+     "LM_ADC_SLITLOSS"
+    ]
+   ],
+   [
+    "source:ao_psf_model",
+    "metis_lm_lss_sci",
+    "assoc",
+    [
+     "AO_PSF_MODEL"
+    ]
+   ],
+   [
+    "source:lm_lss_std_raw",
+    "metis_lm_lss_std",
+    "main",
+    [
+     "LM_LSS_STD_RAW"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_lingain",
+    "metis_lm_lss_std",
+    "assoc",
+    [
+     "LINEARITY_2RG",
+     "GAIN_MAP_2RG"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_lm_lss_std",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_dark",
+    "metis_lm_lss_std",
+    "assoc",
+    [
+     "MASTER_DARK_2RG"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_rsrf",
+    "metis_lm_lss_std",
+    "assoc",
+    [
+     "MASTER_LM_LSS_RSRF"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_trace",
+    "metis_lm_lss_std",
+    "assoc",
+    [
+     "LM_LSS_TRACE"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_wave",
+    "metis_lm_lss_std",
+    "assoc",
+    [
+     "LM_LSS_DIST_SOL",
+     "LM_LSS_WAVE_GUESS"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_adc_slitloss",
+    "metis_lm_lss_std",
+    "assoc",
+    [
+     "LM_ADC_SLITLOSS"
+    ]
+   ],
+   [
+    "source:atm_line_cat",
+    "metis_lm_lss_std",
+    "assoc",
+    [
+     "ATM_LINE_CAT"
+    ]
+   ],
+   [
+    "source:ref_std_cat",
+    "metis_lm_lss_std",
+    "assoc",
+    [
+     "REF_STD_CAT"
+    ]
+   ],
+   [
+    "source:lm_synth_trans",
+    "metis_lm_lss_std",
+    "assoc",
+    [
+     "LM_SYNTH_TRANS"
+    ]
+   ],
+   [
+    "source:lm_lss_dist_sol",
+    "metis_lm_lss_std",
+    "assoc",
+    [
+     "LM_LSS_DIST_SOL"
+    ]
+   ],
+   [
+    "source:lm_lss_wave_guess",
+    "metis_lm_lss_std",
+    "assoc",
+    [
+     "LM_LSS_WAVE_GUESS"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_adc_slitloss",
+    "metis_lm_lss_std",
+    "assoc",
+    [
+     "LM_ADC_SLITLOSS"
+    ]
+   ],
+   [
+    "source:ao_psf_model",
+    "metis_lm_lss_std",
+    "assoc",
+    [
+     "AO_PSF_MODEL"
+    ]
+   ],
+   [
+    "source:lm_lss_rsrf_pinh_raw",
+    "metis_lm_lss_trace",
+    "main",
+    [
+     "LM_LSS_RSRF_PINH_RAW"
+    ]
+   ],
+   [
+    "source:lm_wcu_off_raw",
+    "metis_lm_lss_trace",
+    "assoc",
+    [
+     "LM_WCU_OFF_RAW"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_dark",
+    "metis_lm_lss_trace",
+    "assoc",
+    [
+     "MASTER_DARK_2RG"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_lingain",
+    "metis_lm_lss_trace",
+    "assoc",
+    [
+     "LINEARITY_2RG",
+     "GAIN_MAP_2RG"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_rsrf",
+    "metis_lm_lss_trace",
+    "assoc",
+    [
+     "MASTER_LM_LSS_RSRF"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_lm_lss_trace",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "source:lm_lss_wave_raw",
+    "metis_lm_lss_wave",
+    "main",
+    [
+     "LM_LSS_WAVE_RAW"
+    ]
+   ],
+   [
+    "source:lm_wcu_off_raw",
+    "metis_lm_lss_wave",
+    "assoc",
+    [
+     "LM_WCU_OFF_RAW"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_lm_lss_wave",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "source:laser_tab",
+    "metis_lm_lss_wave",
+    "assoc",
+    [
+     "LASER_TAB"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_dark",
+    "metis_lm_lss_wave",
+    "assoc",
+    [
+     "MASTER_DARK_2RG"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_lingain",
+    "metis_lm_lss_wave",
+    "assoc",
+    [
+     "LINEARITY_2RG",
+     "GAIN_MAP_2RG"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_rsrf",
+    "metis_lm_lss_wave",
+    "assoc",
+    [
+     "MASTER_LM_LSS_RSRF"
+    ]
+   ],
+   [
+    "task:metis_lm_lss_trace",
+    "metis_lm_lss_wave",
+    "assoc",
+    [
+     "LM_LSS_TRACE"
+    ]
+   ],
+   [
+    "source:n_adc_slitloss_raw",
+    "metis_n_adc_slitloss",
+    "main",
+    [
+     "N_ADC_SLITLOSS_RAW"
+    ]
+   ],
+   [
+    "source:n_wcu_off_raw",
+    "metis_n_adc_slitloss",
+    "assoc",
+    [
+     "N_WCU_OFF_RAW"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_n_adc_slitloss",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "task:metis_n_lss_lingain",
+    "metis_n_adc_slitloss",
+    "assoc",
+    [
+     "LINEARITY_GEO",
+     "GAIN_MAP_GEO"
+    ]
+   ],
+   [
+    "task:metis_n_lss_dark",
+    "metis_n_adc_slitloss",
+    "assoc",
+    [
+     "MASTER_DARK_GEO"
+    ]
+   ],
+   [
+    "task:metis_n_img_chopnod_sci",
+    "metis_n_img_calib",
+    "main",
+    [
+     "N_SCI_BKG_SUBTRACTED"
+    ]
+   ],
+   [
+    "task:metis_n_img_standard_flux",
+    "metis_n_img_calib",
+    "assoc",
+    [
+     "FLUXCAL_TAB"
+    ]
+   ],
+   [
+    "task:metis_n_img_distortion",
+    "metis_n_img_calib",
+    "assoc",
+    [
+     "N_DISTORTION_TABLE"
+    ]
+   ],
+   [
+    "source:n_image_sci_raw",
+    "metis_n_img_chopnod_sci",
+    "main",
+    [
+     "N_IMAGE_SCI_RAW"
+    ]
+   ],
+   [
+    "task:metis_n_img_lingain",
+    "metis_n_img_chopnod_sci",
+    "assoc",
+    [
+     "LINEARITY_GEO",
+     "GAIN_MAP_GEO"
+    ]
+   ],
+   [
+    "task:metis_n_img_dark",
+    "metis_n_img_chopnod_sci",
+    "assoc",
+    [
+     "MASTER_DARK_GEO"
+    ]
+   ],
+   [
+    "task:metis_n_img_flat",
+    "metis_n_img_chopnod_sci",
+    "assoc",
+    [
+     "MASTER_IMG_FLAT_LAMP_N"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_n_img_chopnod_sci",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "source:n_image_std_raw",
+    "metis_n_img_chopnod_std",
+    "main",
+    [
+     "N_IMAGE_STD_RAW"
+    ]
+   ],
+   [
+    "task:metis_n_img_lingain",
+    "metis_n_img_chopnod_std",
+    "assoc",
+    [
+     "LINEARITY_GEO",
+     "GAIN_MAP_GEO"
+    ]
+   ],
+   [
+    "task:metis_n_img_dark",
+    "metis_n_img_chopnod_std",
+    "assoc",
+    [
+     "MASTER_DARK_GEO"
+    ]
+   ],
+   [
+    "task:metis_n_img_flat",
+    "metis_n_img_chopnod_std",
+    "assoc",
+    [
+     "MASTER_IMG_FLAT_LAMP_N"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_n_img_chopnod_std",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "source:dark_geo_raw",
+    "metis_n_img_dark",
+    "main",
+    [
+     "DARK_GEO_RAW"
+    ]
+   ],
+   [
+    "task:metis_n_img_lingain",
+    "metis_n_img_dark",
+    "assoc",
+    [
+     "LINEARITY_GEO",
+     "GAIN_MAP_GEO"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_n_img_dark",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "source:n_distortion_raw",
+    "metis_n_img_distortion",
+    "main",
+    [
+     "N_DISTORTION_RAW"
+    ]
+   ],
+   [
+    "source:n_wcu_off_raw",
+    "metis_n_img_distortion",
+    "assoc",
+    [
+     "N_WCU_OFF_RAW"
+    ]
+   ],
+   [
+    "source:pinhole_table",
+    "metis_n_img_distortion",
+    "assoc",
+    [
+     "PINHOLE_TABLE"
+    ]
+   ],
+   [
+    "task:metis_n_img_flat",
+    "metis_n_img_distortion",
+    "assoc",
+    [
+     "MASTER_IMG_FLAT_LAMP_N"
+    ]
+   ],
+   [
+    "task:metis_n_img_lingain",
+    "metis_n_img_distortion",
+    "assoc",
+    [
+     "LINEARITY_GEO",
+     "GAIN_MAP_GEO"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_n_img_distortion",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "source:n_flat_lamp_raw",
+    "metis_n_img_flat",
+    "main",
+    [
+     "N_FLAT_LAMP_RAW"
+    ]
+   ],
+   [
+    "task:metis_n_img_dark",
+    "metis_n_img_flat",
+    "assoc",
+    [
+     "MASTER_DARK_GEO"
+    ]
+   ],
+   [
+    "task:metis_n_img_lingain",
+    "metis_n_img_flat",
+    "assoc",
+    [
+     "LINEARITY_GEO",
+     "GAIN_MAP_GEO"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_n_img_flat",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "source:detlin_geo_raw",
+    "metis_n_img_lingain",
+    "main",
+    [
+     "DETLIN_GEO_RAW"
+    ]
+   ],
+   [
+    "task:metis_n_img_calib",
+    "metis_n_img_restore",
+    "main",
+    [
+     "N_SCI_CALIBRATED"
+    ]
+   ],
+   [
+    "task:metis_n_img_chopnod_std",
+    "metis_n_img_standard_flux",
+    "main",
+    [
+     "N_STD_BKG_SUBTRACTED"
+    ]
+   ],
+   [
+    "source:fluxstd_catalog",
+    "metis_n_img_standard_flux",
+    "assoc",
+    [
+     "FLUXSTD_CATALOG"
+    ]
+   ],
+   [
+    "source:dark_geo_raw",
+    "metis_n_lss_dark",
+    "main",
+    [
+     "DARK_GEO_RAW"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_n_lss_dark",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "task:metis_n_lss_lingain",
+    "metis_n_lss_dark",
+    "assoc",
+    [
+     "LINEARITY_GEO",
+     "GAIN_MAP_GEO"
+    ]
+   ],
+   [
+    "source:detlin_geo_raw",
+    "metis_n_lss_lingain",
+    "main",
+    [
+     "DETLIN_GEO_RAW"
+    ]
+   ],
+   [
+    "source:n_wcu_off_raw",
+    "metis_n_lss_lingain",
+    "assoc",
+    [
+     "N_WCU_OFF_RAW"
+    ]
+   ],
+   [
+    "task:metis_n_lss_mf_model",
+    "metis_n_lss_mf_calctrans",
+    "main",
+    [
+     "MF_BEST_FIT_TAB"
+    ]
+   ],
+   [
+    "source:atm_line_cat",
+    "metis_n_lss_mf_calctrans",
+    "assoc",
+    [
+     "ATM_LINE_CAT"
+    ]
+   ],
+   [
+    "source:lsf_kernel",
+    "metis_n_lss_mf_calctrans",
+    "assoc",
+    [
+     "LSF_KERNEL"
+    ]
+   ],
+   [
+    "source:atm_profile",
+    "metis_n_lss_mf_calctrans",
+    "assoc",
+    [
+     "ATM_PROFILE"
+    ]
+   ],
+   [
+    "task:metis_n_lss_sci",
+    "metis_n_lss_mf_correct",
+    "main",
+    [
+     "N_LSS_SCI_FLUX_1D"
+    ]
+   ],
+   [
+    "task:metis_n_lss_mf_calctrans",
+    "metis_n_lss_mf_correct",
+    "assoc",
+    [
+     "N_LSS_SYNTH_TRANS"
+    ]
+   ],
+   [
+    "task:metis_n_lss_std",
+    "metis_n_lss_mf_model",
+    "main",
+    [
+     "N_LSS_STD_1D"
+    ]
+   ],
+   [
+    "source:atm_line_cat",
+    "metis_n_lss_mf_model",
+    "assoc",
+    [
+     "ATM_LINE_CAT"
+    ]
+   ],
+   [
+    "source:lsf_kernel",
+    "metis_n_lss_mf_model",
+    "assoc",
+    [
+     "LSF_KERNEL"
+    ]
+   ],
+   [
+    "source:atm_profile",
+    "metis_n_lss_mf_model",
+    "assoc",
+    [
+     "ATM_PROFILE"
+    ]
+   ],
+   [
+    "task:metis_n_lss_std",
+    "metis_n_lss_mf_model",
+    "assoc",
+    [
+     "N_LSS_STD_1D"
+    ]
+   ],
+   [
+    "task:metis_n_lss_sci",
+    "metis_n_lss_mf_model",
+    "assoc",
+    [
+     "N_LSS_SCI_FLUX_1D"
+    ]
+   ],
+   [
+    "source:n_lss_rsrf_raw",
+    "metis_n_lss_rsrf",
+    "main",
+    [
+     "N_LSS_RSRF_RAW"
+    ]
+   ],
+   [
+    "source:n_wcu_off_raw",
+    "metis_n_lss_rsrf",
+    "assoc",
+    [
+     "N_WCU_OFF_RAW"
+    ]
+   ],
+   [
+    "task:metis_n_lss_dark",
+    "metis_n_lss_rsrf",
+    "assoc",
+    [
+     "MASTER_DARK_GEO"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_n_lss_rsrf",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "task:metis_n_lss_lingain",
+    "metis_n_lss_rsrf",
+    "assoc",
+    [
+     "LINEARITY_GEO",
+     "GAIN_MAP_GEO"
+    ]
+   ],
+   [
+    "source:n_lss_sci_raw",
+    "metis_n_lss_sci",
+    "main",
+    [
+     "N_LSS_SCI_RAW"
+    ]
+   ],
+   [
+    "task:metis_n_lss_lingain",
+    "metis_n_lss_sci",
+    "assoc",
+    [
+     "LINEARITY_GEO",
+     "GAIN_MAP_GEO"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_n_lss_sci",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "task:metis_n_lss_dark",
+    "metis_n_lss_sci",
+    "assoc",
+    [
+     "MASTER_DARK_GEO"
+    ]
+   ],
+   [
+    "task:metis_n_lss_rsrf",
+    "metis_n_lss_sci",
+    "assoc",
+    [
+     "MASTER_N_LSS_RSRF"
+    ]
+   ],
+   [
+    "task:metis_n_lss_trace",
+    "metis_n_lss_sci",
+    "assoc",
+    [
+     "N_LSS_TRACE"
+    ]
+   ],
+   [
+    "source:n_lss_dist_sol",
+    "metis_n_lss_sci",
+    "assoc",
+    [
+     "N_LSS_DIST_SOL"
+    ]
+   ],
+   [
+    "source:n_lss_wave_guess",
+    "metis_n_lss_sci",
+    "assoc",
+    [
+     "N_LSS_WAVE_GUESS"
+    ]
+   ],
+   [
+    "task:metis_n_lss_std",
+    "metis_n_lss_sci",
+    "assoc",
+    [
+     "MASTER_N_RESPONSE",
+     "STD_TRANSMISSION"
+    ]
+   ],
+   [
+    "source:atm_line_cat",
+    "metis_n_lss_sci",
+    "assoc",
+    [
+     "ATM_LINE_CAT"
+    ]
+   ],
+   [
+    "task:metis_n_adc_slitloss",
+    "metis_n_lss_sci",
+    "assoc",
+    [
+     "N_ADC_SLITLOSS"
+    ]
+   ],
+   [
+    "source:ao_psf_model",
+    "metis_n_lss_sci",
+    "assoc",
+    [
+     "AO_PSF_MODEL"
+    ]
+   ],
+   [
+    "source:n_lss_std_raw",
+    "metis_n_lss_std",
+    "main",
+    [
+     "N_LSS_STD_RAW"
+    ]
+   ],
+   [
+    "task:metis_n_lss_lingain",
+    "metis_n_lss_std",
+    "assoc",
+    [
+     "LINEARITY_GEO",
+     "GAIN_MAP_GEO"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_n_lss_std",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "task:metis_n_lss_dark",
+    "metis_n_lss_std",
+    "assoc",
+    [
+     "MASTER_DARK_GEO"
+    ]
+   ],
+   [
+    "task:metis_n_lss_rsrf",
+    "metis_n_lss_std",
+    "assoc",
+    [
+     "MASTER_N_LSS_RSRF"
+    ]
+   ],
+   [
+    "task:metis_n_lss_trace",
+    "metis_n_lss_std",
+    "assoc",
+    [
+     "N_LSS_TRACE"
+    ]
+   ],
+   [
+    "task:metis_n_adc_slitloss",
+    "metis_n_lss_std",
+    "assoc",
+    [
+     "N_ADC_SLITLOSS"
+    ]
+   ],
+   [
+    "source:atm_line_cat",
+    "metis_n_lss_std",
+    "assoc",
+    [
+     "ATM_LINE_CAT"
+    ]
+   ],
+   [
+    "source:ref_std_cat",
+    "metis_n_lss_std",
+    "assoc",
+    [
+     "REF_STD_CAT"
+    ]
+   ],
+   [
+    "source:n_synth_trans",
+    "metis_n_lss_std",
+    "assoc",
+    [
+     "N_SYNTH_TRANS"
+    ]
+   ],
+   [
+    "source:n_lss_dist_sol",
+    "metis_n_lss_std",
+    "assoc",
+    [
+     "N_LSS_DIST_SOL"
+    ]
+   ],
+   [
+    "source:n_lss_wave_guess",
+    "metis_n_lss_std",
+    "assoc",
+    [
+     "N_LSS_WAVE_GUESS"
+    ]
+   ],
+   [
+    "task:metis_n_adc_slitloss",
+    "metis_n_lss_std",
+    "assoc",
+    [
+     "N_ADC_SLITLOSS"
+    ]
+   ],
+   [
+    "source:ao_psf_model",
+    "metis_n_lss_std",
+    "assoc",
+    [
+     "AO_PSF_MODEL"
+    ]
+   ],
+   [
+    "source:n_lss_rsrf_pinh_raw",
+    "metis_n_lss_trace",
+    "main",
+    [
+     "N_LSS_RSRF_PINH_RAW"
+    ]
+   ],
+   [
+    "source:n_wcu_off_raw",
+    "metis_n_lss_trace",
+    "assoc",
+    [
+     "N_WCU_OFF_RAW"
+    ]
+   ],
+   [
+    "task:metis_n_lss_dark",
+    "metis_n_lss_trace",
+    "assoc",
+    [
+     "MASTER_DARK_GEO"
+    ]
+   ],
+   [
+    "task:metis_n_lss_lingain",
+    "metis_n_lss_trace",
+    "assoc",
+    [
+     "LINEARITY_GEO",
+     "GAIN_MAP_GEO"
+    ]
+   ],
+   [
+    "task:metis_n_lss_rsrf",
+    "metis_n_lss_trace",
+    "assoc",
+    [
+     "MASTER_N_LSS_RSRF"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_n_lss_trace",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "source:lm_raw_pupil",
+    "metis_pupil_imaging",
+    "main",
+    [
+     "LM_PUPIL_RAW"
+    ]
+   ],
+   [
+    "task:metis_lm_img_lingain",
+    "metis_pupil_imaging",
+    "assoc",
+    [
+     "LINEARITY_2RG",
+     "GAIN_MAP_2RG"
+    ]
+   ],
+   [
+    "task:metis_lm_img_dark",
+    "metis_pupil_imaging",
+    "assoc",
+    [
+     "MASTER_DARK_2RG"
+    ]
+   ],
+   [
+    "task:metis_lm_img_flat",
+    "metis_pupil_imaging",
+    "assoc",
+    [
+     "MASTER_IMG_FLAT_LAMP_LM"
+    ]
+   ]
+  ]
+ },
  "mode_to_tech": {
   "img_lm": "IMAGE,LM",
   "img_n": "IMAGE,N",

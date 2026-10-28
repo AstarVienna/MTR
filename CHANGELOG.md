@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+- **Data flow window** (toolbar button): a zoomable, pannable diagram from the
+  simulations through the Pipeline's tasks to the archive, built from the EDPS
+  workflow files. It can highlight what the Run tab's input would run. The
+  workflow parser and bundled snapshot gain a `graph` entry for it.
+
 ### Changed
 - **No more `--no-deps` installs.** METIS_Pipeline #240 replaced pymetis's
   `pycpl==1.0.3.post11` pin with `>=1.0.4.post4,<1.0.5`, which admits the

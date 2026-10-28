@@ -64,6 +64,8 @@ class Tables:
     task_products: dict[str, tuple[str, ...]]
     #: ScopeSim mode -> DPR.TECH, from the pinned irdb release
     mode_to_tech: dict[str, str]
+    #: The umbrella's task graph (``upstream._graph``), for the data-flow view
+    graph: dict
 
     def lookup_dpr_tag(self, catg: str | None, typ: str, tech: str) -> str | None:
         """Classification tag for a DPR triple, or None.
@@ -94,6 +96,7 @@ def _from_dict(data: dict, source: str, irdb: dict) -> Tables:
         chains={wf: [tuple(row) for row in chain] for wf, chain in data["chains"].items()},
         task_products={task: tuple(p) for task, p in data["task_products"].items()},
         mode_to_tech=irdb["mode_to_tech"],
+        graph=data["graph"],
     )
 
 

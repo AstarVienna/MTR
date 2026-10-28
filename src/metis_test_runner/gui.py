@@ -66,6 +66,8 @@ from PyQt6.QtWidgets import (
 
 from . import paths
 from .env import ensurepip_command_if_needed, resolve_runtime_env
+from .flow import RunInput
+from .flow_view import FlowWindow
 from .installer import (
     EXTERNAL,
     REPO_ROOT,
@@ -2428,6 +2430,19 @@ class RunTab(WorkerHost, QWidget):
         self.pipeline_input_list.clear()
         self._update_output_info()
 
+    def flow_input(self) -> RunInput:
+        """The next run as the data-flow window highlights it (mirrors _build_cmd_args)."""
+        translate_only = self.csv_to_yaml_cb.isChecked()
+        return RunInput(
+            files=[self.input_list.item(i).text() for i in range(self.input_list.count())],
+            fits_dirs=[
+                self.pipeline_input_list.item(i).text() for i in range(self.pipeline_input_list.count())
+            ],
+            simulate=not translate_only and not self.rb_pipe_only.isChecked(),
+            pipeline=not translate_only and not self.rb_sim_only.isChecked(),
+            auto_fetch=self.auto_fetch_cb.isChecked(),
+        )
+
     # ── Run ──────────────────────────────────────────────────────────────────
 
     def _build_cmd_args(self) -> list[str]:
@@ -2765,6 +2780,12 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self._theme_btn)
         self._theme_btn.clicked.connect(self._toggle_theme)
         self._update_theme_btn_label()
+        self._flow_btn = QPushButton("Data flow")
+        self._flow_btn.setProperty("role", "accent")
+        self._flow_btn.setToolTip("Show how data flows from the simulations through the pipeline")
+        toolbar.addWidget(self._flow_btn)
+        self._flow_btn.clicked.connect(self._show_flow)
+        self._flow_window: FlowWindow | None = None
 
         tabs = QTabWidget()
         tabs.setTabBar(_ExpandingTabBar())
@@ -2794,6 +2815,16 @@ class MainWindow(QMainWindow):
             self._current_theme = self._home_light
         apply_theme(QApplication.instance(), self._current_theme)  # pyright: ignore[reportArgumentType]
         self._update_theme_btn_label()
+        if self._flow_window is not None:
+            self._flow_window.apply_theme(THEMES[self._current_theme])
+
+    def _show_flow(self) -> None:
+        # Parentless, so it can sit beside or behind the main window; closeEvent closes it.
+        if self._flow_window is None:
+            self._flow_window = FlowWindow(THEMES[self._current_theme], self._run_tab.flow_input)
+        self._flow_window.show()
+        self._flow_window.raise_()
+        self._flow_window.activateWindow()
 
     def _busy_jobs(self, tabs=None) -> list[str]:
         """Names of jobs still running in *tabs* (default: all), e.g. for the close confirmation."""
@@ -2851,6 +2882,8 @@ class MainWindow(QMainWindow):
         self._install_tab.stop_ref_workers()
         for tab in (self._install_tab, self._archive_tab):
             tab.stop_workers()
+        if self._flow_window is not None:
+            self._flow_window.close()
         super().closeEvent(event)
 
 

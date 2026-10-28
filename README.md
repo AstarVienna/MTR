@@ -78,8 +78,8 @@ compiler and Python headers (e.g. `sudo apt install gcc python3-dev`).
 
 `mtr` is the recommended way to drive the test runner. It exposes every CLI flag
 as a labelled control, remembers your settings between sessions, and streams
-colour-coded live output from the pipeline. A **Light / Dark theme** button sits
-in the toolbar.
+colour-coded live output from the pipeline. A **Light / Dark theme** button and
+a **Data flow** button sit in the toolbar.
 
 ### Run tab
 
@@ -126,6 +126,16 @@ package, store your credentials in the OS keyring, then query and download
 files, or upload local FITS files (the class is detected from the headers and
 can be overridden). To pull missing master calibrations automatically during a run, tick
 *Auto-fetch missing calibrations* on the Run tab instead.
+
+### Data flow window
+
+**Data flow** opens a zoomable (wheel) and pannable (drag) diagram of how data moves
+from the simulations through every Pipeline task to the archive, derived from the
+installed Pipeline's EDPS workflow files (or MTR's bundled snapshot). The archive
+appears only once MetisWISE is installed. Sub-workflows start collapsed: click one
+to show its tasks. Hover or click a task to trace what it needs and feeds, and tick
+*Highlight Run tab input* to see which tasks the Run tab's current input would run
+and which master calibrations it lacks.
 
 
 ## Supported Workflows
