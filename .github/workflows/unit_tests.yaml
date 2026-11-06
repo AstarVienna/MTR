@@ -109,6 +109,45 @@ jobs:
           mtr-install --help
           mtr-uninstall --help
 
+  # The mocked suite never touches the network. This clicks the Install tab for
+  # real: clones both repos and pip-installs from PyPI, the pycpl index and the
+  # ESO mirror, so an outage there turns this job red without a commit here.
+  install-tab:
+    name: Install tab (${{ matrix.os }}, py${{ matrix.python-version }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libegl1 libglib2.0-0 libxkbcommon0 \
+            libfontconfig1 libfreetype6 libdbus-1-3
+
+      - name: Install MTR with dev extras
+        run: pip install -e .[dev]
+
+      - name: Run the Install tab end to end
+        env:
+          QT_QPA_PLATFORM: offscreen
+          MTR_INSTALL_TAB_E2E: "1"
+        run: pytest tests/test_install_tab.py -v
+
   # MTR bundles a snapshot of the Pipeline's task chains, classification tags
   # and products and of the pinned irdb release's modes, keeps its own tech
   # routing, and bundles Simulations input files. Check them against the
