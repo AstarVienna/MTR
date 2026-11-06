@@ -48,6 +48,8 @@ dependencies = [
     # OS-keyring storage for archive credentials (pulls SecretStorage/jeepney
     # on Linux automatically).
     "keyring>=25",
+    # Version and requires-python handling for the update check.
+    "packaging>=23.0",
 ]
 
 [project.optional-dependencies]
@@ -87,6 +89,10 @@ packages = ["src/metis_test_runner"]
 # unanchored rules (*.fits, *.log). Without this, adding a companion fixture
 # to examples/ would silently drop it from the wheel.
 artifacts = ["src/metis_test_runner/examples/*"]
+
+[tool.hatch.build.targets.wheel.force-include]
+# Read at runtime for the window shown after an update.
+"CHANGELOG.md" = "metis_test_runner/CHANGELOG.md"
 
 [tool.hatch.build.targets.sdist]
 include = [

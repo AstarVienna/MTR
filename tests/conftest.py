@@ -20,6 +20,8 @@ _qsettings_tmp = tempfile.mkdtemp(prefix="metis-qsettings-")
 atexit.register(shutil.rmtree, _qsettings_tmp, ignore_errors=True)
 os.environ["XDG_CONFIG_HOME"] = _qsettings_tmp
 os.environ["XDG_DATA_HOME"] = _qsettings_tmp
+# The update check starts from main(); tests that want it clear this themselves.
+os.environ["MTR_NO_UPDATE_CHECK"] = "1"
 # A developer's own METIS_PIPELINE_DIR / METIS_SIMULATIONS_DIR would mark the
 # repos user-owned at import time (installer.EXTERNAL) and skew the tests.
 # Only the upstream contract tests see them, via the fixtures below.

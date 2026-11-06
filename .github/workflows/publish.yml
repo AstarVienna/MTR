@@ -51,6 +51,12 @@ jobs:
           if not re.search(rf"^##\s*\[?{re.escape(tag)}\]?", changelog, re.M):
               errors.append(f"CHANGELOG.md has no '## {tag}' section")
 
+          # The post-update window matches this heading exactly, so a typo
+          # would silently hide a warning from users.
+          for heading in re.findall(r"^#+.*\baction.*$", changelog, re.I | re.M):
+              if heading.strip() != "### Action required":
+                  errors.append(f"CHANGELOG.md heading {heading!r} must be '### Action required'")
+
           if errors:
               # This message is the only place the release procedure is
               # written down, so spell out the fix rather than just the fault.
