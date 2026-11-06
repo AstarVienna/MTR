@@ -492,7 +492,11 @@ class Installer:
         """Run every step; return True on success. Failures are logged, not raised."""
         try:
             self._step(f"Cloning / updating METIS_Pipeline  →  {TARGET_A}")
-            self._clone_or_update(REPO_A_URL, TARGET_A, self._refs.get(TARGET_A, ""), TARGET_A in self._force)
+            # pymetis derives its version from Git tags and refuses to build in
+            # a shallow clone, so unlike METIS_Simulations this needs history.
+            self._clone_or_update(
+                REPO_A_URL, TARGET_A, self._refs.get(TARGET_A, ""), TARGET_A in self._force, full_history=True
+            )
 
             self._step(f"Cloning / updating METIS_Simulations  →  {TARGET_B}")
             self._clone_or_update(REPO_B_URL, TARGET_B, self._refs.get(TARGET_B, ""), TARGET_B in self._force)
@@ -573,12 +577,16 @@ class Installer:
             should_stop=self._should_stop,
         )
 
-    def _clone_or_update(self, url: str, target: Path, ref: str = "", force: bool = False) -> None:
+    def _clone_or_update(
+        self, url: str, target: Path, ref: str = "", force: bool = False, *, full_history: bool = False
+    ) -> None:
         """Put *target* on *ref* ("" = the remote's default branch).
 
         *force* permits discarding uncommitted local changes; the GUI collects
         that confirmation per-repo before the worker starts, and this method
         re-checks rather than trusting it, so it stays safe to call directly.
+
+        *full_history* un-shallows the result and fetches its tags.
 
         A user-owned target (see ``EXTERNAL``) is used as-is: no git at all.
         """
@@ -622,6 +630,10 @@ class Installer:
             self._update_default_branch(url, target, force)
         else:
             self._run(["git", "clone", "--depth", "1", url, str(target)])
+
+        # After the ref handling: its `fetch --depth 1` re-shallows a full repo.
+        if full_history:
+            self._deepen(target)
 
         self._log_head(target)
 
@@ -738,7 +750,9 @@ class Installer:
         # `fetch --unshallow` errors out on an already-complete repo, and a
         # freshly `git init`ed one is not shallow either.
         if _git(["-C", str(target), "rev-parse", "--is-shallow-repository"]).stdout.strip() == "true":
-            self._run(["git", "-C", str(target), "fetch", "--unshallow", "origin"], timeout=900)
+            self._run(
+                ["git", "-C", str(target), "fetch", "--unshallow", "--tags", "--force", "origin"], timeout=900
+            )
 
     def _has_remote_branch(self, target: Path, ref: str) -> bool:
         return (

@@ -1193,6 +1193,60 @@ class TestCloneOrUpdateBlankRef:
         flat = _flat(invoked)
         assert any("clone --depth 1" in c for c in flat)
         assert not any("git init" in c for c in flat)
+        assert not any("unshallow" in c for c in flat)
+
+    def test_full_history_unshallows_with_tags_before_logging_head(self, tmp_path, monkeypatch):
+        # pymetis derives its version from tags and rejects shallow clones;
+        # logging afterwards keeps the install log from reporting "shallow".
+        w = _worker()
+        invoked = _spy(w, monkeypatch)
+        monkeypatch.setattr(w, "_log_head", lambda _target: invoked.append(["log-head"]))
+        monkeypatch.setattr(installer, "_git", _fake_git({"is-shallow-repository": _cp("true\n")}))
+
+        w._clone_or_update(URL, tmp_path / "new", full_history=True)
+
+        flat = _flat(invoked)
+        assert "clone --depth 1" in flat[0]
+        assert "fetch --unshallow --tags --force origin" in flat[1]
+        assert flat[2] == "log-head"
+
+    def test_full_history_unshallows_a_clone_that_is_already_up_to_date(self, tmp_path, monkeypatch):
+        w = _worker()
+        invoked = _spy(w, monkeypatch)
+        monkeypatch.setattr(
+            installer,
+            "_git",
+            _fake_git(
+                {
+                    "is-shallow-repository": _cp("true\n"),
+                    "symbolic-ref": _cp("main\n"),
+                }
+            ),
+        )
+        w._clone_or_update(URL, _repo(tmp_path), full_history=True)
+        assert any("fetch --unshallow" in c for c in _flat(invoked))
+
+    def test_full_history_leaves_a_user_owned_checkout_alone(self, tmp_path, monkeypatch):
+        target = tmp_path / "own"
+        target.mkdir()
+        monkeypatch.setattr(installer, "EXTERNAL", {target: "METIS_PIPELINE_DIR"})
+        w = _worker()
+        invoked = _spy(w, monkeypatch)
+        w._clone_or_update(URL, target, full_history=True)
+        assert invoked == []
+
+    def test_run_requests_full_history_for_the_pipeline_only(self, monkeypatch):
+        calls = []
+
+        def clone(_url, target, _ref="", _force=False, *, full_history=False):
+            calls.append((target, full_history))
+            if target == installer.TARGET_B:
+                raise RuntimeError("stop here")
+
+        w = _worker()
+        monkeypatch.setattr(w, "_clone_or_update", clone)
+        assert w.run() is False
+        assert calls == [(installer.TARGET_A, True), (installer.TARGET_B, False)]
 
     def test_branch_checkout_fast_forwards_without_resetting(self, tmp_path, monkeypatch):
         w = _worker()
