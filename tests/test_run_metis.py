@@ -1334,7 +1334,8 @@ class TestLookupTableConsistency:
         calib_tasks = {
             "metis_lm_img_lingain",
             "metis_lm_img_dark",
-            "metis_lm_img_flat",
+            "metis_lm_img_flat_lamp",
+            "metis_lm_img_flat_twilight",
             "metis_lm_img_distortion",
         }
         for name, _, meta in tables.get().chains["metis.metis_lm_img_wkf"]:

@@ -267,12 +267,15 @@ def _chain(pkg: _Package, members: set[tuple[str, str]], sci_tags: set[str]) -> 
 def _graph(pkg: _Package, prefix: str) -> dict:
     """The umbrella's tasks and their inputs, for the GUI's data-flow view.
 
-    Lanes are the sub-workflows the umbrella imports; a task's own module is its first lane.
+    Lanes are the sub-workflows the umbrella imports (``from .x import *`` or
+    ``from . import x as x``); a task's own module is its first lane.
     """
-    lanes = [stem for stem in pkg.mods[_UMBRELLA_STEM].star if stem.endswith("_wkf")]
+    umbrella = pkg.mods[_UMBRELLA_STEM]
+    lanes = [s for s in (*umbrella.star, *umbrella.module_aliases.values()) if s.endswith("_wkf")]
     lane_tasks = {stem: pkg.workflow_tasks(stem) for stem in lanes}
+    members = pkg.workflow_tasks(_UMBRELLA_STEM).union(*lane_tasks.values())
     tasks, inputs, sources = {}, [], {}
-    for ref in sorted(pkg.workflow_tasks(_UMBRELLA_STEM), key=lambda r: pkg.tasks[r].name):
+    for ref in sorted(members, key=lambda r: pkg.tasks[r].name):
         task = pkg.tasks[ref]
         own = sorted((s for s in lanes if ref in lane_tasks[s]), key=lambda s: s != ref[0]) or [ref[0]]
         tasks[task.name] = {
@@ -329,7 +332,8 @@ def derive_pipeline(pipeline_dir: Path) -> dict:
         if meta != "science" and products_by_name.get(name)
     }
 
-    if not dpr_to_tag or not task_products or not all(chains.values()):
+    graph = _graph(pkg, pkg_dir.name)
+    if not dpr_to_tag or not task_products or not all(chains.values()) or not graph["lanes"]:
         raise ValueError(
             f"{pkg_dir}: derived tables are incomplete (Pipeline older than 2026-05 "
             "declares no task products, or the workflow layout changed)"
@@ -338,7 +342,7 @@ def derive_pipeline(pipeline_dir: Path) -> dict:
         "dpr_to_tag": [[*key, tag] for key, tag in sorted(dpr_to_tag.items(), key=lambda kv: kv[1])],
         "chains": chains,
         "task_products": dict(sorted(task_products.items())),
-        "graph": _graph(pkg, pkg_dir.name),
+        "graph": graph,
     }
 
 

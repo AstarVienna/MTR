@@ -1618,7 +1618,7 @@ class TestDataFlowWindow:
             flow_win.pin("task:metis_n_img_dark")
             items = flow_win._nodes
             assert items["task:metis_n_img_lingain"].opacity() == 1.0
-            assert items["task:metis_n_img_flat"].opacity() == 1.0
+            assert items["task:metis_n_img_flat_lamp"].opacity() == 1.0
             assert items["raw:n_image_sci_raw"].opacity() < 1.0
             flow_win.pin("task:metis_n_img_dark")
             assert items["raw:n_image_sci_raw"].opacity() == 1.0

@@ -13,6 +13,7 @@ concurrency:
 
 jobs:
   # A tag push used to publish even if the test suite was red on that commit.
+  # This includes the upstream contract job, so upstream drift blocks a release.
   test:
     name: Tests
     uses: ./.github/workflows/unit_tests.yaml

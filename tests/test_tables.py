@@ -118,6 +118,11 @@ class TestDerivePipeline:
         ]
         assert ["task:x_sci", "x_telluric", "main", ["SCI_REDUCED"]] in graph["inputs"]
 
+    def test_umbrella_may_import_sub_workflows_as_modules(self, pipeline, tmp_path):
+        files = {**_FILES, "metis_wkf.py": "from . import metis_x_wkf as metis_x_wkf\n"}
+        aliased = upstream.derive_pipeline(_write_pkg(tmp_path / "aliased", files))
+        assert aliased == upstream.derive_pipeline(pipeline)
+
     def test_accepts_the_workflow_folder_too(self, pipeline):
         whole = upstream.derive_pipeline(pipeline)
         assert upstream.derive_pipeline(pipeline / "metisp" / "workflows") == whole
@@ -127,6 +132,12 @@ class TestDerivePipeline:
         files["metis_x_wkf.py"] = (
             _FILES["metis_x_wkf.py"].replace(", [master_dark_class]", "").replace(", [master_flat_class]", "")
         )
+        with pytest.raises(ValueError, match="incomplete"):
+            upstream.derive_pipeline(_write_pkg(tmp_path, files))
+
+    def test_umbrella_without_known_sub_workflows_is_rejected(self, tmp_path):
+        # An unparsed import style must not silently yield an empty data-flow graph.
+        files = {**_FILES, "metis_wkf.py": "import metis.metis_x_wkf\n"}
         with pytest.raises(ValueError, match="incomplete"):
             upstream.derive_pipeline(_write_pkg(tmp_path, files))
 

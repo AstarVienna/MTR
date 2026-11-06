@@ -112,10 +112,11 @@ jobs:
   # MTR bundles a snapshot of the Pipeline's task chains, classification tags
   # and products and of the pinned irdb release's modes, keeps its own tech
   # routing, and bundles Simulations input files. Check them against the
-  # current upstream main branches; the mocked suite above cannot.
+  # current upstream main branches; the mocked suite above cannot. Also gates
+  # releases: `push` above is main-only, so a tag ref means publish.yml called us.
   upstream-contract:
     name: Upstream contract (METIS_Pipeline / METIS_Simulations main, pinned irdb)
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

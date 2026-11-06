@@ -28,6 +28,10 @@
 - *Uninstall* removes only MetisWISE's own packages (`metiswise`,
   `commonwise`, `metis-drld`, `dataserverwise`, `psycopg2-binary`), no longer
   generic ones like `numpy` or `astropy`.
+- **Bundled snapshot follows Pipeline #246**: `metis_{lm,n}_img_flat` split into
+  `*_flat_lamp` and `*_flat_twilight`.
+- **Releases are gated on the upstream contract tests**, which used to run only
+  weekly or by hand. A tag push now fails if MTR has drifted from upstream.
 
 ### Removed
 - **OmegaCEN pip credentials.** The entropynaut index now serves `metiswise`
@@ -35,6 +39,12 @@
   gone and *Install MetisWISE* (now a larger button) works with one click.
   Uninstall still deletes an `omegacen-pip` keyring entry left by older
   releases.
+
+### Fixed
+- **Data flow window was empty with a current Pipeline.** Pipeline #247 changed
+  `metis_wkf.py` to `from . import x as x`, which the workflow parser did not
+  follow. It reads both forms now; a checkout that yields no sub-workflows falls
+  back to the bundled snapshot with a warning, and regenerating from one fails.
 
 ## 0.7.2 — 2026-10-19
 

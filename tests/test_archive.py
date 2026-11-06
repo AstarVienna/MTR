@@ -1264,7 +1264,7 @@ class TestIdentifyMissingCalibrations:
         task_names = [t for t, _ in missing]
         assert "metis_lm_img_lingain" in task_names
         assert "metis_lm_img_dark" in task_names
-        assert "metis_lm_img_flat" not in task_names
+        assert "metis_lm_img_flat_lamp" not in task_names
 
     def test_empty_data_tags(self):
         missing = archive.identify_missing_calibrations(
@@ -1326,7 +1326,8 @@ class TestIdentifyMissingCalibrations:
         task_names = {t for t, _ in missing}
         assert "metis_lm_img_lingain" in task_names
         assert "metis_lm_img_dark" in task_names
-        assert "metis_lm_img_flat" not in task_names  # already covered
+        assert "metis_lm_img_flat_lamp" not in task_names  # already covered
+        assert "metis_lm_img_flat_twilight" in task_names
 
     def test_science_tasks_ignored(self):
         missing = archive.identify_missing_calibrations(
@@ -1337,7 +1338,8 @@ class TestIdentifyMissingCalibrations:
         task_names = [t for t, _ in missing]
         assert "metis_lm_img_lingain" in task_names
         assert "metis_lm_img_dark" in task_names
-        assert "metis_lm_img_flat" in task_names
+        assert "metis_lm_img_flat_lamp" in task_names
+        assert "metis_lm_img_flat_twilight" in task_names
         assert "metis_lm_img_basic_reduce_sci" not in task_names
         assert "metis_lm_img_basic_reduce_std" not in task_names
 

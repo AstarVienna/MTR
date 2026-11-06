@@ -1,5 +1,5 @@
 {
- "pipeline_commit": "a05cf6ce",
+ "pipeline_commit": "9a56c3cc",
  "irdb_release": "2026-09-23",
  "dpr_to_tag": [
   [
@@ -330,8 +330,13 @@
     null
    ],
    [
-    "metis_lm_img_flat",
+    "metis_lm_img_flat_lamp",
     "LM_FLAT_LAMP_RAW",
+    null
+   ],
+   [
+    "metis_lm_img_flat_twilight",
+    "LM_FLAT_TWILIGHT_RAW",
     null
    ],
    [
@@ -367,8 +372,13 @@
     null
    ],
    [
-    "metis_lm_img_flat",
+    "metis_lm_img_flat_lamp",
     "LM_FLAT_LAMP_RAW",
+    null
+   ],
+   [
+    "metis_lm_img_flat_twilight",
+    "LM_FLAT_TWILIGHT_RAW",
     null
    ],
    [
@@ -446,8 +456,13 @@
     null
    ],
    [
-    "metis_lm_img_flat",
+    "metis_lm_img_flat_lamp",
     "LM_FLAT_LAMP_RAW",
+    null
+   ],
+   [
+    "metis_lm_img_flat_twilight",
+    "LM_FLAT_TWILIGHT_RAW",
     null
    ],
    [
@@ -483,7 +498,12 @@
     null
    ],
    [
-    "metis_n_img_flat",
+    "metis_n_img_flat_lamp",
+    "N_FLAT_LAMP_RAW",
+    null
+   ],
+   [
+    "metis_n_img_flat_twilight",
     "N_FLAT_LAMP_RAW",
     null
    ],
@@ -552,8 +572,8 @@
     null
    ],
    [
-    "metis_lm_img_flat",
-    "LM_FLAT_LAMP_RAW",
+    "metis_lm_img_flat_twilight",
+    "LM_FLAT_TWILIGHT_RAW",
     null
    ],
    [
@@ -589,8 +609,12 @@
   "metis_lm_img_distortion": [
    "LM_DISTORTION_TABLE"
   ],
-  "metis_lm_img_flat": [
+  "metis_lm_img_flat_lamp": [
    "MASTER_IMG_FLAT_LAMP_LM"
+  ],
+  "metis_lm_img_flat_twilight": [
+   "MASTER_IMG_FLAT_LAMP_LM",
+   "MASTER_IMG_FLAT_TWILIGHT_LM"
   ],
   "metis_lm_img_lingain": [
    "GAIN_MAP_2RG",
@@ -625,8 +649,11 @@
   "metis_n_img_distortion": [
    "N_DISTORTION_TABLE"
   ],
-  "metis_n_img_flat": [
+  "metis_n_img_flat_lamp": [
    "MASTER_IMG_FLAT_LAMP_N"
+  ],
+  "metis_n_img_flat_twilight": [
+   "MASTER_IMG_FLAT_TWILIGHT_N"
   ],
   "metis_n_img_lingain": [
    "GAIN_MAP_GEO",
@@ -722,6 +749,9 @@
    ],
    "lm_flat_lamp_raw": [
     "LM_FLAT_LAMP_RAW"
+   ],
+   "lm_flat_twilight_raw": [
+    "LM_FLAT_TWILIGHT_RAW"
    ],
    "lm_image_sci_raw": [
     "LM_IMAGE_SCI_RAW"
@@ -984,8 +1014,15 @@
      "metis.metis_lm_img_wkf"
     ]
    },
-   "metis_lm_img_flat": {
-    "recipe": "metis_lm_img_flat",
+   "metis_lm_img_flat_lamp": {
+    "recipe": "metis_lm_img_flat_lamp",
+    "meta": [],
+    "lanes": [
+     "metis.metis_lm_img_wkf"
+    ]
+   },
+   "metis_lm_img_flat_twilight": {
+    "recipe": "metis_lm_img_flat_twilight",
     "meta": [],
     "lanes": [
      "metis.metis_lm_img_wkf",
@@ -1159,8 +1196,15 @@
      "metis.metis_n_img_wkf"
     ]
    },
-   "metis_n_img_flat": {
-    "recipe": "metis_n_img_flat",
+   "metis_n_img_flat_lamp": {
+    "recipe": "metis_n_img_flat_lamp",
+    "meta": [],
+    "lanes": [
+     "metis.metis_n_img_wkf"
+    ]
+   },
+   "metis_n_img_flat_twilight": {
+    "recipe": "metis_n_img_flat_twilight",
     "meta": [],
     "lanes": [
      "metis.metis_n_img_wkf"
@@ -1810,11 +1854,11 @@
     ]
    ],
    [
-    "task:metis_lm_img_flat",
+    "task:metis_lm_img_flat_twilight",
     "metis_lm_img_basic_reduce_sci",
     "assoc",
     [
-     "MASTER_IMG_FLAT_LAMP_LM"
+     "MASTER_IMG_FLAT_TWILIGHT_LM"
     ]
    ],
    [
@@ -1851,11 +1895,11 @@
     ]
    ],
    [
-    "task:metis_lm_img_flat",
+    "task:metis_lm_img_flat_twilight",
     "metis_lm_img_basic_reduce_sky",
     "assoc",
     [
-     "MASTER_IMG_FLAT_LAMP_LM"
+     "MASTER_IMG_FLAT_TWILIGHT_LM"
     ]
    ],
    [
@@ -1892,11 +1936,11 @@
     ]
    ],
    [
-    "task:metis_lm_img_flat",
+    "task:metis_lm_img_flat_twilight",
     "metis_lm_img_basic_reduce_std",
     "assoc",
     [
-     "MASTER_IMG_FLAT_LAMP_LM"
+     "MASTER_IMG_FLAT_TWILIGHT_LM"
     ]
    ],
    [
@@ -1989,7 +2033,7 @@
     ]
    ],
    [
-    "task:metis_lm_img_flat",
+    "task:metis_lm_img_flat_lamp",
     "metis_lm_img_distortion",
     "assoc",
     [
@@ -2015,7 +2059,7 @@
    ],
    [
     "source:lm_flat_lamp_raw",
-    "metis_lm_img_flat",
+    "metis_lm_img_flat_lamp",
     "main",
     [
      "LM_FLAT_LAMP_RAW"
@@ -2023,7 +2067,7 @@
    ],
    [
     "task:metis_lm_img_dark",
-    "metis_lm_img_flat",
+    "metis_lm_img_flat_lamp",
     "assoc",
     [
      "MASTER_DARK_2RG"
@@ -2031,7 +2075,7 @@
    ],
    [
     "task:metis_lm_img_lingain",
-    "metis_lm_img_flat",
+    "metis_lm_img_flat_lamp",
     "assoc",
     [
      "LINEARITY_2RG",
@@ -2040,7 +2084,48 @@
    ],
    [
     "source:persistence_map",
-    "metis_lm_img_flat",
+    "metis_lm_img_flat_lamp",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "source:lm_wcu_off_raw",
+    "metis_lm_img_flat_lamp",
+    "assoc",
+    [
+     "LM_WCU_OFF_RAW"
+    ]
+   ],
+   [
+    "source:lm_flat_twilight_raw",
+    "metis_lm_img_flat_twilight",
+    "main",
+    [
+     "LM_FLAT_TWILIGHT_RAW"
+    ]
+   ],
+   [
+    "task:metis_lm_img_dark",
+    "metis_lm_img_flat_twilight",
+    "assoc",
+    [
+     "MASTER_DARK_2RG"
+    ]
+   ],
+   [
+    "task:metis_lm_img_lingain",
+    "metis_lm_img_flat_twilight",
+    "assoc",
+    [
+     "LINEARITY_2RG",
+     "GAIN_MAP_2RG"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_lm_img_flat_twilight",
     "assoc",
     [
      "PERSISTENCE_MAP"
@@ -2723,11 +2808,11 @@
     ]
    ],
    [
-    "task:metis_n_img_flat",
+    "task:metis_n_img_flat_twilight",
     "metis_n_img_chopnod_sci",
     "assoc",
     [
-     "MASTER_IMG_FLAT_LAMP_N"
+     "MASTER_IMG_FLAT_TWILIGHT_N"
     ]
    ],
    [
@@ -2764,11 +2849,11 @@
     ]
    ],
    [
-    "task:metis_n_img_flat",
+    "task:metis_n_img_flat_twilight",
     "metis_n_img_chopnod_std",
     "assoc",
     [
-     "MASTER_IMG_FLAT_LAMP_N"
+     "MASTER_IMG_FLAT_TWILIGHT_N"
     ]
    ],
    [
@@ -2829,7 +2914,7 @@
     ]
    ],
    [
-    "task:metis_n_img_flat",
+    "task:metis_n_img_flat_lamp",
     "metis_n_img_distortion",
     "assoc",
     [
@@ -2855,7 +2940,7 @@
    ],
    [
     "source:n_flat_lamp_raw",
-    "metis_n_img_flat",
+    "metis_n_img_flat_lamp",
     "main",
     [
      "N_FLAT_LAMP_RAW"
@@ -2863,7 +2948,7 @@
    ],
    [
     "task:metis_n_img_dark",
-    "metis_n_img_flat",
+    "metis_n_img_flat_lamp",
     "assoc",
     [
      "MASTER_DARK_GEO"
@@ -2871,7 +2956,7 @@
    ],
    [
     "task:metis_n_img_lingain",
-    "metis_n_img_flat",
+    "metis_n_img_flat_lamp",
     "assoc",
     [
      "LINEARITY_GEO",
@@ -2880,7 +2965,48 @@
    ],
    [
     "source:persistence_map",
-    "metis_n_img_flat",
+    "metis_n_img_flat_lamp",
+    "assoc",
+    [
+     "PERSISTENCE_MAP"
+    ]
+   ],
+   [
+    "source:n_wcu_off_raw",
+    "metis_n_img_flat_lamp",
+    "assoc",
+    [
+     "N_WCU_OFF_RAW"
+    ]
+   ],
+   [
+    "source:n_flat_lamp_raw",
+    "metis_n_img_flat_twilight",
+    "main",
+    [
+     "N_FLAT_LAMP_RAW"
+    ]
+   ],
+   [
+    "task:metis_n_img_dark",
+    "metis_n_img_flat_twilight",
+    "assoc",
+    [
+     "MASTER_DARK_GEO"
+    ]
+   ],
+   [
+    "task:metis_n_img_lingain",
+    "metis_n_img_flat_twilight",
+    "assoc",
+    [
+     "LINEARITY_GEO",
+     "GAIN_MAP_GEO"
+    ]
+   ],
+   [
+    "source:persistence_map",
+    "metis_n_img_flat_twilight",
     "assoc",
     [
      "PERSISTENCE_MAP"
@@ -3382,7 +3508,7 @@
     ]
    ],
    [
-    "task:metis_lm_img_flat",
+    "task:metis_lm_img_flat_twilight",
     "metis_pupil_imaging",
     "assoc",
     [

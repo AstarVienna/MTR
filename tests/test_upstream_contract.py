@@ -1,7 +1,7 @@
 """Contract tests: MTR's bundled snapshot and policy tables against upstream checkouts.
 
 Skipped unless METIS_PIPELINE_DIR / METIS_SIMULATIONS_DIR / METIS_IRDB_DIR point
-at checkouts (the weekly CI job sets them). The Pipeline's EDPS workflow files
+at checkouts (the upstream-contract CI job sets them). The Pipeline's EDPS workflow files
 are parsed with ``ast`` rather than imported, so neither EDPS nor ScopeSim is
 needed.
 """
@@ -65,9 +65,10 @@ class TestPipelineContract:
     def test_umbrella_imports_the_sub_workflows(self, upstream_pipeline_dir):
         umbrella = upstream_pipeline_dir / "metisp" / "workflows" / "metis" / "metis_wkf.py"
         imported = {
-            f"metis.{node.module}"
+            f"metis.{alias.name if node.module is None else node.module}"
             for node in ast.parse(umbrella.read_text()).body
             if isinstance(node, ast.ImportFrom) and node.level == 1
+            for alias in node.names
         }
         assert set(tables.TECH_TO_WORKFLOW.values()) - imported == _NOT_IN_UMBRELLA
 
