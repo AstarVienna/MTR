@@ -522,7 +522,7 @@ def _dir_picker(edit: QLineEdit, parent: QWidget) -> QPushButton:
     btn.setProperty("role", "browse")
     btn.clicked.connect(
         lambda: edit.setText(
-            QFileDialog.getExistingDirectory(parent, "Select directory", str(REPO_ROOT)) or edit.text()
+            QFileDialog.getExistingDirectory(parent, "Select directory", str(Path.cwd())) or edit.text()
         )
     )
     return btn
@@ -1798,7 +1798,7 @@ class ArchiveTab(WorkerHost, QWidget):
         dest = QFileDialog.getExistingDirectory(
             self,
             "Download destination",
-            str(REPO_ROOT),
+            str(Path.cwd()),
         )
         if not dest:
             return
@@ -1848,7 +1848,7 @@ class ArchiveTab(WorkerHost, QWidget):
         files, _ = QFileDialog.getOpenFileNames(
             self,
             "Stage FITS files for upload",
-            str(REPO_ROOT),
+            str(Path.cwd()),
             "FITS files (*.fits *.fits.gz)",
         )
         for f in files:
@@ -1858,7 +1858,7 @@ class ArchiveTab(WorkerHost, QWidget):
         folder = QFileDialog.getExistingDirectory(
             self,
             "Stage folder of FITS files",
-            str(REPO_ROOT),
+            str(Path.cwd()),
         )
         if not folder:
             return
@@ -2382,7 +2382,7 @@ class RunTab(WorkerHost, QWidget):
         files, _ = QFileDialog.getOpenFileNames(
             self,
             "Select input files",
-            str(REPO_ROOT),
+            str(Path.cwd()),
             "Observation inputs (*.yaml *.yml *.csv);;YAML (*.yaml *.yml);;CSV (*.csv);;All files (*)",
         )
         existing = {self.input_list.item(i).text() for i in range(self.input_list.count())}
@@ -2416,7 +2416,7 @@ class RunTab(WorkerHost, QWidget):
         self.input_status.setText(f"{n_yaml} YAML  ·  {n_csv} CSV")
 
     def _add_pipeline_input(self) -> None:
-        d = QFileDialog.getExistingDirectory(self, "Select input directory", str(REPO_ROOT))
+        d = QFileDialog.getExistingDirectory(self, "Select input directory", str(Path.cwd()))
         if d and not any(
             self.pipeline_input_list.item(i).text() == d for i in range(self.pipeline_input_list.count())
         ):
