@@ -8,6 +8,12 @@
   workflow files. It can highlight what the Run tab's input would run. The
   workflow parser and bundled snapshot gain a `graph` entry for it.
 - **CI runs the Install tab for real** on Linux and macOS, Python 3.12 and 3.13.
+- **Update button**: the toolbar offers newer PyPI releases (checked at most
+  once a day, in the background) and upgrades MTR in place, keeping the
+  pipeline, then restarts. Set `MTR_NO_UPDATE_CHECK=1` to turn the check off.
+- **What's new window**: after any update, the first start shows the changes
+  since the version you last used, with `### Action required` notes first.
+  The wheel now ships `CHANGELOG.md`, and `packaging` is a new dependency.
 
 ### Changed
 - **No more `--no-deps` installs.** METIS_Pipeline #240 replaced pymetis's

@@ -231,6 +231,7 @@ jobs:
           wheel = glob.glob("dist/*.whl")[0]
           names = zipfile.ZipFile(wheel).namelist()
           expected = [
+              "metis_test_runner/CHANGELOG.md",
               "metis_test_runner/examples/LMS_RAD_06.yaml",
               "metis_test_runner/examples/small_test.yaml",
               "metis_test_runner/examples/small_test_img_lm.csv",

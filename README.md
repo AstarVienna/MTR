@@ -79,7 +79,8 @@ compiler and Python headers (e.g. `sudo apt install gcc python3-dev`).
 `mtr` is the recommended way to drive the test runner. It exposes every CLI flag
 as a labelled control, remembers your settings between sessions, and streams
 colour-coded live output from the pipeline. A **Light / Dark theme** button and
-a **Data flow** button sit in the toolbar.
+a **Data flow** button sit in the toolbar, and an **Update** button appears there
+when PyPI has a newer release (see [Updating MTR](#updating-mtr)).
 
 ### Run tab
 
@@ -418,6 +419,19 @@ PYESOREX_LOG_LEVEL=info
 
 The file is entirely optional — it is read if present and ignored if absent.
 
+### Updating MTR
+
+At most once a day, the GUI checks PyPI in the background. When a newer release
+runs on your Python, the toolbar shows **Update to X.Y.Z**. It upgrades MTR in
+place, keeps the pipeline, and restarts. Installs it should not touch (no `pipx`
+on `PATH`, a read-only or `uv tool` install, no venv) get the command to run
+instead. Developer (editable) installs are never checked, and
+`MTR_NO_UPDATE_CHECK=1` turns the check off.
+
+However you update, the next start shows what changed since the version you last
+used. Notes under `### Action required` in `CHANGELOG.md` come first, in a highlighted
+box; the release check rejects any other spelling of that heading.
+
 ### Using your own METIS_Pipeline / METIS_Simulations checkout
 
 To run against a checkout you already have (e.g. one you develop on), set these
@@ -710,6 +724,9 @@ uses its own default interpreter, which may be newer (e.g. 3.14).
 pipx install metis-test-runner --python python3.12
 pipx reinstall metis-test-runner --python python3.12   # if it is already installed
 ```
+
+`pipx reinstall` recreates the venv, so run *Install* again afterwards: the
+pipeline lives in that venv.
 
 </details>
 
