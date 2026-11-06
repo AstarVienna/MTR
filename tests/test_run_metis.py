@@ -2024,6 +2024,107 @@ class TestMainHardlinkPreflight:
             main(argv)
 
 
+# ---------------------------------------------------------------------------
+# Whitespace in paths handed to EDPS
+# ---------------------------------------------------------------------------
+
+
+class TestWhitespaceProblem:
+    """PyCPL splits .sof lines on whitespace, so EDPS cannot use such paths."""
+
+    def test_clean_paths_are_fine(self, tmp_path):
+        assert rm.whitespace_problem([("Pipeline input", tmp_path / "sim", "fix")]) is None
+
+    @pytest.mark.parametrize("name", ["App Support", "App\tSupport"])
+    def test_whitespace_is_reported_with_its_fix(self, tmp_path, name):
+        bad = tmp_path / name / "static_calibs"
+        msg = rm.whitespace_problem(
+            [("Pipeline input", tmp_path / "sim", "a"), ("Static calibs", bad, "set X")]
+        )
+        assert msg is not None
+        assert str(bad) in msg and "set X" in msg
+        assert "Pipeline input" not in msg
+
+
+class TestEdpsPaths:
+    def _args(self, **kw):
+        defaults = {"no_sim": False, "pipeline_input": None, "static": 1}
+        return argparse.Namespace(**{**defaults, **kw})
+
+    def _props(self, tmp_path, monkeypatch, base_dir):
+        props = tmp_path / "application.properties"
+        props.write_text(f"[executor]\nbase_dir={base_dir}\n")
+        monkeypatch.setattr(rm, "_edps_properties_path", lambda: props)
+        return props
+
+    def test_static_calibs_fix_points_at_the_data_dir(self, tmp_path, monkeypatch):
+        self._props(tmp_path, monkeypatch, tmp_path / "EDPS_data")
+        found = rm._edps_paths(self._args(), "default", tmp_path / "sim", tmp_path / "pipe", tmp_path / "s")
+        assert ("Static calibs", tmp_path / "s", "set METIS_DATA_DIR to a folder without spaces") in found
+
+    def test_static_calibs_skipped_without_static(self, tmp_path, monkeypatch):
+        self._props(tmp_path, monkeypatch, tmp_path / "EDPS_data")
+        found = rm._edps_paths(
+            self._args(static=0), "default", tmp_path / "sim", tmp_path / "pipe", tmp_path / "s"
+        )
+        assert "Static calibs" not in [label for label, _p, _f in found]
+
+    def test_absolute_base_dir_fix_names_the_config(self, tmp_path, monkeypatch):
+        props = self._props(tmp_path, monkeypatch, tmp_path / "EDPS data")
+        found = rm._edps_paths(self._args(), "native", tmp_path / "sim", tmp_path / "pipe", tmp_path / "s")
+        assert (
+            "EDPS job folder",
+            tmp_path / "EDPS data",
+            f"change base_dir in {props} to a folder without spaces",
+        ) in found
+
+    def test_relative_base_dir_lives_in_the_output(self, tmp_path, monkeypatch):
+        self._props(tmp_path, monkeypatch, ".")
+        pipe = tmp_path / "out dir" / "pipeline"
+        found = rm._edps_paths(self._args(), "default", tmp_path / "sim", pipe, tmp_path / "s")
+        label, path, fix = found[-1]
+        assert (label, path) == ("EDPS job folder", pipe) and "-o DIR" in fix
+
+    @pytest.mark.parametrize("runner", ["docker", "podman"])
+    def test_container_config_is_not_read(self, tmp_path, monkeypatch, runner):
+        monkeypatch.setattr(rm, "_read_edps_config", MagicMock(side_effect=AssertionError("read")))
+        found = rm._edps_paths(self._args(), runner, tmp_path / "sim", tmp_path / "pipe", tmp_path / "s")
+        assert [label for label, _p, _f in found] == ["Pipeline input", "Static calibs"]
+
+    def test_every_pipeline_input_dir_is_listed(self, tmp_path, monkeypatch):
+        self._props(tmp_path, monkeypatch, tmp_path / "EDPS_data")
+        args = self._args(no_sim=True, pipeline_input=[str(tmp_path / "a"), str(tmp_path / "b c")])
+        found = rm._edps_paths(args, "default", tmp_path / "a", tmp_path / "pipe", tmp_path / "s")
+        assert [p for label, p, _f in found if label == "Pipeline input"] == [
+            tmp_path / "a",
+            tmp_path / "b c",
+        ]
+
+
+class TestMainWhitespacePreflight:
+    _argv = TestMainHardlinkPreflight._argv
+
+    def test_whitespace_stops_before_the_simulation(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(rm, "hardlink_mismatch", lambda pipe_out: None)
+        monkeypatch.setattr(rm, "_run_simulation", MagicMock(side_effect=AssertionError("simulated")))
+        argv, out = self._argv(tmp_path / "with space")
+        with pytest.raises(SystemExit) as exc:
+            main(argv)
+        assert "whitespace" in str(exc.value) and str(out / "sim") in str(exc.value)
+        assert not out.exists()
+
+    def test_not_checked_without_the_pipeline(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(rm, "whitespace_problem", MagicMock(side_effect=AssertionError("checked")))
+
+        class Stop(Exception):
+            pass
+
+        monkeypatch.setattr(rm, "_run_simulation", MagicMock(side_effect=Stop))
+        argv, _out = self._argv(tmp_path / "with space", "--no-pipeline")
+        with pytest.raises(Stop):
+            main(argv)
+
+
 class TestRequireAstropy:
     def test_missing_astropy_names_the_cause(self, monkeypatch):
         monkeypatch.setitem(sys.modules, "astropy.io.fits", None)  # makes the import fail

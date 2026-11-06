@@ -43,6 +43,7 @@ import configparser
 import contextlib
 import os
 import re
+import shlex
 import shutil
 import signal
 import stat
@@ -78,6 +79,60 @@ def _device(path: Path) -> int:
     return next(p for p in (path, *path.parents) if p.exists()).stat().st_dev
 
 
+def _read_edps_config() -> configparser.ConfigParser | None:
+    cfg = configparser.ConfigParser(interpolation=None)
+    try:
+        cfg.read(_edps_properties_path())
+    except (configparser.Error, OSError, UnicodeDecodeError):
+        return None
+    return cfg
+
+
+def _edps_base_dir(cfg: configparser.ConfigParser, pipe_out: Path) -> Path:
+    """EDPS's job directory (``base_dir``), where it runs the recipes."""
+    base_dir = Path(cfg.get("executor", "base_dir", fallback=".").strip())
+    # EDPS resolves a relative one against its working directory, pipe_out.
+    return base_dir if base_dir.is_absolute() else pipe_out / base_dir
+
+
+def whitespace_problem(edps_paths: list[tuple[str, Path, str]]) -> str | None:
+    """Explain which of *edps_paths* (label, path, fix) contain whitespace, or None.
+
+    EDPS lists inputs as ``<path> <tag>`` lines in its .sof files, which PyCPL
+    splits on whitespace (quoting or escaping makes it drop the file silently),
+    and runs recipes through a shell with their arguments joined by spaces.
+    """
+    bad = [(label, p, fix) for label, p, fix in edps_paths if any(c.isspace() for c in str(p))]
+    if not bad:
+        return None
+    lines = [f"  {label}: {p}\n    → {fix}" for label, p, fix in bad]
+    return "EDPS cannot handle whitespace in these paths:\n" + "\n".join(lines)
+
+
+def _edps_paths(args, runner, sim_out, pipe_out, static_calibs_dir) -> list[tuple[str, Path, str]]:
+    """The paths a run hands to EDPS, as (label, path, how to fix it)."""
+    out_fix = "use an output folder without spaces (-o DIR or METIS_OUTPUT_DIR)"
+    if args.no_sim and args.pipeline_input:
+        inputs = [Path(d).resolve() for d in args.pipeline_input]
+        in_fix = "move the input FITS files to a folder without spaces"
+    else:
+        inputs, in_fix = [sim_out], out_fix
+    found = [("Pipeline input", p, in_fix) for p in inputs]
+    if args.static:
+        fix = out_fix if runner in ("docker", "podman") else "set METIS_DATA_DIR to a folder without spaces"
+        found.append(("Static calibs", static_calibs_dir, fix))
+    # A container runs EDPS with its own config, which the host cannot see.
+    cfg = _read_edps_config() if runner in ("default", "native") else None
+    if cfg is not None:
+        base_dir = _edps_base_dir(cfg, pipe_out)
+        if base_dir.is_relative_to(pipe_out):
+            fix = out_fix
+        else:
+            fix = f"change base_dir in {_edps_properties_path()} to a folder without spaces"
+        found.append(("EDPS job folder", base_dir, fix))
+    return found
+
+
 def hardlink_mismatch(pipe_out: Path) -> str | None:
     """Explain why EDPS cannot hardlink products into *pipe_out*, or None.
 
@@ -87,18 +142,13 @@ def hardlink_mismatch(pipe_out: Path) -> str | None:
     output folder.
     """
     props = _edps_properties_path()
-    cfg = configparser.ConfigParser(interpolation=None)
-    try:
-        cfg.read(props)
-    except (configparser.Error, OSError, UnicodeDecodeError):
+    cfg = _read_edps_config()
+    if cfg is None:
         return None
     # Fallbacks are EDPS's own defaults for keys the file does not set.
     if cfg.get("packager", "mode", fallback="copy").strip() != "link":
         return None
-    base_dir = Path(cfg.get("executor", "base_dir", fallback=".").strip())
-    if not base_dir.is_absolute():
-        # EDPS resolves it against its working directory, which is pipe_out.
-        base_dir = pipe_out / base_dir
+    base_dir = _edps_base_dir(cfg, pipe_out)
     try:
         if _device(base_dir) == _device(pipe_out):
             return None
@@ -1436,11 +1486,16 @@ def main(argv=None):
         if problem:
             sys.exit(f"Error: {problem}")
 
+    static_calibs_dir = static_calibs_dir_for(runner, output_root)
+
+    if not args.no_pipeline and not args.csv_to_yaml:
+        problem = whitespace_problem(_edps_paths(args, runner, sim_out, pipe_out, static_calibs_dir))
+        if problem:
+            sys.exit(f"Error: {problem}")
+
     if not args.no_sim:
         sim_out.mkdir(parents=True, exist_ok=True)
     pipe_out.mkdir(parents=True, exist_ok=True)
-
-    static_calibs_dir = static_calibs_dir_for(runner, output_root)
 
     if not args.csv_to_yaml:
         print(f"\nOutput root      : {output_root}")
@@ -1748,7 +1803,7 @@ def main(argv=None):
             )
             # Echo it: this is the hardest part of a run to reproduce by hand
             # and was the one thing never printed.
-            print(f"  $ {' '.join(full_cmd)}")
+            print(f"  $ {shlex.join(full_cmd)}")
             pipeline_rc = _run_child(
                 full_cmd,
                 cwd=edps_cwd,

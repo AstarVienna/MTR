@@ -7,7 +7,7 @@ seam and so a future user-configurable Settings tab has one place to hook.
 Resolution order (highest first):
   1. METIS_DATA_DIR — relocate the whole tree
   2. Per-asset env vars (METIS_PIPELINE_DIR, METIS_SIMULATIONS_DIR, METIS_INST_PKGS)
-  3. platformdirs default (~/.local/share/metis-test-runner on Linux)
+  3. platformdirs default (~/.local/share/metis-test-runner on Linux and macOS)
 
 A repo set via METIS_PIPELINE_DIR / METIS_SIMULATIONS_DIR is the user's own
 checkout: MTR never clones, updates or deletes it (see user_owned_repos()).
@@ -16,16 +16,51 @@ checkout: MTR never clones, updates or deletes it (see user_owned_repos()).
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 from pathlib import Path
 
 from platformdirs import user_data_dir
+from platformdirs.unix import Unix
+
+APP_NAME = "metis-test-runner"
+
+_legacy_warned = False
+
+
+def legacy_macos_data_dir() -> Path:
+    """MTR's former macOS default, which EDPS cannot use: it contains a space."""
+    return Path.home() / "Library" / "Application Support" / APP_NAME
+
+
+def _default_data_dir() -> Path:
+    # macOS's own default (~/Library/Application Support) contains a space, and
+    # EDPS cannot handle whitespace in its input paths, so use the XDG location.
+    if sys.platform == "darwin":
+        return Path(Unix(APP_NAME).user_data_dir)
+    return Path(user_data_dir(APP_NAME))
+
+
+def _warn_legacy_data_dir(d: Path) -> None:
+    global _legacy_warned
+    legacy = legacy_macos_data_dir()
+    if _legacy_warned or sys.platform != "darwin" or not legacy.is_dir() or legacy == d:
+        return
+    _legacy_warned = True
+    print(
+        f"Note: MTR now keeps its data in {d} instead of {legacy}, because EDPS "
+        "cannot handle the space in that path. Run Install again, then delete "
+        "the old folder.",
+        file=sys.stderr,
+    )
 
 
 def data_dir() -> Path:
     """Top-level user data directory. Created on first call."""
     override = os.environ.get("METIS_DATA_DIR")
-    d = Path(override) if override else Path(user_data_dir("metis-test-runner"))
+    d = Path(override) if override else _default_data_dir()
+    if not override:
+        _warn_legacy_data_dir(d)
     d.mkdir(parents=True, exist_ok=True)
     return d
 
