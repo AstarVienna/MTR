@@ -3044,6 +3044,7 @@ class MainWindow(QMainWindow):
         if update.install_kind() == "editable":
             return  # QSettings is per user, so a dev copy would skew a pipx install's history
         settings = QSettings("METIS", "TestRunner")
+        settings.setFallbacksEnabled(False)  # macOS's allKeys() includes system-wide keys
         news = update.whats_new(
             settings.value("last_seen_version"),
             has_history=bool(settings.allKeys()),
