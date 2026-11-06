@@ -2029,6 +2029,8 @@ class RunTab(WorkerHost, QWidget):
         self._process: QProcess | None = None
         self._stopping = False
         self._decoders = {"stdout": StreamDecoder(), "stderr": StreamDecoder()}
+        #: Task the data-flow window asked for; replaces the inferred EDPS target for one run
+        self._edps_target: str | None = None
         # One timer, stopped when the run finishes, so a late SIGKILL can
         # never hit the next run.
         self._kill_timer = QTimer(self)
@@ -2487,10 +2489,24 @@ class RunTab(WorkerHost, QWidget):
             # sim/pipeline flags above.
             args.append("--csv-to-yaml")
 
+        if self._edps_target:
+            args += ["--edps-target", self._edps_target]
+
         for i in range(self.input_list.count()):
             args.append(self.input_list.item(i).text())
 
         return args
+
+    def run_task(self, task: str) -> None:
+        """Run the current input with EDPS targeting *task* (from the data-flow window)."""
+        if not self.run_btn.isEnabled():
+            QMessageBox.warning(self, "Run in progress", "Wait for the current run to finish.")
+            return
+        self._edps_target = task
+        try:
+            self._run()
+        finally:
+            self._edps_target = None
 
     def _run(self) -> None:
         if self.reject_if_blocked("a pipeline run"):
@@ -2796,6 +2812,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._run_tab, "Run")
         tabs.addTab(self._install_tab, "Install")
         tabs.addTab(self._archive_tab, "Archive")
+        self._tabs = tabs
         for tab in (self._run_tab, self._install_tab, self._archive_tab):
             tab._jobs_blocking_hook = self._jobs_blocking
         if not _installation_complete():
@@ -2821,10 +2838,18 @@ class MainWindow(QMainWindow):
     def _show_flow(self) -> None:
         # Parentless, so it can sit beside or behind the main window; closeEvent closes it.
         if self._flow_window is None:
-            self._flow_window = FlowWindow(THEMES[self._current_theme], self._run_tab.flow_input)
+            self._flow_window = FlowWindow(
+                THEMES[self._current_theme], self._run_tab.flow_input, self._run_flow_task
+            )
         self._flow_window.show()
         self._flow_window.raise_()
         self._flow_window.activateWindow()
+
+    def _run_flow_task(self, task: str) -> None:
+        self._tabs.setCurrentWidget(self._run_tab)
+        self.raise_()
+        self.activateWindow()
+        self._run_tab.run_task(task)
 
     def _busy_jobs(self, tabs=None) -> list[str]:
         """Names of jobs still running in *tabs* (default: all), e.g. for the close confirmation."""

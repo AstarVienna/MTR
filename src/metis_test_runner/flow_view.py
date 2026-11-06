@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable
+from pathlib import Path
 
 from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer
 from PyQt6.QtGui import (
@@ -31,6 +32,7 @@ from PyQt6.QtWidgets import (
     QGraphicsView,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -254,6 +256,7 @@ class FlowWindow(QWidget):
         self,
         colors: dict[str, str],
         run_input: Callable[[], flow.RunInput] | None = None,
+        run_task: Callable[[str], None] | None = None,
         parent: QWidget | None = None,
     ):
         super().__init__(parent, Qt.WindowType.Window)
@@ -262,6 +265,7 @@ class FlowWindow(QWidget):
         self.colors = colors
         self.expanded: set[str] = set()
         self._run_input = run_input
+        self._run_task = run_task
         self._hover: str | None = None
         # Passing over nodes would flash their traces; show one only once the pointer rests
         # on it, but clear it as soon as the pointer leaves.
@@ -309,12 +313,17 @@ class FlowWindow(QWidget):
         self.fit_btn.clicked.connect(lambda: self.fit())
         one_btn = QPushButton("100%")
         one_btn.clicked.connect(self.view_actual_size)
+        self.run_task_btn = QPushButton("Run pinned task")
+        self.run_task_btn.setProperty("role", "success")
+        self.run_task_btn.clicked.connect(self.run_pinned_task)
+        self._update_run_task_btn()
 
         controls = QHBoxLayout()
         controls.addWidget(expand_btn)
         controls.addWidget(collapse_btn)
         controls.addWidget(self.overlay_cb)
         controls.addWidget(refresh_btn)
+        controls.addWidget(self.run_task_btn)
         controls.addStretch(1)
         controls.addWidget(self.fit_btn)
         controls.addWidget(one_btn)
@@ -389,6 +398,7 @@ class FlowWindow(QWidget):
         self._hover_timer.stop()
         if self._pinned not in self.flow.nodes:
             self._pinned = None
+        self._update_run_task_btn()
         if fit:
             self.set_auto_fit(True)
         self._draw(self.flow, spread=self._auto_fit)
@@ -399,7 +409,8 @@ class FlowWindow(QWidget):
         notes += self.flow.notes
         notes.append(
             "Wheel: zoom · drag: pan · Fit: back to the whole flow · "
-            "click a sub-workflow to show or hide its tasks · hover a node to trace it, click to pin."
+            "click a sub-workflow to show or hide its tasks · hover a node to trace it, click to pin · "
+            "pin a task and press Run pinned task to run it on the Run tab input."
         )
         self.status.setText("\n".join(notes))
         if self._auto_fit:
@@ -429,6 +440,34 @@ class FlowWindow(QWidget):
     def pin(self, node_id: str | None) -> None:
         self._pinned = None if node_id == self._pinned else node_id
         self._apply_focus()
+        self._update_run_task_btn()
+
+    def _pinned_task(self) -> str | None:
+        return self._pinned[5:] if self._pinned and self._pinned.startswith("task:") else None
+
+    def _update_run_task_btn(self) -> None:
+        task = self._pinned_task()
+        self.run_task_btn.setEnabled(task is not None and self._run_task is not None)
+        self.run_task_btn.setToolTip(
+            f"Run the Run tab input with EDPS targeting {task}" if task else "Click a task to pin it first"
+        )
+
+    def run_pinned_task(self) -> None:
+        """Run the pinned task on the Run tab input, or say why it cannot run."""
+        task = self._pinned_task()
+        if task is None or self._run_task is None or self._run_input is None:
+            return
+        run = self._run_input()
+        ok, reason, warnings = flow.task_check(task, run)
+        if not ok:
+            QMessageBox.warning(self, "Task cannot run", f"{task} cannot run on this input.\n\n{reason}")
+            return
+        inputs = run.files if run.simulate else run.fits_dirs
+        text = f"Run {task} on:\n" + "\n".join(f"  {Path(f).name}" for f in inputs)
+        if warnings:
+            text += "\n\n" + "\n".join(warnings)
+        if QMessageBox.question(self, "Run task", text) == QMessageBox.StandardButton.Yes:
+            self._run_task(task)
 
     # -- drawing --------------------------------------------------------------
 

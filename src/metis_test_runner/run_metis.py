@@ -1277,6 +1277,13 @@ def parse_args(argv=None):
         "where EDPS reads the container's own configuration.",
     )
     p.add_argument(
+        "--edps-target",
+        metavar="TASK",
+        action="append",
+        help="Run EDPS for this task instead of the target inferred from the "
+        "input (passed as -t TASK). May be given more than once.",
+    )
+    p.add_argument(
         "--version",
         action="version",
         version=f"%(prog)s {__version__}",
@@ -1745,15 +1752,22 @@ def main(argv=None):
             if not active_sub_workflows:
                 sys.exit("Error: could not identify any METIS sub-workflow from the simulated FITS headers.")
 
-        target_flags = infer_edps_targets_for_workflows(
-            data_tags,
-            has_science,
-            active_sub_workflows,
-        )
-        if target_flags:
-            print(f"  EDPS target     : {' '.join(target_flags)}")
+        if args.edps_target:
+            unknown = [t for t in args.edps_target if t not in tables.get().graph["tasks"]]
+            if unknown:
+                sys.exit(f"Error: unknown EDPS task(s): {', '.join(unknown)}")
+            target_flags = [flag for t in args.edps_target for flag in ("-t", t)]
+            print(f"  EDPS target     : {' '.join(target_flags)}  (chosen)")
         else:
-            print("  EDPS target     : (none inferred; EDPS will use workflow default)")
+            target_flags = infer_edps_targets_for_workflows(
+                data_tags,
+                has_science,
+                active_sub_workflows,
+            )
+            if target_flags:
+                print(f"  EDPS target     : {' '.join(target_flags)}")
+            else:
+                print("  EDPS target     : (none inferred; EDPS will use workflow default)")
 
         # fmt: off
         edps_port = read_edps_port()

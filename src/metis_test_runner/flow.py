@@ -200,6 +200,59 @@ def overlay_for(run: RunInput) -> Overlay:
     return Overlay(tags, flags, _running(flags, tags), {t for t, _ in missing}, notes, run.simulate)
 
 
+def _blocker(
+    task: str, present: set[str], fetchable: set[str], warnings: list[str], memo: dict[str, str | None]
+) -> str | None:
+    """Why *task* cannot run on *present*, or None; every task it takes input from must run too."""
+    if task in memo:
+        return memo[task]
+    memo[task] = None  # a cycle does not block
+    t = tables.get()
+    raw_tags = t.raw_tags()
+    reason = None
+    for origin, dst, role, tags in t.graph["inputs"]:
+        if dst != task:
+            continue
+        kind, name = origin.split(":", 1)
+        given = set(tags) <= present if role == "assoc" else set(tags) & present
+        if tags and given:
+            continue  # raw frames, or a parent's products, in the input
+        if kind == "source":
+            if not set(t.graph["sources"][name]) & raw_tags:
+                continue  # a static calibration
+            if role == "main":
+                reason = f"{task}: no {', '.join(tags)} in the input."
+                break
+            note = f"{task}: no {', '.join(tags)} in the input (may be optional)."
+        elif (why := _blocker(name, present, fetchable, warnings, memo)) is None:
+            continue
+        elif role == "assoc" and name in fetchable:
+            note = f"{task} relies on auto-fetch for the products of {name}."
+        else:
+            reason = f"{task} needs {', '.join(tags) or 'the products'} from {name}.\n{why}"
+            break
+        if note not in warnings:
+            warnings.append(note)
+    memo[task] = reason
+    return reason
+
+
+def task_check(task: str, run: RunInput) -> tuple[bool, str, list[str]]:
+    """Whether *run* with EDPS targeting *task* can execute it: (ok, reason, warnings)."""
+    if not run.pipeline:
+        return False, "The pipeline does not run (simulate only, or CSV to YAML).", []
+    if run.simulate and not any(Path(f).suffix.lower() in (".yaml", ".yml") for f in run.files):
+        if run.files:
+            return False, "CSV frames are only known after simulating: add a YAML input.", []
+        return False, "The Run tab has no input files.", []
+    ov = overlay_for(run)
+    if not ov.present:
+        return False, "\n".join(ov.notes) or "The input has no frames the pipeline knows.", []
+    warnings: list[str] = []
+    reason = _blocker(task, ov.present, ov.missing if run.auto_fetch else set(), warnings, {})
+    return reason is None, reason or "", warnings
+
+
 # ---------------------------------------------------------------------------
 # Graph and layout
 # ---------------------------------------------------------------------------

@@ -1320,6 +1320,14 @@ class TestGuiArgsParseAsCli:
         parsed = parse_args(self._tab(qapp)._build_cmd_args())
         assert parsed.input_files == ["a.yaml"]
 
+    def test_edps_target_round_trips(self, qapp):
+        from metis_test_runner.run_metis import parse_args
+
+        tab = self._tab(qapp)
+        assert "--edps-target" not in tab._build_cmd_args()
+        tab._edps_target = "metis_ifu_dark"
+        assert parse_args(tab._build_cmd_args()).edps_target == ["metis_ifu_dark"]
+
     def test_every_toggle_combination_round_trips(self, qapp):
         from metis_test_runner.run_metis import parse_args
 
@@ -1692,5 +1700,33 @@ class TestDataFlowWindow:
             flow_win.fit_btn.click()
             assert flow_win.fit_btn.isChecked()
             assert flow_win.view.transform().m11() == pytest.approx(big, rel=0.02)
+        finally:
+            win.close()
+
+    def test_run_pinned_task_runs_only_what_the_input_feeds(self, qapp, monkeypatch):
+        from PyQt6.QtWidgets import QMessageBox
+
+        win, flow_win = self._open(monkeypatch)
+        try:
+            examples = Path(gui.__file__).parent / "examples"
+            win._run_tab.input_list.clear()
+            win._run_tab.input_list.addItem(str(examples / "small_test.yaml"))
+            win._run_tab.rb_both.setChecked(True)
+            win._run_tab.csv_to_yaml_cb.setChecked(False)
+            runs = []
+            monkeypatch.setattr(win._run_tab, "_run", lambda: runs.append(win._run_tab._build_cmd_args()))
+            warned = []
+            monkeypatch.setattr(QMessageBox, "warning", lambda *a: warned.append(a[2]))
+            monkeypatch.setattr(QMessageBox, "question", lambda *a: QMessageBox.StandardButton.Yes)
+            assert not flow_win.run_task_btn.isEnabled()
+            flow_win.toggle_lane("metis.metis_ifu_wkf")
+            flow_win.pin("task:metis_ifu_rsrf")
+            assert flow_win.run_task_btn.isEnabled()
+            flow_win.run_task_btn.click()
+            assert runs == [] and "IFU_RSRF_RAW" in warned[0]
+            flow_win.pin("task:metis_ifu_lingain")
+            flow_win.run_task_btn.click()
+            assert runs[0][runs[0].index("--edps-target") + 1] == "metis_ifu_lingain"
+            assert win._run_tab._edps_target is None
         finally:
             win.close()

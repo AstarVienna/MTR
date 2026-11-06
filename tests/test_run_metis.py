@@ -10,6 +10,7 @@ Run with:
 """
 
 import argparse
+import contextlib
 import os
 import stat
 import subprocess
@@ -2259,3 +2260,38 @@ class TestMainCsvToYaml:
         assert (tmp_path / "seq.yaml").read_text() == "keep: me\n"
         assert not out.exists()
         assert not sliced[0].parent.parent.exists()  # the scratch dir is removed
+
+
+class TestEdpsTargetFlag:
+    """--edps-target replaces the inferred EDPS target (the data-flow window's Run pinned task)."""
+
+    def _edps_cmd(self, tmp_path, monkeypatch, *extra):
+        monkeypatch.setattr(rm, "hardlink_mismatch", lambda pipe_out: None)
+        monkeypatch.setattr(rm, "_check_default_env", lambda runner: None)
+        monkeypatch.setattr(rm, "_require_astropy", lambda purpose: None)
+        monkeypatch.setattr(rm, "scan_fits_inputs", lambda d: ({"DARK_IFU_RAW"}, {"metis.metis_ifu_wkf"}))
+        monkeypatch.setattr(rm, "edps_session", lambda *a, **k: contextlib.nullcontext())
+        monkeypatch.setattr(rm, "has_products", lambda pipe_out: False)
+        calls = []
+        monkeypatch.setattr(rm, "_run_child", lambda cmd, **k: (calls.append(cmd), 0)[1])
+        (tmp_path / "fits").mkdir()
+        (tmp_path / "sims" / "metis_simulations").mkdir(parents=True)
+        argv = ["--runner", "native", "--simulations-dir", str(tmp_path / "sims"), "--no-sim", "--no-static"]
+        argv += extra
+        argv += ["--pipeline-input", str(tmp_path / "fits"), "-o", str(tmp_path / "o")]
+        main(argv)
+        return next(c for c in calls if "-w" in c)
+
+    def test_inferred_without_flag(self, tmp_path, monkeypatch):
+        cmd = self._edps_cmd(tmp_path, monkeypatch)
+        assert cmd[-2:] == ["-t", "metis_ifu_dark"]
+
+    def test_flag_replaces_inferred_target(self, tmp_path, monkeypatch):
+        cmd = self._edps_cmd(tmp_path, monkeypatch, "--edps-target", "metis_ifu_lingain")
+        assert cmd[-2:] == ["-t", "metis_ifu_lingain"]
+        assert "metis_ifu_dark" not in cmd
+
+    def test_unknown_task_exits(self, tmp_path, monkeypatch):
+        with pytest.raises(SystemExit) as exc:
+            self._edps_cmd(tmp_path, monkeypatch, "--edps-target", "no_such_task")
+        assert "no_such_task" in str(exc.value)

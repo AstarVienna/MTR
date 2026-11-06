@@ -141,3 +141,30 @@ class TestOverlay:
         assert o.notes == ["The Run tab has no pipeline input folders."]
         f = flow.build_flow(overlay=o)
         assert all(n.state == "idle" for n in f.nodes.values() if n.kind == "sim")
+
+
+class TestTaskCheck:
+    def _check(self, task, path, **kw):
+        return flow.task_check(task, flow.RunInput(files=[path], fits_dirs=[], **kw))
+
+    def test_small_test_feeds_lingain_and_dark(self):
+        path = str(EXAMPLES / "small_test.yaml")
+        assert self._check("metis_ifu_lingain", path) == (True, "", [])
+        assert self._check("metis_ifu_dark", path) == (True, "", [])
+        ok, reason, _ = self._check("metis_ifu_rsrf", path)
+        assert not ok and "IFU_RSRF_RAW" in reason
+
+    def test_task_after_an_unfed_one_is_blocked(self, dark_only):
+        ok, reason, _ = self._check("metis_ifu_dark", dark_only)
+        assert not ok
+        assert "metis_ifu_lingain" in reason and "DETLIN_IFU_RAW" in reason
+
+    def test_auto_fetch_can_stand_in_for_the_missing_master(self, dark_only):
+        ok, _, warnings = self._check("metis_ifu_dark", dark_only, auto_fetch=True)
+        assert ok
+        assert any("auto-fetch" in w and "metis_ifu_lingain" in w for w in warnings)
+
+    def test_nothing_runs_without_the_pipeline_or_yaml(self, dark_only):
+        assert not self._check("metis_ifu_dark", dark_only, pipeline=False)[0]
+        ok, reason, _ = self._check("metis_ifu_dark", "seq.csv")
+        assert not ok and "CSV" in reason
