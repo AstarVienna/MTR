@@ -1705,6 +1705,15 @@ class ArchiveTab(WorkerHost, QWidget):
     def _on_install_metiswise(self) -> None:
         if self._reject_if_busy() or self.reject_if_blocked("the MetisWISE install"):
             return
+        from .archive import pipeline_pymetis_installed
+
+        if not pipeline_pymetis_installed():
+            QMessageBox.warning(
+                self,
+                "Install the pipeline first",
+                "MetisWISE needs the pipeline's pymetis. Run Install on the Install tab first.",
+            )
+            return
         self._log.clear()
         self._install_btn.setEnabled(False)
         self._worker = self.track_worker(MetisWISEInstallWorker())

@@ -87,6 +87,28 @@ class TestMetisWISEAvailable:
             assert archive.metiswise_available() is False
 
 
+class TestPipelinePymetisInstalled:
+    @pytest.mark.parametrize(
+        ("direct_url", "expected"),
+        [
+            ('{"url": "file:///x", "dir_info": {"editable": true}}', True),
+            ('{"url": "file:///x", "dir_info": {}}', False),
+            (None, False),  # from an index, e.g. PyPI's graph-partitioning pymetis
+            ("not json", False),
+        ],
+    )
+    def test_only_an_editable_install_counts(self, direct_url, expected):
+        dist = MagicMock()
+        dist.read_text.return_value = direct_url
+        with patch.object(archive.metadata, "distribution", return_value=dist):
+            assert archive.pipeline_pymetis_installed() is expected
+
+    def test_not_installed(self):
+        missing = archive.metadata.PackageNotFoundError("pymetis")
+        with patch.object(archive.metadata, "distribution", side_effect=missing):
+            assert archive.pipeline_pymetis_installed() is False
+
+
 # ---------------------------------------------------------------------------
 # Install command
 # ---------------------------------------------------------------------------

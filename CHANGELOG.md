@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Action required
+- **macOS:** MTR's data folder moved to `~/.local/share/metis-test-runner`,
+  because EDPS cannot handle the space in `Application Support`. Run Install
+  again, then delete `~/Library/Application Support/metis-test-runner`.
+
 ### Added
 - **Data flow window** (toolbar button): a zoomable, pannable diagram from the
   simulations through the Pipeline's tasks to the archive, built from the EDPS

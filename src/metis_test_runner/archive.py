@@ -14,12 +14,14 @@ Thin client wrapper around the MetisWISE Python API.  Provides:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
 import sys
 import threading
 from collections.abc import Callable
+from importlib import metadata
 from pathlib import Path
 
 from . import credentials, paths, tables
@@ -46,6 +48,19 @@ def metiswise_available() -> bool:
 
         return True
     except ImportError:
+        return False
+
+
+def pipeline_pymetis_installed() -> bool:
+    """True if ``pymetis`` is the Install tab's editable clone.
+
+    Without it, pip satisfies metiswise's ``pymetis`` dependency with the
+    unrelated graph-partitioning package from PyPI.
+    """
+    try:
+        raw = metadata.distribution("pymetis").read_text("direct_url.json")
+        return bool(raw and json.loads(raw).get("dir_info", {}).get("editable"))
+    except (metadata.PackageNotFoundError, ValueError, AttributeError):
         return False
 
 

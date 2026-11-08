@@ -1295,6 +1295,23 @@ class TestArchiveTabBusyGuard:
         tab = self._tab(qapp, monkeypatch)
         assert tab._reject_if_busy() is False
 
+    @pytest.mark.parametrize("pymetis", [False, True])
+    def test_metiswise_install_needs_the_pipeline_pymetis(self, qapp, monkeypatch, pymetis):
+        from unittest.mock import MagicMock
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        tab = self._tab(qapp, monkeypatch)
+        monkeypatch.setattr("metis_test_runner.archive.pipeline_pymetis_installed", lambda: pymetis)
+        worker_cls = MagicMock()
+        monkeypatch.setattr(gui, "MetisWISEInstallWorker", worker_cls)
+        monkeypatch.setattr(tab, "track_worker", lambda w: w)
+        warned = []
+        monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a))
+        tab._on_install_metiswise()
+        assert bool(warned) is not pymetis
+        assert worker_cls.return_value.start.called is pymetis
+
 
 # ---------------------------------------------------------------------------
 # GUI argv <-> CLI parser contract
