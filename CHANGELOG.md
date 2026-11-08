@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 — 2026-11-08
 
 ### Action required
 - **macOS:** MTR's data folder moved to `~/.local/share/metis-test-runner`,
