@@ -173,7 +173,7 @@ sys.modules["scopesim"] = scopesim
 sys.modules["scopesim_templates"] = types.ModuleType("scopesim_templates")
 import metis_simulations
 wrapper = types.ModuleType("metis_simulations.scopesimWrapper")
-def simulate(fname, rcp, small=False, skip_psf=False, progID=None, subDir=None):
+def simulate(fname, rcp, small=False, skip_psf=False, progID=None, subDir=None, offsets=None):
     with open(log, "a") as fh:
         fh.write(json.dumps([str(fname), progID, subDir]) + "\\n")
 simulate.__module__ = wrapper.__name__  # picklable for Pool

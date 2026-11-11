@@ -23,6 +23,8 @@
   every theme (was about 2:1 except in pink). The Run tab's path and status
   lines are larger (12 px, was 10 px), and so is the Install tab's introduction.
   The output paths line shows its full paths in a tooltip.
+- **Bundled snapshot follows METIS_Pipeline `5653669`:** `metis_n_img_flat_twilight`
+  takes `N_FLAT_TWILIGHT_RAW` instead of `N_FLAT_LAMP_RAW`.
 
 ### Fixed
 - **Install failed for METIS_Simulations:** it now takes its version from Git
