@@ -173,7 +173,10 @@ class TestInstallKind:
     def test_uv_tool_is_other(self, prefix):
         (prefix / "uv-receipt.toml").write_text("")
         assert update.install_kind() == "other"
-        assert update.manual_command() == "uv tool upgrade metis-test-runner"
+        assert update.manual_command() == (
+            f"uv pip install --python {update.sys.executable} "
+            "--upgrade-package metis-test-runner metis-test-runner"
+        )
 
     def test_read_only_prefix_is_other(self, prefix, monkeypatch):
         monkeypatch.setattr(update.os, "access", lambda *a: False)

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- **`uv tool` installs:** the update prompt suggested `uv tool upgrade`, which
+  removes the pipeline from MTR's venv. It now gives a `uv pip install` command
+  that upgrades only MTR. If you already ran `uv tool upgrade`, run Install again.
+
 ## 0.8.0 — 2026-11-08
 
 ### Action required

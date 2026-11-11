@@ -204,7 +204,8 @@ def manual_command() -> str:
     if (prefix / "pipx_metadata.json").is_file():
         return f"pipx upgrade {prefix.name}"
     if (prefix / "uv-receipt.toml").is_file():
-        return f"uv tool upgrade {PACKAGE}"
+        # Not `uv tool upgrade`: it syncs the venv to the receipt, which wipes the pipeline.
+        return f"uv pip install --python {sys.executable} --upgrade-package {PACKAGE} {PACKAGE}"
     return f"{sys.executable} -m pip install --upgrade {PACKAGE}"
 
 
