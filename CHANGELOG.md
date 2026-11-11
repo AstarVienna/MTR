@@ -2,7 +2,32 @@
 
 ## Unreleased
 
+### Action required
+- **Run tab, `default` runner:** *Simulations dir* now applies only to the
+  `native`, `docker` and `podman` runners. If you used it with the `default`
+  runner, select that checkout under *Own METIS_Simulations* on the Install tab
+  instead, then click *Install / Update*.
+
+### Added
+- **Own checkouts on the Install tab:** *Own METIS_Pipeline* / *Own
+  METIS_Simulations* select a checkout you edit yourself, which MTR then never
+  updates or deletes. This is what `METIS_PIPELINE_DIR` / `METIS_SIMULATIONS_DIR`
+  did, and those still win. The choice is saved in `settings.json` in the data
+  directory, so `mtr-cli` and `mtr-exec` use it too. It applies without a restart.
+- **README links in error messages:** the "uncommitted changes" prompt and other
+  install, uninstall and run errors link to the README section that explains
+  them. The prompt also says how to keep local edits.
+
+### Changed
+- **Easier to read:** grey hint and placeholder text has at least 4.5:1 contrast in
+  every theme (was about 2:1 except in pink). The Run tab's path and status
+  lines are larger (12 px, was 10 px), and so is the Install tab's introduction.
+  The output paths line shows its full paths in a tooltip.
+
 ### Fixed
+- **Disabled buttons look disabled:** their style used `opacity`, which Qt
+  ignores, so they looked clickable. The Install tab's "currently:" lines
+  now line up with the version fields, and the ↻ symbol is larger.
 - **`uv tool` installs:** the update prompt suggested `uv tool upgrade`, which
   removes the pipeline from MTR's venv. It now gives a `uv pip install` command
   that upgrades only MTR. If you already ran `uv tool upgrade`, run Install again.

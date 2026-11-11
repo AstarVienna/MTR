@@ -67,7 +67,8 @@ mtr-uninstall                                 # same as Uninstall (--yes skips t
 
 Refs apply to that run only: omit them to go back to each default branch. A clone
 with local changes is confirmed interactively, or needs `--discard-changes` when
-not on a terminal. `mtr-install` needs `git`.
+not on a terminal. To keep local changes, use
+[your own checkout](#own-checkout) instead. `mtr-install` needs `git`.
 
 On ARM Linux (aarch64) MTR installs without the GUI, since the pinned PyQt6 has no
 build there, and `mtr-install` compiles `synphot` from source, which needs a C
@@ -95,6 +96,10 @@ output directory. Output streams into the log below with ANSI
 colouring stripped and stderr highlighted. Settings persist to `QSettings`, so
 the last configuration is two clicks away.
 
+*Simulations dir* is shown only for the `native`, `docker` and `podman` runners.
+The `default` runner uses the METIS_Simulations checkout set on the Install tab.
+
+<a id="install-tab"></a>
 ### Install tab
 
 <p align="center"><img src="https://raw.githubusercontent.com/AstarVienna/MTR/main/docs/images/mtr-install.png" alt="MTR Install tab" width="900"></p>
@@ -107,10 +112,11 @@ own venv, and initialises EDPS on port 4444.
 Re-running updates the clones in place rather than re-cloning, and out-of-band
 installs such as MetisWISE are preserved. *Uninstall* reverses all of it.
 
-Leave **Repository version (advanced)** blank to track each repository's default
-branch. Set it to install a specific branch, tag or commit instead — for people
-developing *on* those repositories. To use a checkout you already have instead,
-see [Using your own checkout](#using-your-own-metis_pipeline--metis_simulations-checkout).
+Under **Repositories (advanced)**, leave the version fields blank to track each repository's default
+branch. Set one to install a specific branch, tag or commit instead — for people
+developing *on* those repositories. To run against a checkout you edit yourself,
+select it under *Own METIS_Pipeline* / *Own METIS_Simulations*; see
+[Using your own checkout](#own-checkout).
 Pipeline refs older than 2025-11-29 are refused, since their pymetis declares
 no dependencies.
 
@@ -227,10 +233,11 @@ python -m venv ~/.venvs/mtr
 ~/.venvs/mtr/bin/mtr                 # or: source ~/.venvs/mtr/bin/activate && mtr
 ```
 
-On first launch, open the **Install** tab and click *Install / Update* to fetch the METIS_Pipeline, METIS_Simulations, and ESO pipeline dependencies into `~/.local/share/metis-test-runner/` (override with `METIS_DATA_DIR=/path`, or use your own checkouts — see [Using your own checkout](#using-your-own-metis_pipeline--metis_simulations-checkout)). All pipeline dependencies install into the same isolated venv that MTR itself lives in — they never leak into your system Python.
+On first launch, open the **Install** tab and click *Install / Update* to fetch the METIS_Pipeline, METIS_Simulations, and ESO pipeline dependencies into `~/.local/share/metis-test-runner/` (override with `METIS_DATA_DIR=/path`, or use your own checkouts — see [Using your own checkout](#own-checkout)). All pipeline dependencies install into the same isolated venv that MTR itself lives in — they never leak into your system Python.
 
 </details>
 
+<a id="system-dependencies"></a>
 <details>
 <summary><b>System dependencies (Qt6 libraries, per distro)</b></summary>
 
@@ -401,7 +408,7 @@ YAML and CSV inputs may be mixed in any combination.
 | `--no-pipeline` | off | Run simulation only; skip EDPS pipeline |
 | `--csv-to-yaml` | off | Dry run: translate CSV input(s) to YAML via METIS_Simulations (`testRun`+`writeYaml`) and stop — writes `<name>.yaml` next to each CSV, with no simulation and no pipeline. Only CSV inputs are affected. Refuses to run if the target YAML already exists. |
 | `--csv-lines START:END` | all rows | Restrict CSV inputs to a range of 1-based file lines (e.g. `6:12`, `6:` from line 6 to end, `:12` from start to line 12). The header block (column-name row + `component`/`description`/`type` rows) is always kept; MTR writes a sliced copy under `<output>/sliced_inputs/` and feeds that to the simulation. Applies to `.csv` inputs only; ignored with `--no-sim`. With `--csv-to-yaml`, the YAML is written next to the original CSV as `<name>_lines<START>-<END>.yaml` (open bounds become `1` / `end`). Also exposed in the GUI Run tab. |
-| `--simulations-dir PATH` | `<data dir>/METIS_Simulations` (host) or `/home/metis/METIS_Simulations` (container) | Path to ScopeSim scripts (env: `METIS_SIMULATIONS_DIR`) |
+| `--simulations-dir PATH` | `<data dir>/METIS_Simulations` or [your own checkout](#own-checkout) (host), `/home/metis/METIS_Simulations` (container) | Path to ScopeSim scripts (env: `METIS_SIMULATIONS_DIR`) |
 | `--inst-pkgs PATH` | see below | Path to ScopeSim instrument packages (Armazones, ELT, METIS). Defaults to the user data dir for the `default` runner, `./inst_pkgs` for `native`, and container-resolved `./inst_pkgs` for `docker`/`podman` (env: `METIS_INST_PKGS`) |
 | `--auto-fetch-calibrations` | off | Before running the pipeline, query the remote METIS archive (via MetisWISE) for any master calibrations the input set is missing and download them into the pipeline input directory. Requires MetisWISE to be installed and archive credentials stored via the Archive tab (OS keyring; a legacy `~/.awe/Environment.cfg` also works). |
 | `--prefer-masters` | off | Set EDPS `association_preference` to `master_per_quality_level` for this run, preferring master calibrations over reduced raw data. **Only useful when EDPS was configured outside MTR** — the Install tab already pins this value, so on a standard install the flag changes nothing. Ignored for `docker`/`podman`, where EDPS reads the container's own configuration. Not exposed in the GUI for the same reason. |
@@ -432,19 +439,34 @@ However you update, the next start shows what changed since the version you last
 used. Notes under `### Action required` in `CHANGELOG.md` come first, in a highlighted
 box; the release check rejects any other spelling of that heading.
 
+<a id="own-checkout"></a>
 ### Using your own METIS_Pipeline / METIS_Simulations checkout
 
-To run against a checkout you already have (e.g. one you develop on), set these
-variables wherever MTR runs — for *Install / Update* as well as every later
-`mtr` / `mtr-cli` / `mtr-exec` — e.g. in your shell profile:
+MTR keeps its own clones in the data directory up to date, so *Install / Update*
+offers to revert local edits made there. To change the pipeline or simulations
+code, clone the repository somewhere else and run MTR against that checkout:
+
+```bash
+git clone https://github.com/AstarVienna/METIS_Pipeline.git ~/src/METIS_Pipeline
+```
+
+**In the GUI:** on the Install tab, select it under *Own METIS_Pipeline* (or
+*Own METIS_Simulations*), then click *Install / Update*. *Clear* hands the
+repository back to MTR. The choice is saved in `settings.json` in the data
+directory, so `mtr-cli` and `mtr-exec` use it too.
+
+**Without the GUI** (e.g. over SSH), set these variables wherever MTR runs — for
+`mtr-install` as well as every later `mtr` / `mtr-cli` / `mtr-exec` — e.g. in
+your shell profile:
 
 ```bash
 export METIS_PIPELINE_DIR=~/src/METIS_Pipeline        # fish: set -gx METIS_PIPELINE_DIR ~/src/METIS_Pipeline
 export METIS_SIMULATIONS_DIR=~/src/METIS_Simulations  # fish: set -gx METIS_SIMULATIONS_DIR ~/src/METIS_Simulations
 ```
 
-Each variable is independent; set only one to let MTR manage the other repo.
-A repository set this way is **yours**, and MTR treats it as read-only:
+A variable overrides the Install tab's choice, which then cannot be changed in
+the GUI. Each repository is independent; set only one to let MTR manage the
+other. A repository set either way is **yours**, and MTR treats it as read-only:
 
 - The directory must already exist; *Install / Update* fails otherwise. It does
   not have to be a git repository.
@@ -453,7 +475,8 @@ A repository set this way is **yours**, and MTR treats it as read-only:
   disabled. It still pip-installs the checkout in editable mode and points EDPS's
   `workflow_dir` (and the runtime environment) at it.
 - *Uninstall* never deletes it, even if it lies inside the data directory. It
-  only removes the editable-install entries from MTR's venv.
+  only removes the editable-install entries from MTR's venv, and forgets the
+  Install tab's choice (`settings.json` is in the data directory).
 
 ### Examples
 
@@ -731,6 +754,21 @@ pipeline lives in that venv.
 </details>
 
 <details>
+<summary><b>Install / Update wants to revert my changes to METIS_Pipeline or METIS_Simulations</b></summary>
+
+**What goes wrong:** you edited MTR's own clone in the data directory, and
+*Install / Update* (or `mtr-install`) asks to revert the changes: it keeps that
+clone on the selected branch, tag or commit.
+
+**What to do:** answer *No* to keep the changes, then move them to
+[your own checkout](#own-checkout), which MTR never changes, e.g.
+`git -C <MTR's clone> diff > my.patch`, then `git apply my.patch` in your
+checkout. Running tests does not need *Install / Update* in between.
+
+</details>
+
+<a id="uninstall-refusing"></a>
+<details>
 <summary><b>Uninstall: "Refusing to remove …"</b></summary>
 
 **What goes wrong:** as a safety check, Uninstall never deletes `/`, your home
@@ -746,6 +784,7 @@ run the uninstall again. Re-running is safe: steps already done are skipped.
 
 </details>
 
+<a id="edps-hardlinks"></a>
 <details>
 <summary><b>"EDPS hardlinks its products … on different filesystems", or an empty output folder</b></summary>
 

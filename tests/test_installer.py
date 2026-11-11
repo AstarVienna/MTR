@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from metis_test_runner import installer
+from metis_test_runner import docs, installer, paths
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1751,12 +1751,12 @@ class TestInstallCliUserOwned:
         calls = []
         monkeypatch.setattr(installer, "_git", lambda args, **kw: calls.append(args) or _cp(""))
         assert installer.install_main(["--list-refs"]) == 0
-        assert "your own checkout (METIS_PIPELINE_DIR)" in capsys.readouterr().out
+        assert "your own checkout (set via METIS_PIPELINE_DIR)" in capsys.readouterr().out
         assert len(calls) == 1  # only METIS_Simulations is queried
 
     def test_uninstall_summary_names_kept_checkout(self, monkeypatch):
         monkeypatch.setattr(installer, "EXTERNAL", {Path("/x/own"): "METIS_PIPELINE_DIR"})
-        assert "/x/own (METIS_PIPELINE_DIR) is kept" in installer.uninstall_summary()
+        assert "/x/own (set via METIS_PIPELINE_DIR) is kept" in installer.uninstall_summary()
 
 
 class TestListRefs:
@@ -1820,3 +1820,33 @@ class TestConsoleLog:
         monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
         installer._console_log("ok\n", "green")
         assert capsys.readouterr().out == "ok\n"
+
+
+class TestOwnCheckoutHelpers:
+    def test_reload_paths_picks_up_the_install_tab(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("METIS_DATA_DIR", str(tmp_path))
+        try:
+            paths.save_repo_dir("simulations", tmp_path / "sims")
+            installer.reload_paths()
+            assert tmp_path / "sims" == installer.TARGET_B
+            assert {tmp_path / "sims": paths.INSTALL_TAB} == installer.EXTERNAL
+            assert installer.REPOS[1][3] == tmp_path / "sims"
+        finally:
+            monkeypatch.undo()
+            installer.reload_paths()
+
+    def test_checkout_problem(self, tmp_path):
+        assert "pyproject.toml" in installer.checkout_problem("pipeline", tmp_path)
+        (tmp_path / "pyproject.toml").write_text("")
+        assert installer.checkout_problem("simulations", tmp_path) is None
+
+    def test_discard_summary_says_how_to_keep_edits(self):
+        text = installer.discard_summary("METIS_Pipeline", Path("/x"), [" M a.py"])
+        assert "METIS_PIPELINE_DIR" in text and "Install tab" in text
+        assert docs.url("own-checkout") in text
+
+    def test_missing_install_tab_checkout_points_at_the_tab(self, tmp_path, monkeypatch):
+        own = tmp_path / "gone"
+        monkeypatch.setattr(installer, "EXTERNAL", {own: paths.INSTALL_TAB})
+        with pytest.raises(RuntimeError, match="Change or clear it on the Install tab"):
+            installer.Installer()._clone_or_update("url", own)

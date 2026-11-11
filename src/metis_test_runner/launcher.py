@@ -52,8 +52,10 @@ def main(argv: list[str] | None = None) -> None:
     except ImportError as exc:
         if not any(s in str(exc) for s in _MISSING_LIBRARY):
             raise
+        from .docs import see
+
         sys.exit(
             f"mtr: the GUI could not load Qt: {exc}\n"
-            f"Install Qt's system libraries (README → System dependencies). {_HEADLESS}"
+            f"Install Qt's system libraries. {see('system-dependencies')}\n{_HEADLESS}"
         )
     gui_main()

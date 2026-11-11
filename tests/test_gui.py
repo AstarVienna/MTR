@@ -391,10 +391,21 @@ class TestBuildCmdArgs:
 
     def test_simulations_dir_included_when_set(self, qapp):
         tab = self._tab_with_inputs(qapp, "obs.yaml")
+        tab.runner_combo.setCurrentText("native")
         tab.sim_dir_edit.setText("/data/sims")
         args = tab._build_cmd_args()
         assert "--simulations-dir" in args
         assert args[args.index("--simulations-dir") + 1] == "/data/sims"
+
+    def test_default_runner_uses_the_install_tab_simulations(self, qapp):
+        # The default runner's checkout is set on the Install tab; a stale
+        # per-run value must not override it.
+        tab = self._tab_with_inputs(qapp, "obs.yaml")
+        tab.runner_combo.setCurrentText("default")
+        tab.sim_dir_edit.setText("/data/sims")
+        assert "--simulations-dir" not in tab._build_cmd_args()
+        assert tab.sim_dir_row.isHidden() and not tab.sim_dir_row_default.isHidden()
+        assert str(gui.TARGET_B) in tab.sim_dir_info.text()
 
     def test_inst_pkgs_included_when_set(self, qapp):
         tab = self._tab_with_inputs(qapp, "obs.yaml")
@@ -1747,3 +1758,133 @@ class TestDataFlowWindow:
             assert win._run_tab._edps_target is None
         finally:
             win.close()
+
+
+@pytest.fixture
+def own_data(tmp_path, monkeypatch):
+    """A fresh data dir; gui/installer paths are re-resolved after the test."""
+    from metis_test_runner import paths
+
+    monkeypatch.setenv("METIS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv(paths.PIPELINE_ENV, raising=False)
+    monkeypatch.delenv(paths.SIMULATIONS_ENV, raising=False)
+    monkeypatch.setattr(gui, "_describe_head", lambda t: "main @ abc12345")
+    gui._reload_paths()
+    yield tmp_path
+    monkeypatch.undo()
+    gui._reload_paths()
+
+
+def _pipeline_checkout(root):
+    (root / "metisp" / "pymetis").mkdir(parents=True)
+    (root / "metisp" / "pymetis" / "pyproject.toml").write_text("")
+    (root / "metisp" / "pyrecipes").mkdir()
+    return root
+
+
+class TestInstallTabOwnCheckout:
+    def _tab(self, qapp, monkeypatch):
+        tab = _install_tab(qapp)
+        monkeypatch.setattr(tab, "_refresh_refs", lambda **k: None)  # no network
+        return tab
+
+    def test_selecting_a_checkout_applies_live(self, qapp, monkeypatch, own_data):
+        from metis_test_runner import installer, paths
+
+        own = _pipeline_checkout(own_data / "own")
+        tab = self._tab(qapp, monkeypatch)
+        changed = []
+        tab.checkouts_changed.connect(lambda: changed.append(1))
+        tab._set_checkout("pipeline_ref", str(own))
+        assert gui.TARGET_A == installer.TARGET_A == own
+        assert {own: paths.INSTALL_TAB} == gui.EXTERNAL
+        assert paths.load_repo_dirs() == {"pipeline": own}
+        assert not tab.ref_combos["pipeline_ref"].isEnabled()
+        assert "Install tab" in tab.ref_status["pipeline_ref"].text()
+        assert tab.checkout_edits["pipeline_ref"].text() == str(own)
+        assert not tab.checkout_note.isHidden() and changed == [1]
+
+    def test_clear_hands_the_repo_back(self, qapp, monkeypatch, own_data):
+        from metis_test_runner import paths
+
+        own = _pipeline_checkout(own_data / "own")
+        tab = self._tab(qapp, monkeypatch)
+        tab._set_checkout("pipeline_ref", str(own))
+        tab._set_checkout("pipeline_ref", "")
+        assert gui.EXTERNAL == {} and paths.load_repo_dirs() == {}
+        assert tab.ref_combos["pipeline_ref"].isEnabled()
+        assert tab.checkout_edits["pipeline_ref"].text() == ""
+
+    def test_invalid_checkout_is_refused(self, qapp, monkeypatch, own_data):
+        from PyQt6.QtWidgets import QMessageBox
+
+        from metis_test_runner import paths
+
+        (own_data / "empty").mkdir()
+        tab = self._tab(qapp, monkeypatch)
+        warned = []
+        monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a[2]))
+        tab._set_checkout("pipeline_ref", str(own_data / "empty"))
+        tab._set_checkout("simulations_ref", "relative/path")
+        assert len(warned) == 2 and "pyproject.toml" in warned[0]
+        assert paths.load_repo_dirs() == {} and gui.EXTERNAL == {}
+        assert tab.checkout_edits["pipeline_ref"].text() == ""
+
+    def test_env_var_locks_the_field(self, qapp, monkeypatch, own_data):
+        from metis_test_runner import paths
+
+        monkeypatch.setenv(paths.PIPELINE_ENV, str(own_data / "env"))
+        gui._reload_paths()
+        tab = self._tab(qapp, monkeypatch)
+        edit = tab.checkout_edits["pipeline_ref"]
+        assert edit.isReadOnly() and edit.text() == str(own_data / "env")
+        assert not any(b.isEnabled() for b in tab.checkout_buttons["pipeline_ref"])
+        tab._set_checkout("pipeline_ref", "")
+        assert paths.load_repo_dirs() == {}
+
+    def test_discard_dialog_links_to_the_readme(self, qapp, monkeypatch, own_data):
+        from PyQt6.QtWidgets import QMessageBox
+
+        from metis_test_runner import docs
+
+        tab = self._tab(qapp, monkeypatch)
+        _stub_worker(monkeypatch)
+        texts = []
+        monkeypatch.setattr(gui, "_dirty_files", lambda t: [" M x.py"] if t == gui.TARGET_A else [])
+        monkeypatch.setattr(
+            QMessageBox, "question", lambda *a, **k: (texts.append(a[2]), QMessageBox.StandardButton.No)[1]
+        )
+        tab._start()
+        assert f'<a href="{docs.url("own-checkout")}">' in texts[0]
+        assert "&nbsp;" not in texts[0] and " M x.py" in texts[0]
+
+    def test_late_ref_probe_keeps_reload_disabled(self, qapp, monkeypatch, own_data):
+        # A probe started before the switch must not re-enable ↻ when it ends.
+        own = _pipeline_checkout(own_data / "own")
+        tab = self._tab(qapp, monkeypatch)
+        tab._set_checkout("pipeline_ref", str(own))
+        tab._ref_worker_done("pipeline_ref")
+        assert not tab.ref_buttons["pipeline_ref"].isEnabled()
+        tab._ref_worker_done("simulations_ref")
+        assert tab.ref_buttons["simulations_ref"].isEnabled()
+
+
+def _contrast(a: str, b: str) -> float:
+    """WCAG contrast ratio of two #rrggbb colours."""
+
+    def lum(h: str) -> float:
+        rgb = [int(h.lstrip("#")[i : i + 2], 16) / 255 for i in (0, 2, 4)]
+        r, g, b = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in rgb]
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    hi, lo = sorted((lum(a), lum(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+@pytest.mark.parametrize("theme", gui.THEMES)
+def test_muted_text_is_readable(theme):
+    # WCAG AA asks 4.5:1 for normal text; hints and placeholders are read, not decoration.
+    t = gui.THEMES[theme]
+    for fg in ("log_gray", "placeholder"):
+        for bg in ("window", "base", "alt_base"):
+            assert _contrast(t[fg], t[bg]) >= 4.5, (fg, bg)

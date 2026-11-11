@@ -12,6 +12,7 @@ Three-tab graphical front-end:
 # PyQt6 stubs type most widget getters as Optional; they are never None here.
 # pyright: reportOptionalMemberAccess=false
 
+import html
 import os
 import re
 import shutil
@@ -67,7 +68,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from . import __version__, paths, update
+from . import __version__, docs, installer, paths, update
 from .env import ensurepip_command_if_needed, resolve_runtime_env
 from .flow import RunInput
 from .flow_view import FlowWindow
@@ -103,6 +104,24 @@ from .installer import (
 # inside methods pick up the patched value.
 
 INST_PKGS = paths.inst_pkgs_dir()
+
+
+def _reload_paths() -> None:
+    """Re-resolve the own-checkout settings, here and in installer.py."""
+    global TARGET_A, TARGET_B, EXTERNAL, REPOS
+    installer.reload_paths()
+    TARGET_A, TARGET_B = installer.TARGET_A, installer.TARGET_B
+    EXTERNAL, REPOS = installer.EXTERNAL, installer.REPOS
+
+
+_URL_RE = re.compile(r"https?://[^\s<>\"']+")
+
+
+def _linkify(text: str) -> str:
+    """Plain *text* as rich text with clickable URLs and its line breaks kept."""
+    linked = _URL_RE.sub(lambda m: f'<a href="{m[0]}">{m[0]}</a>', html.escape(text, quote=False))
+    return f'<p style="white-space:pre-wrap">{linked}</p>'
+
 
 LABEL_W = 280  # fixed label column width in the Run options form
 
@@ -160,7 +179,8 @@ THEMES: dict[str, dict[str, str]] = {
         "button_text":    "#E8EAF6",
         "highlight":      "#4A9EFF",
         "highlight_text": "#16203A",
-        "placeholder":    "#4A5568",
+        "placeholder":    "#8d99ae",
+        "disabled":       "#4A5568",   # disabled text stays dim
         "tooltip_base":   "#243046",
         "tooltip_text":   "#E8EAF6",
         "border":         "#3A4E6E",
@@ -177,7 +197,7 @@ THEMES: dict[str, dict[str, str]] = {
         "log_cyan":       "#94e2d5",
         "log_yellow":     "#f9e2af",
         "log_orange":     "#fab387",
-        "log_gray":       "#4A5568",
+        "log_gray":       "#8d99ae",
         "log_default":    "#E8EAF6",
     },
     "light": {
@@ -190,7 +210,8 @@ THEMES: dict[str, dict[str, str]] = {
         "button_text":    "#4c4f69",
         "highlight":      "#7287fd",   # Latte Lavender (pastel, replaces bold blue)
         "highlight_text": "#eff1f5",
-        "placeholder":    "#9ca0b0",
+        "placeholder":    "#5b6072",
+        "disabled":       "#9ca0b0",   # disabled text stays dim
         "tooltip_base":   "#ddd9f5",
         "tooltip_text":   "#4c4f69",
         "border":         "#bcc0cc",
@@ -207,7 +228,7 @@ THEMES: dict[str, dict[str, str]] = {
         "log_cyan":       "#179299",
         "log_yellow":     "#df8e1d",
         "log_orange":     "#fe640b",
-        "log_gray":       "#9ca0b0",
+        "log_gray":       "#5b6072",
         "log_default":    "#4c4f69",
     },
     "pink": {
@@ -220,7 +241,8 @@ THEMES: dict[str, dict[str, str]] = {
         "button_text":    "#f5d0fe",
         "highlight":      "#e879f9",
         "highlight_text": "#1e1228",
-        "placeholder":    "#9f6fb0",
+        "placeholder":    "#a87cb7",
+        "disabled":       "#9f6fb0",   # disabled text stays dim
         "tooltip_base":   "#3e2060",
         "tooltip_text":   "#f5d0fe",
         "border":         "#5b3070",
@@ -237,7 +259,7 @@ THEMES: dict[str, dict[str, str]] = {
         "log_cyan":       "#f5c2e7",
         "log_yellow":     "#f9e2af",
         "log_orange":     "#fab387",
-        "log_gray":       "#9f6fb0",
+        "log_gray":       "#a87cb7",
         "log_default":    "#f5d0fe",
     },
     "pink_light": {
@@ -250,7 +272,8 @@ THEMES: dict[str, dict[str, str]] = {
         "button_text":    "#5c3a4e",
         "highlight":      "#f06292",
         "highlight_text": "#fff4f9",
-        "placeholder":    "#c9a0b4",
+        "placeholder":    "#8c506d",
+        "disabled":       "#c9a0b4",   # disabled text stays dim
         "tooltip_base":   "#ffd7ee",
         "tooltip_text":   "#5c3a4e",
         "border":         "#e8b8d0",
@@ -267,7 +290,7 @@ THEMES: dict[str, dict[str, str]] = {
         "log_cyan":       "#00838f",
         "log_yellow":     "#f57f17",
         "log_orange":     "#e65100",
-        "log_gray":       "#c9a0b4",
+        "log_gray":       "#8c506d",
         "log_default":    "#5c3a4e",
     },
 }
@@ -305,9 +328,9 @@ def apply_theme(app: QApplication, name: str) -> None:
     # Rich text takes link colours from the application palette; Qt's default is unreadable on dark.
     pal.setColor(QPalette.ColorRole.Link,            c("accent"))
     pal.setColor(QPalette.ColorRole.LinkVisited,     c("accent"))
-    pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, c("placeholder"))
-    pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, c("placeholder"))
-    pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text,       c("placeholder"))
+    pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, c("disabled"))
+    pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, c("disabled"))
+    pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text,       c("disabled"))
     # fmt: on
     app.setPalette(pal)
 
@@ -330,7 +353,15 @@ def apply_theme(app: QApplication, name: str) -> None:
     i_hov = _shift(i_bg); a_hov = _shift(accent)
     a_fg           = t["highlight_text"]   # accent-role button uses highlight_text
     highlight_text = a_fg
+    dis_fg         = t["disabled"]
     # fmt: on
+
+    def faded(col: str) -> str:
+        """*col* 35 % of the way from the window colour: a disabled button's fill."""
+        a, b = QColor(col), QColor(win)
+        return QColor(
+            *(round(0.35 * x + 0.65 * y) for x, y in zip(a.getRgb()[:3], b.getRgb()[:3], strict=True))
+        ).name()
 
     app.setStyleSheet(f"""
         QGroupBox {{
@@ -381,7 +412,10 @@ def apply_theme(app: QApplication, name: str) -> None:
         }}
         QLabel[hint="true"] {{
             color: {log_gray};
-            font-size: 10px;
+            font-size: 12px;
+        }}
+        QLabel[intro="true"] {{
+            font-size: 14px;
         }}
         QLabel[hint="note"] {{
             color: {log_gray};
@@ -432,9 +466,6 @@ def apply_theme(app: QApplication, name: str) -> None:
             min-height: 24px;
             font-weight: 500;
         }}
-        QPushButton:disabled {{
-            opacity: 0.45;
-        }}
         QPushButton[role="success"] {{
             background-color: {s_bg}; color: {s_fg};
         }}
@@ -467,6 +498,27 @@ def apply_theme(app: QApplication, name: str) -> None:
         QPushButton[role="browse"]:hover {{
             border-color: {accent};
             background-color: {alt};
+        }}
+        /* After the role rules, which would otherwise win. Qt stylesheets
+           ignore `opacity`, so each role gets an explicitly faded look. */
+        QPushButton[role="success"]:disabled {{
+            background-color: {faded(s_bg)}; color: {dis_fg};
+        }}
+        QPushButton[role="danger"]:disabled {{
+            background-color: {faded(d_bg)}; color: {dis_fg};
+        }}
+        QPushButton[role="info"]:disabled {{
+            background-color: {faded(i_bg)}; color: {dis_fg};
+        }}
+        QPushButton[role="accent"]:disabled {{
+            background-color: {faded(accent)}; color: {dis_fg};
+        }}
+        QPushButton[role="browse"]:disabled {{
+            border-color: {brd}; color: {dis_fg};
+        }}
+        QPushButton[symbol="true"] {{
+            font-size: 20px;
+            padding: 0 8px;
         }}
     """)
 
@@ -731,10 +783,14 @@ class RefWorker(QThread):
 
 
 class InstallTab(WorkerHost, QWidget):
-    # (settings key, label, repo URL, clone target): installer.REPOS (the
-    # module global — this attribute is not bound yet) under the QSettings
-    # keys the tab has always used.
-    REPOS = tuple((f"{key}_ref", label, url, target) for key, label, url, target in REPOS)
+    # Emitted after an own checkout was set or cleared (paths already reloaded).
+    checkouts_changed = pyqtSignal()
+
+    @property
+    def REPOS(self) -> tuple:
+        """(settings key, label, repo URL, clone target): REPOS under the QSettings
+        keys the tab has always used. Read on each use: _reload_paths rebinds it."""
+        return tuple((f"{key}_ref", label, url, target) for key, label, url, target in REPOS)
 
     def __init__(self) -> None:
         super().__init__()
@@ -781,12 +837,16 @@ class InstallTab(WorkerHost, QWidget):
             "<li>Initialise and configure EDPS on port 4444</li>"
             "</ol>"
             "Leave the version fields blank and re-running is safe — existing "
-            "repositories are fast-forwarded, not re-cloned. A repository set via "
-            "<code>METIS_PIPELINE_DIR</code> / <code>METIS_SIMULATIONS_DIR</code> "
-            "is your own checkout: it is used as-is and never updated or deleted."
+            "repositories are fast-forwarded, not re-cloned. To work on a repository "
+            "yourself, select your own checkout below (or set "
+            "<code>METIS_PIPELINE_DIR</code> / <code>METIS_SIMULATIONS_DIR</code>): "
+            "it is used as-is and never updated or deleted. "
+            f'<a href="{docs.url("own-checkout")}">More in the README</a>.'
         )
         desc.setWordWrap(True)
         desc.setTextFormat(Qt.TextFormat.RichText)
+        desc.setOpenExternalLinks(True)
+        desc.setProperty("intro", "true")
         layout.addWidget(desc)
 
         layout.addWidget(self._build_version_group())
@@ -816,14 +876,15 @@ class InstallTab(WorkerHost, QWidget):
         layout.addWidget(self.log_view, stretch=1)
 
     def _build_version_group(self) -> QGroupBox:
-        grp = QGroupBox("Repository version (advanced)")
+        grp = QGroupBox("Repositories (advanced)")
         lay = QVBoxLayout(grp)
 
         hint = QLabel(
             "Leave blank to track each repository's default branch. Developers "
             "can pick a branch or tag from the list, or paste a full "
             "40-character commit SHA. An existing clone is <b>overwritten</b> "
-            "with the selection."
+            "with the selection — to keep local edits, select your own "
+            "checkout instead, then click <i>Install / Update</i>."
         )
         hint.setWordWrap(True)
         hint.setTextFormat(Qt.TextFormat.RichText)
@@ -833,6 +894,8 @@ class InstallTab(WorkerHost, QWidget):
         self.ref_combos: dict[str, RefComboBox] = {}
         self.ref_status: dict[str, QLabel] = {}
         self.ref_buttons: dict[str, QPushButton] = {}
+        self.checkout_edits: dict[str, QLineEdit] = {}
+        self.checkout_buttons: dict[str, tuple[QPushButton, QPushButton]] = {}
 
         for key, label, _url, target in self.REPOS:
             combo = RefComboBox()
@@ -841,6 +904,7 @@ class InstallTab(WorkerHost, QWidget):
 
             btn = QPushButton("↻")
             btn.setProperty("role", "info")
+            btn.setProperty("symbol", "true")
             btn.setToolTip("Reload branches and tags")
             btn.setMaximumWidth(40)
             btn.clicked.connect(lambda _checked=False, k=key: self._reload(k))
@@ -852,18 +916,113 @@ class InstallTab(WorkerHost, QWidget):
 
             status = QLabel("currently: …")
             status.setProperty("hint", "true")
-            status.setIndent(LABEL_W)
             self.ref_status[key] = status
-            lay.addWidget(status)
+            # Same row layout as the combo above, so the text starts at its edge.
+            lay.addWidget(_labeled("", status))
 
-            if target in EXTERNAL:
-                # The user's own checkout: MTR never runs git there.
-                combo.setEnabled(False)
-                btn.setEnabled(False)
-                combo.setToolTip(f"Set via {EXTERNAL[target]} — MTR does not change this checkout.")
-                status.setText(self._external_status(target))
+            edit = QLineEdit()
+            edit.setPlaceholderText(f"none — MTR manages {REPO_ROOT / label}")
+            edit.editingFinished.connect(lambda k=key: self._set_checkout(k, self.checkout_edits[k].text()))
+            self.checkout_edits[key] = edit
+            browse = QPushButton("Browse…")
+            browse.setProperty("role", "browse")
+            browse.clicked.connect(lambda _checked=False, k=key: self._browse_checkout(k))
+            clear = QPushButton("Clear")
+            clear.setProperty("role", "browse")
+            clear.setToolTip("Let MTR manage this repository again")
+            clear.clicked.connect(lambda _checked=False, k=key: self._set_checkout(k, ""))
+            self.checkout_buttons[key] = (browse, clear)
+            lay.addWidget(_labeled(f"Own {label}:", edit, browse, clear))
+
+            self._apply_repo_state(key, target)
+
+        self.checkout_note = QLabel("Click <i>Install / Update</i> to install from the changed checkout.")
+        self.checkout_note.setTextFormat(Qt.TextFormat.RichText)
+        self.checkout_note.setProperty("hint", "note")
+        self.checkout_note.hide()
+        lay.addWidget(self.checkout_note)
 
         return grp
+
+    # ── own checkouts ────────────────────────────────────────────────────────
+
+    def _apply_repo_state(self, key: str, target: Path) -> None:
+        """Sync one repo's widgets with whether *target* is the user's own checkout."""
+        combo, btn, edit = self.ref_combos[key], self.ref_buttons[key], self.checkout_edits[key]
+        env = paths.REPO_ENV[key.removesuffix("_ref")]
+        own = target in EXTERNAL
+        # The user's own checkout: MTR never runs git there.
+        combo.setEnabled(not own)
+        btn.setEnabled(not own)
+        combo.setToolTip(f"Set via {EXTERNAL[target]} — MTR does not change this checkout." if own else "")
+        edit.setText(str(target) if own else "")
+        by_env = bool(os.environ.get(env))
+        edit.setReadOnly(by_env)
+        for b in self.checkout_buttons[key]:
+            b.setEnabled(not by_env)
+        edit.setToolTip(
+            f"Set via {env}, which overrides this field."
+            if by_env
+            else "A checkout you manage yourself: MTR installs from it but never runs git in it "
+            "or deletes it. Empty: MTR clones and updates the repository itself."
+        )
+        if own:
+            self.ref_status[key].setText(self._external_status(target))
+
+    def _browse_checkout(self, key: str) -> None:
+        label = next(lbl for k, lbl, _u, _t in self.REPOS if k == key)
+        start = self.checkout_edits[key].text().strip() or str(Path.home())
+        chosen = QFileDialog.getExistingDirectory(self, f"Select your own {label} checkout", start)
+        if chosen:
+            self._set_checkout(key, chosen)
+
+    def _set_checkout(self, key: str, text: str) -> None:
+        """Make *text* repo *key*'s own checkout ("" = let MTR manage it), if valid."""
+        repo = key.removesuffix("_ref")
+        label = next(lbl for k, lbl, _u, _t in self.REPOS if k == key)
+        saved = paths.load_repo_dirs().get(repo)
+        new = Path(text.strip()).expanduser() if text.strip() else None
+        # Show what is in effect until the change is accepted, so a refused
+        # change never lingers in the field (and editingFinished re-fires harmlessly).
+        self._apply_repo_state(key, self._target(key))
+        if os.environ.get(paths.REPO_ENV[repo]) or new == saved:
+            return
+        if self.busy():
+            QMessageBox.information(self, "Install running", "Wait for the install or uninstall to finish.")
+            return
+        if self.reject_if_blocked("changing a checkout"):
+            return
+        if new is not None:
+            problem = (
+                f"{new} is not an existing directory (use an absolute path)."
+                if not new.is_absolute() or not new.is_dir()
+                else installer.checkout_problem(repo, new)
+            )
+            if problem:
+                QMessageBox.warning(
+                    self,
+                    "Not a checkout",
+                    f"{new} cannot be used as your own {label} checkout: {problem}.",
+                )
+                return
+        try:
+            paths.save_repo_dir(repo, new)
+        except OSError as exc:
+            QMessageBox.warning(self, "Could not save", f"Could not save the checkout setting: {exc}")
+            return
+        _reload_paths()
+        for k, _label, _url, target in self.REPOS:
+            self._apply_repo_state(k, target)
+        if new is None:
+            # Back to the managed clone: its head and refs were never shown.
+            self._refs_loaded.discard(key)
+            self._refresh_status_labels()
+            self._refresh_refs(only_missing=True)
+        self.checkout_note.show()
+        self.checkouts_changed.emit()
+
+    def _target(self, key: str) -> Path:
+        return next(t for k, _l, _u, t in self.REPOS if k == key)
 
     # ── ref discovery ────────────────────────────────────────────────────────
 
@@ -893,9 +1052,12 @@ class InstallTab(WorkerHost, QWidget):
 
     def _ref_worker_done(self, key: str) -> None:
         self._ref_workers.pop(key, None)
-        self.ref_buttons[key].setEnabled(True)
+        # Stays off if the repo became an own checkout while the probe ran.
+        self.ref_buttons[key].setEnabled(self._target(key) not in EXTERNAL)
 
     def _on_ref_status(self, key: str, text: str) -> None:
+        if self._target(key) in EXTERNAL:
+            return  # switched to an own checkout while the probe ran
         self.ref_status[key].setText(f"currently: {text}")
 
     def _on_refs(self, key: str, items: list) -> None:
@@ -926,7 +1088,7 @@ class InstallTab(WorkerHost, QWidget):
 
     @staticmethod
     def _external_status(target: Path) -> str:
-        return f"your own checkout ({EXTERNAL[target]}), not managed by MTR: {_describe_head(target)}"
+        return f"your own checkout (set via {EXTERNAL[target]}), not managed by MTR: {_describe_head(target)}"
 
     def _refresh_status_labels(self) -> None:
         for key, _label, _url, target in self.REPOS:
@@ -1014,7 +1176,7 @@ class InstallTab(WorkerHost, QWidget):
                 QMessageBox.question(
                     self,
                     "Discard local changes?",
-                    discard_summary(label, target, entries),
+                    _linkify(discard_summary(label, target, entries)),
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                     QMessageBox.StandardButton.No,
                 )
@@ -1054,6 +1216,13 @@ class InstallTab(WorkerHost, QWidget):
             for key, _label, _url, _target in self.REPOS:
                 self.ref_combos[key].setCurrentText("")
                 self._settings.remove(f"install/{key}")
+            # The own-checkout settings lived in the deleted data directory.
+            _reload_paths()
+            for key, _label, _url, target in self.REPOS:
+                self._apply_repo_state(key, target)
+            self.checkouts_changed.emit()
+        if success:
+            self.checkout_note.hide()
         # HEAD just moved (or the clones vanished), so the labels are stale.
         self._refresh_status_labels()
 
@@ -2285,11 +2454,17 @@ class RunTab(WorkerHost, QWidget):
         # Connect runner signal now that container_row exists
         self.runner_combo.currentTextChanged.connect(self._update_runner_fields)
 
-        # Simulations dir  [always visible]
+        # Simulations dir  [native / docker / podman only]. The default runner
+        # uses the Install tab's checkout, so it shows that instead: one place
+        # to set it, rather than a per-run field competing with a permanent one.
         self.sim_dir_edit = QLineEdit()
         sim_browse = _dir_picker(self.sim_dir_edit, self)
-        self.sim_dir_edit.setPlaceholderText(str(TARGET_B))
-        opts_lay.addWidget(_labeled("Simulations dir  (--simulations-dir):", self.sim_dir_edit, sim_browse))
+        self.sim_dir_row = _labeled("Simulations dir  (--simulations-dir):", self.sim_dir_edit, sim_browse)
+        opts_lay.addWidget(self.sim_dir_row)
+        self.sim_dir_info = QLabel()
+        self.sim_dir_info.setProperty("hint", "true")
+        self.sim_dir_row_default = _labeled("Simulations dir  (Install tab):", self.sim_dir_info)
+        opts_lay.addWidget(self.sim_dir_row_default)
 
         # Instrument packages  [always visible]
         self.inst_edit = QLineEdit()
@@ -2347,15 +2522,15 @@ class RunTab(WorkerHost, QWidget):
         if self.rb_pipe_only.isChecked():
             dirs = [self.pipeline_input_list.item(i).text() for i in range(self.pipeline_input_list.count())]
             pipe_in_str = ", ".join(dirs) if dirs else f"{root / 'sim'}/"
-            self.output_info.setText(
-                f"Pipeline input \u2192 {pipe_in_str}   \u00b7   Pipeline products \u2192 {pipe_out}/"
-            )
+            lines = [f"Pipeline input \u2192 {pipe_in_str}", f"Pipeline products \u2192 {pipe_out}/"]
         elif self.rb_sim_only.isChecked():
-            self.output_info.setText(f"Simulations \u2192 {root / 'sim'}/")
+            lines = [f"Simulations \u2192 {root / 'sim'}/"]
         else:
-            self.output_info.setText(
-                f"Simulations \u2192 {root / 'sim'}/   \u00b7   Pipeline products \u2192 {pipe_out}/"
-            )
+            lines = [f"Simulations \u2192 {root / 'sim'}/", f"Pipeline products \u2192 {pipe_out}/"]
+        # One line keeps the Run tab within the default 900 px window; long
+        # paths are cut off at the right edge, so the tooltip shows them in full.
+        self.output_info.setText("   \u00b7   ".join(lines))
+        self.output_info.setToolTip("\n".join(lines))
 
     # ── Mode-dependent field visibility ──────────────────────────────────────
 
@@ -2384,12 +2559,18 @@ class RunTab(WorkerHost, QWidget):
 
     def _update_runner_fields(self) -> None:
         runner = self.runner_combo.currentText()
-        self.container_row.setVisible(runner in ("docker", "podman"))
-        if runner in ("docker", "podman"):
+        container = runner in ("docker", "podman")
+        self.container_row.setVisible(container)
+        if container:
             ph = "(resolved inside container)"
         else:
             ph = str(REPO_ROOT / "inst_pkgs")
         self.inst_edit.setPlaceholderText(ph)
+        self.sim_dir_row.setVisible(runner != "default")
+        self.sim_dir_row_default.setVisible(runner == "default")
+        self.sim_dir_edit.setPlaceholderText("/home/metis/METIS_Simulations" if container else str(TARGET_B))
+        self.sim_dir_info.setText(str(TARGET_B))
+        self.sim_dir_info.setToolTip("The default runner uses this checkout. Change it on the Install tab.")
 
     # ── Input list (YAML / CSV) ──────────────────────────────────────────────
 
@@ -2489,7 +2670,8 @@ class RunTab(WorkerHost, QWidget):
         args += ["--runner", runner]
         if runner in ("docker", "podman") and self.container_edit.text().strip():
             args += ["--container", self.container_edit.text().strip()]
-        if self.sim_dir_edit.text().strip():
+        # The default runner uses the Install tab's checkout (see _update_runner_fields).
+        if runner != "default" and self.sim_dir_edit.text().strip():
             args += ["--simulations-dir", self.sim_dir_edit.text().strip()]
         if self.inst_edit.text().strip():
             args += ["--inst-pkgs", self.inst_edit.text().strip()]
@@ -2936,6 +3118,7 @@ class MainWindow(QMainWindow):
         self._tabs = tabs
         for tab in (self._run_tab, self._install_tab, self._archive_tab):
             tab._jobs_blocking_hook = self._jobs_blocking
+        self._install_tab.checkouts_changed.connect(self._run_tab._update_runner_fields)
         if not _installation_complete():
             tabs.setCurrentIndex(1)  # Install tab
         self.setCentralWidget(tabs)

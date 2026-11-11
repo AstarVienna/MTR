@@ -56,7 +56,7 @@ from pathlib import Path
 
 import yaml
 
-from . import __version__, paths, tables
+from . import __version__, docs, paths, tables
 from .env import resolve_runtime_env
 
 # Recognised input file extensions
@@ -158,7 +158,8 @@ def hardlink_mismatch(pipe_out: Path) -> str | None:
         f"EDPS hardlinks its products from {base_dir} into {pipe_out} (mode=link "
         f"in {props}), but they are on different filesystems, so the output "
         "folder would stay empty. Use an output folder on the same filesystem "
-        "(-o DIR or METIS_OUTPUT_DIR), or set mode=copy or mode=symlink in that file."
+        "(-o DIR or METIS_OUTPUT_DIR), or set mode=copy or mode=symlink in that file. "
+        f"{docs.see('edps-hardlinks')}"
     )
 
 
@@ -761,7 +762,8 @@ def _check_default_env(runner):
         return
     if not paths.pipeline_present():
         raise FileNotFoundError(
-            f"{paths.pipeline_dir()} not found — run the Install tab in the MTR GUI, or set METIS_PIPELINE_DIR"
+            f"{paths.pipeline_dir()} not found — run the Install tab in the MTR GUI, or set METIS_PIPELINE_DIR. "
+            f"{docs.see('install-tab')}"
         )
 
 
@@ -1379,7 +1381,8 @@ def main(argv=None):
     if runner == "default" and not paths.pipeline_present():
         sys.exit(
             f"Error: {paths.pipeline_dir()} not found.\n"
-            "Run the Install tab in the MTR GUI (or set METIS_PIPELINE_DIR) before invoking the default runner."
+            "Run the Install tab in the MTR GUI (or set METIS_PIPELINE_DIR) before invoking the default runner.\n"
+            f"{docs.see('install-tab')}"
         )
 
     # Locate METIS_Simulations
@@ -1396,7 +1399,8 @@ def main(argv=None):
         if not (sims_root / "metis_simulations").is_dir():
             sys.exit(
                 f"Error: METIS_Simulations not found at {sims_root}\n"
-                "Pass --simulations-dir if it is installed elsewhere."
+                "Pass --simulations-dir if it is installed elsewhere.\n"
+                f"{docs.see('own-checkout')}"
             )
 
     # Collect data tags and the set of sub-workflows implied by the YAML

@@ -24,7 +24,7 @@ import traceback
 from collections.abc import Callable
 from pathlib import Path
 
-from . import __version__, paths
+from . import __version__, docs, paths
 from .env import ensurepip_command_if_needed, resolve_runtime_env
 from .indexes import ESO_INDEX, PYCPL_INDEX
 
@@ -44,7 +44,7 @@ TARGET_A    = paths.pipeline_dir()
 TARGET_B    = paths.simulations_dir()
 REPO_A_URL  = "https://github.com/AstarVienna/METIS_Pipeline.git"
 REPO_B_URL  = "https://github.com/AstarVienna/METIS_Simulations.git"
-# Targets set via METIS_PIPELINE_DIR / METIS_SIMULATIONS_DIR → that env var.
+# Own checkouts (env var or Install tab, see paths.user_owned_repos) → where set.
 # The user's own checkouts: never cloned, updated or deleted by MTR.
 EXTERNAL    = paths.user_owned_repos()
 # fmt: on
@@ -54,6 +54,33 @@ REPOS = (
     ("pipeline", "METIS_Pipeline", REPO_A_URL, TARGET_A),
     ("simulations", "METIS_Simulations", REPO_B_URL, TARGET_B),
 )
+
+# Files a checkout must contain, relative to its root, per repo key. Missing
+# ones mean an old ref, or a directory that is not that repository.
+REQUIRED_FILES = {
+    "pipeline": ("metisp/pymetis/pyproject.toml", "metisp/pyrecipes"),
+    "simulations": ("pyproject.toml",),
+}
+
+
+def reload_paths() -> None:
+    """Re-resolve the repo aliases above, e.g. after the Install tab changed a checkout."""
+    global TARGET_A, TARGET_B, EXTERNAL, REPOS
+    TARGET_A = paths.pipeline_dir()
+    TARGET_B = paths.simulations_dir()
+    EXTERNAL = paths.user_owned_repos()
+    REPOS = (
+        ("pipeline", "METIS_Pipeline", REPO_A_URL, TARGET_A),
+        ("simulations", "METIS_Simulations", REPO_B_URL, TARGET_B),
+    )
+
+
+def checkout_problem(key: str, target: Path) -> str | None:
+    """Why *target* is not a usable checkout of repo *key*, or None."""
+    for rel in REQUIRED_FILES[key]:
+        if not (target / rel).exists():
+            return f"{target / rel} does not exist"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -96,17 +123,19 @@ def _assert_safe_to_remove(target: Path) -> None:
     """
     resolved = target.resolve()
     if resolved.is_symlink() or not resolved.is_dir():
-        raise RuntimeError(f"Refusing to remove {resolved}: not a real directory")
+        raise RuntimeError(
+            f"Refusing to remove {resolved}: not a real directory. {docs.see('uninstall-refusing')}"
+        )
     home = Path.home().resolve()
     if resolved in {Path("/"), home, *home.parents} or len(resolved.parts) < 3:
         raise RuntimeError(
             f"Refusing to remove {resolved}: this does not look like an MTR "
-            "data directory. Check METIS_DATA_DIR."
+            f"data directory. Check METIS_DATA_DIR. {docs.see('uninstall-refusing')}"
         )
     if resolved == Path.cwd().resolve():
         raise RuntimeError(
             f"Refusing to remove {resolved}: it is the current working directory. "
-            "Run the uninstall from another directory."
+            f"Run the uninstall from another directory. {docs.see('uninstall-refusing')}"
         )
 
 
@@ -593,12 +622,11 @@ class Installer:
         if target in EXTERNAL:
             if not target.is_dir():
                 raise RuntimeError(
-                    f"{target} (set via {EXTERNAL[target]}) does not exist. Point "
-                    f"{EXTERNAL[target]} at an existing checkout, or unset it to "
-                    f"let MTR clone the repository."
+                    f"{target} (set via {EXTERNAL[target]}) does not exist. "
+                    f"{paths.change_hint(EXTERNAL[target])}. {docs.see('own-checkout')}"
                 )
             self._log(
-                f"Using your own checkout at {target} ({EXTERNAL[target]}) — not cloned or updated.\n",
+                f"Using your own checkout at {target} (set via {EXTERNAL[target]}) — not cloned or updated.\n",
                 "yellow",
             )
             return
@@ -714,7 +742,8 @@ class Installer:
             raise RuntimeError(
                 f"'git pull --ff-only' failed in {target} (see above). If you "
                 f"have local commits, push or drop them; if you have local "
-                f"edits, re-run the install and confirm the reset when asked."
+                f"edits, re-run the install and confirm the reset when asked. "
+                f"To keep them, use your own checkout instead. {docs.see('own-checkout')}"
             )
         self._make_room(target, force)
         self._run(["git", "-C", str(target), "pull", "--ff-only"])
@@ -726,7 +755,8 @@ class Installer:
         if not force:
             raise RuntimeError(
                 f"{target} has uncommitted changes and the reset was not "
-                f"confirmed. Re-run the install and confirm when asked."
+                f"confirmed. Re-run the install and confirm when asked, or use "
+                f"your own checkout to keep them. {docs.see('own-checkout')}"
             )
         self._run(["git", "-C", str(target), "reset", "--hard"])
         # No -x: gitignored build artefacts, simulation *.fits output and
@@ -844,18 +874,17 @@ class Installer:
         worse — silently yields a pipeline with zero recipes because
         PYCPL_RECIPE_DIR points at a directory that does not exist.
         """
-        for needed in (
-            TARGET_A / "metisp" / "pymetis" / "pyproject.toml",
-            TARGET_A / "metisp" / "pyrecipes",
-            TARGET_B / "pyproject.toml",
-        ):
-            if not needed.exists():
-                owner = next((t for t in EXTERNAL if t in needed.parents), None)
-                if owner is not None:
+        for key, target in (("pipeline", TARGET_A), ("simulations", TARGET_B)):
+            for rel in REQUIRED_FILES[key]:
+                needed = target / rel
+                if needed.exists():
+                    continue
+                if target in EXTERNAL:
                     raise RuntimeError(
-                        f"{needed} does not exist: {owner} (set via "
-                        f"{EXTERNAL[owner]}) does not look like a current checkout "
-                        f"of that repository."
+                        f"{needed} does not exist: {target} (set via "
+                        f"{EXTERNAL[target]}) does not look like a current checkout "
+                        f"of that repository. {paths.change_hint(EXTERNAL[target])}. "
+                        f"{docs.see('own-checkout')}"
                     )
                 raise RuntimeError(
                     f"{needed} does not exist at the selected ref. That ref "
@@ -1102,7 +1131,7 @@ class Uninstaller:
     def _remove_data_dir(self) -> bool:
         """Delete the whole user data dir, sparing user-owned checkouts.
 
-        A checkout set via METIS_PIPELINE_DIR / METIS_SIMULATIONS_DIR is never
+        A user-owned checkout (env var or Install tab) is never
         removed. If one lies inside the data dir, only the data dir's other
         entries are deleted.
 
@@ -1110,7 +1139,7 @@ class Uninstaller:
         """
         ok = True
         for kept, var in EXTERNAL.items():
-            self._log(f"Keeping your own checkout {kept} ({var}).\n", "yellow")
+            self._log(f"Keeping your own checkout {kept} (set via {var}).\n", "yellow")
         root = REPO_ROOT.resolve() if REPO_ROOT.exists() else REPO_ROOT
         inside = [t.resolve() for t in EXTERNAL if t.exists()]
         inside = [t for t in inside if t == root or root in t.parents]
@@ -1243,13 +1272,24 @@ def discard_summary(label: str, target: Path, entries: list) -> str:
         "Ignored build artefacts (__pycache__, build/, *.fits, inst_pkgs/) "
         "are kept.\n"
         "These changes are discarded only if the checkout has to move.\n\n"
+        f"{own_checkout_hint(label)}\n\n"
         "Continue?"
     )
     return "\n".join(parts)
 
 
+def own_checkout_hint(label: str) -> str:
+    """How to keep local edits to repo *label*: run MTR against your own checkout."""
+    key = next(k for k, lbl, _url, _target in REPOS if lbl == label)
+    return (
+        f"To keep local edits, clone {label} elsewhere and select it as your own "
+        f"checkout on the Install tab (or set {paths.REPO_ENV[key]}); MTR never "
+        f"changes your own checkout.\n{docs.see('own-checkout')}"
+    )
+
+
 def uninstall_summary() -> str:
-    kept = "".join(f"\nYour own checkout {t} ({var}) is kept." for t, var in EXTERNAL.items())
+    kept = "".join(f"\nYour own checkout {t} (set via {var}) is kept." for t, var in EXTERNAL.items())
     return (
         "This will permanently:\n"
         "• pip-uninstall all pipeline and MetisWISE packages\n"
@@ -1318,7 +1358,8 @@ def _collect_force(discard_changes: bool) -> set[Path] | None:
             if not _interactive():
                 print(
                     f"mtr-install: {label} ({target}) has uncommitted changes. Commit or stash "
-                    f"them, or re-run with --discard-changes to discard them.",
+                    f"them, or re-run with --discard-changes to discard them.\n"
+                    f"{own_checkout_hint(label)}",
                     file=sys.stderr,
                 )
                 return None
@@ -1333,7 +1374,7 @@ def _list_refs() -> int:
         print(f"{label}  ({target})")
         print(f"  currently: {_describe_head(target)}")
         if target in EXTERNAL:
-            print(f"  your own checkout ({EXTERNAL[target]}) — not managed by MTR")
+            print(f"  your own checkout (set via {EXTERNAL[target]}) — not managed by MTR")
             continue
         try:
             refs = remote_refs(url)
@@ -1398,7 +1439,7 @@ def _install(argv: list[str] | None) -> int:
     for key, _label, _url, target in REPOS:
         if refs[target] and target in EXTERNAL:
             p.error(
-                f"--{key}-ref cannot be used with {EXTERNAL[target]}: MTR does not change your own checkout."
+                f"--{key}-ref cannot be used with your own checkout (set via {EXTERNAL[target]}): MTR does not change it."
             )
     force = _collect_force(args.discard_changes)
     if force is None:
