@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.1 — 2026-11-11
 
 ### Action required
 - **Run tab, `default` runner:** *Simulations dir* now applies only to the
