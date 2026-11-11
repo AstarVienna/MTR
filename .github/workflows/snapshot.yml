@@ -4,7 +4,7 @@ name: Refresh upstream snapshot
 # snapshot, so drift is reviewed promptly instead of failing a release.
 on:
   schedule:
-    - cron: "0 4 * * *"
+    - cron: "0 4 * * 1,4"  # Mondays and Thursdays
   workflow_dispatch:
 
 permissions:

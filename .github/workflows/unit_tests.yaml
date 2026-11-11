@@ -153,9 +153,12 @@ jobs:
   # routing, and bundles Simulations input files. Check them against the
   # current upstream main branches; the mocked suite above cannot. Also gates
   # releases: `push` above is main-only, so a tag ref means publish.yml called us.
+  # Also runs on snapshot.yml's PRs, which exist to change that snapshot.
   upstream-contract:
     name: Upstream contract (METIS_Pipeline / METIS_Simulations main, pinned irdb)
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    if: >-
+      github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/') || github.head_ref == 'automation/upstream-snapshot'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
