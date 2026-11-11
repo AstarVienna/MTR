@@ -1,0 +1,98 @@
+name: Refresh upstream snapshot
+
+# Opens (or updates) a PR when METIS_Pipeline's workflows drift from the bundled
+# snapshot, so drift is reviewed promptly instead of failing a release.
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: snapshot-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Regenerate and open a PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BRANCH: automation/upstream-snapshot
+      SNAPSHOT: src/metis_test_runner/upstream_snapshot.json
+    steps:
+      # Needs secret SNAPSHOT_PR_TOKEN (a personal access token), whose PRs also
+      # trigger the tests. Without it, GITHUB_TOKEN can only open the PR if an
+      # admin enabled "Allow GitHub Actions to create and approve pull
+      # requests", and its PRs run no CI.
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.SNAPSHOT_PR_TOKEN || github.token }}
+
+      - uses: actions/checkout@v7
+        with:
+          repository: AstarVienna/METIS_Pipeline
+          path: upstream/METIS_Pipeline
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install MTR
+        run: pip install -e .
+
+      - name: Read the pinned irdb release
+        id: irdb
+        run: python -c "from metis_test_runner.run_metis import IRDB_RELEASES as r; print(f'tag=METIS.{r[\"METIS\"]}')" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        with:
+          repository: AstarVienna/irdb
+          ref: ${{ steps.irdb.outputs.tag }}
+          path: upstream/irdb
+          sparse-checkout: METIS
+
+      - name: Compare with the bundled snapshot
+        id: check
+        run: |
+          # --check ignores pipeline_commit, so a mere upstream commit opens no PR.
+          if python -m metis_test_runner.upstream --check upstream/METIS_Pipeline upstream/irdb 2> drift.txt; then
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+          else
+            cat drift.txt
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update the PR
+        if: steps.check.outputs.drift == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.SNAPSHOT_PR_TOKEN || github.token }}
+        run: |
+          python -m metis_test_runner.upstream upstream/METIS_Pipeline upstream/irdb
+          commit=$(python -c "import json; print(json.load(open('$SNAPSHOT'))['pipeline_commit'])")
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$BRANCH"
+          git add "$SNAPSHOT"
+          git commit -m "Refresh upstream snapshot (METIS_Pipeline $commit)"
+          git push --force origin "$BRANCH"
+          {
+            echo "METIS_Pipeline \`$commit\` changed the workflow tables MTR bundles for the"
+            echo "\`docker\` / \`podman\` runners:"
+            echo
+            grep 'differs from upstream' drift.txt | sed 's/^.*: \(.*\) differs.*/- `\1`/'
+            echo
+            echo "Review the diff before merging: a change here can change which task MTR"
+            echo "sends data to. Add a CHANGELOG entry (\"Bundled snapshot follows …\")."
+          } > body.md
+          if [ -n "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+            gh pr edit "$BRANCH" --body-file body.md
+          else
+            gh pr create --head "$BRANCH" --base main \
+              --title "Refresh upstream snapshot (METIS_Pipeline $commit)" --body-file body.md
+          fi
