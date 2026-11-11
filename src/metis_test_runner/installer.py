@@ -521,14 +521,17 @@ class Installer:
         """Run every step; return True on success. Failures are logged, not raised."""
         try:
             self._step(f"Cloning / updating METIS_Pipeline  →  {TARGET_A}")
-            # pymetis derives its version from Git tags and refuses to build in
-            # a shallow clone, so unlike METIS_Simulations this needs history.
+            # pymetis and (since METIS_Simulations c0ae153) metis_simulations
+            # derive their version from Git tags and refuse to build in a
+            # shallow clone, so both need history.
             self._clone_or_update(
                 REPO_A_URL, TARGET_A, self._refs.get(TARGET_A, ""), TARGET_A in self._force, full_history=True
             )
 
             self._step(f"Cloning / updating METIS_Simulations  →  {TARGET_B}")
-            self._clone_or_update(REPO_B_URL, TARGET_B, self._refs.get(TARGET_B, ""), TARGET_B in self._force)
+            self._clone_or_update(
+                REPO_B_URL, TARGET_B, self._refs.get(TARGET_B, ""), TARGET_B in self._force, full_history=True
+            )
 
             self._check_layout()
 

@@ -1235,7 +1235,8 @@ class TestCloneOrUpdateBlankRef:
         w._clone_or_update(URL, target, full_history=True)
         assert invoked == []
 
-    def test_run_requests_full_history_for_the_pipeline_only(self, monkeypatch):
+    def test_run_requests_full_history_for_both_clones(self, monkeypatch):
+        # pymetis and metis_simulations both derive their version from Git tags.
         calls = []
 
         def clone(_url, target, _ref="", _force=False, *, full_history=False):
@@ -1246,7 +1247,7 @@ class TestCloneOrUpdateBlankRef:
         w = _worker()
         monkeypatch.setattr(w, "_clone_or_update", clone)
         assert w.run() is False
-        assert calls == [(installer.TARGET_A, True), (installer.TARGET_B, False)]
+        assert calls == [(installer.TARGET_A, True), (installer.TARGET_B, True)]
 
     def test_branch_checkout_fast_forwards_without_resetting(self, tmp_path, monkeypatch):
         w = _worker()

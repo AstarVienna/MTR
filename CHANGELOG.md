@@ -25,6 +25,9 @@
   The output paths line shows its full paths in a tooltip.
 
 ### Fixed
+- **Install failed for METIS_Simulations:** it now takes its version from Git
+  tags and refuses to build from a shallow clone, so MTR clones it with full
+  history, like METIS_Pipeline. An existing clone is deepened on the next Install.
 - **Disabled buttons look disabled:** their style used `opacity`, which Qt
   ignores, so they looked clickable. The Install tab's "currently:" lines
   now line up with the version fields, and the ↻ symbol is larger.
