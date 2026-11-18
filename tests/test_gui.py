@@ -128,7 +128,7 @@ class TestWindowConstruction:
         assert win is not None
         win.close()
 
-    def test_window_has_three_tabs(self, qapp):
+    def test_window_has_four_tabs(self, qapp):
         from PyQt6.QtWidgets import QTabWidget
 
         from metis_test_runner.gui import MainWindow
@@ -136,7 +136,7 @@ class TestWindowConstruction:
         win = MainWindow()
         tabs = win.findChild(QTabWidget)
         assert tabs is not None
-        assert tabs.count() == 3
+        assert tabs.count() == 4
         win.close()
 
     def test_tab_labels(self, qapp):
@@ -150,6 +150,7 @@ class TestWindowConstruction:
         assert "Install" in labels
         assert "Run" in labels
         assert "Archive" in labels
+        assert "Reports" in labels
         win.close()
 
 

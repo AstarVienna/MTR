@@ -56,7 +56,7 @@ from pathlib import Path
 
 import yaml
 
-from . import __version__, docs, paths, tables
+from . import __version__, docs, paths, reports, tables
 from .env import resolve_runtime_env
 
 # Recognised input file extensions
@@ -180,6 +180,23 @@ def report_products(pipe_out: Path, runner: str) -> None:
     else:
         hint = f"Check EDPS's log ({pipe_out / 'edps.log'}) for errors."
     print(f"\nWarning: EDPS finished, but {pipe_out} holds no products. {hint}", file=sys.stderr)
+
+
+def index_reports(args, runner: str, output_root: Path, pipe_out: Path) -> None:
+    """Record which EDPS jobs (and so which ADARI reports) belong to this run, for the GUI."""
+    if args.report_type == "none" or runner not in ("default", "native"):
+        return
+    cfg = _read_edps_config()
+    if cfg is None:
+        return
+    roots = [output_root] + [Path(d).resolve() for d in (args.pipeline_input or [])]
+    try:
+        jobs = reports.write_index(output_root, _edps_base_dir(cfg, pipe_out), roots)
+    except OSError as exc:
+        print(f"  Warning: could not index the ADARI reports: {exc}", file=sys.stderr)
+        return
+    found = sum(len(r.panels) for job in jobs for r in reports.job_reports(job))
+    print(f"  ADARI reports: {found} image(s) from {len(jobs)} job(s); see the Reports tab")
 
 
 def read_edps_port(default: int = 5000) -> int:
@@ -1279,6 +1296,13 @@ def parse_args(argv=None):
         "where EDPS reads the container's own configuration.",
     )
     p.add_argument(
+        "--report-type",
+        choices=["all", "reduced", "raw", "none"],
+        default="all",
+        help="Which ADARI reports EDPS generates (passed as -rt): 'raw' for recipe inputs, "
+        "'reduced' for products, 'all' for both, 'none' to skip them (default: %(default)s)",
+    )
+    p.add_argument(
         "--edps-target",
         metavar="TASK",
         action="append",
@@ -1816,6 +1840,8 @@ def main(argv=None):
                 + [
                     "-o",
                     str(pipe_out),
+                    "-rt",
+                    args.report_type,
                 ]
                 + target_flags
             )
@@ -1827,6 +1853,8 @@ def main(argv=None):
                 cwd=edps_cwd,
                 env=edps_env,
             )
+        # Also after a failure: the reports of the jobs that ran help to find out why.
+        index_reports(args, runner, output_root, pipe_out)
         if pipeline_rc != 0:
             sys.exit(f"Error: pipeline step failed (exit code {pipeline_rc}).")
 

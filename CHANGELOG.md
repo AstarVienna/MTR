@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **ADARI reports:** EDPS now makes the pipeline's QC report images for every
+  task (`--report-type`, default `all`: raw inputs and products). The new
+  *Reports* tab shows a run's images where EDPS left them; right-click a task in
+  the *Data flow* window to see just its reports. The `default` runner sets
+  `ADARI_REPORTS_DIR` to the pipeline checkout's reports; with `native`, set it
+  yourself.
+
 ## 0.8.1 — 2026-11-11
 
 ### Action required

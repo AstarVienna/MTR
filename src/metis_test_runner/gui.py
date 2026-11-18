@@ -92,6 +92,7 @@ from .installer import (
     strip_ansi,
     uninstall_summary,
 )
+from .reports_view import ReportsDialog, ReportsTab
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -2208,6 +2209,9 @@ class RunTab(WorkerHost, QWidget):
     #: SIGKILL: stopping its children takes up to 3 s and `edps -s` up to 15 s.
     STOP_GRACE_MS = 20_000
 
+    #: Output root of a finished run (whatever its exit code), for the Reports tab
+    run_finished = pyqtSignal(str)
+
     def __init__(self) -> None:
         super().__init__()
         self._process: QProcess | None = None
@@ -2834,6 +2838,9 @@ class RunTab(WorkerHost, QWidget):
         else:
             log_append(self.log_view, f"\n✗ Exited with code {exit_code}.\n", "red")
         self._stopping = False
+        m = re.search(r"^Output root\s*: (.+)$", self.log_view.toPlainText(), re.MULTILINE)
+        if m:
+            self.run_finished.emit(m.group(1).strip())
 
     # ── Open output folder ───────────────────────────────────────────────────
 
@@ -3112,9 +3119,12 @@ class MainWindow(QMainWindow):
         self._run_tab = RunTab()
         self._archive_tab = ArchiveTab()
         self._install_tab = InstallTab()
+        self._reports_tab = ReportsTab(lambda: REPO_ROOT / "output")
         tabs.addTab(self._run_tab, "Run")
         tabs.addTab(self._install_tab, "Install")
         tabs.addTab(self._archive_tab, "Archive")
+        tabs.addTab(self._reports_tab, "Reports")
+        self._run_tab.run_finished.connect(lambda root: self._reports_tab.show_run(Path(root)))
         self._tabs = tabs
         for tab in (self._run_tab, self._install_tab, self._archive_tab):
             tab._jobs_blocking_hook = self._jobs_blocking
@@ -3143,11 +3153,24 @@ class MainWindow(QMainWindow):
         # Parentless, so it can sit beside or behind the main window; closeEvent closes it.
         if self._flow_window is None:
             self._flow_window = FlowWindow(
-                THEMES[self._current_theme], self._run_tab.flow_input, self._run_flow_task
+                THEMES[self._current_theme],
+                self._run_tab.flow_input,
+                self._run_flow_task,
+                self._show_task_reports,
             )
         self._flow_window.show()
         self._flow_window.raise_()
         self._flow_window.activateWindow()
+
+    def _show_task_reports(self, task: str) -> None:
+        """Open *task*'s reports from the Reports tab's selected run (the newest by default)."""
+        if self._reports_tab.current_run() is None:
+            self._reports_tab.show_run()
+        run = self._reports_tab.current_run()
+        # A parent keeps the dialog alive (WA_DeleteOnClose frees it).
+        dialog = ReportsDialog(task, run, self._reports_tab.reports_for(task), self._flow_window or self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.show()
 
     def _run_flow_task(self, task: str) -> None:
         self._tabs.setCurrentWidget(self._run_tab)
