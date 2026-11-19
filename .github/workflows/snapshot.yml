@@ -91,7 +91,8 @@ jobs:
             echo "sends data to. Add a CHANGELOG entry (\"Bundled snapshot follows …\")."
           } > body.md
           if [ -n "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
-            gh pr edit "$BRANCH" --body-file body.md
+            gh pr edit "$BRANCH" --body-file body.md \
+              --title "Refresh upstream snapshot (METIS_Pipeline $commit)"
           else
             gh pr create --head "$BRANCH" --base main \
               --title "Refresh upstream snapshot (METIS_Pipeline $commit)" --body-file body.md
