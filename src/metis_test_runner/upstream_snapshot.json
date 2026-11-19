@@ -1,5 +1,5 @@
 {
- "pipeline_commit": "5653669e",
+ "pipeline_commit": "134c9bf5",
  "irdb_release": "2026-09-23",
  "dpr_to_tag": [
   [
@@ -350,11 +350,6 @@
     "science"
    ],
    [
-    "metis_lm_img_basic_reduce_sky",
-    "LM_IMAGE_SKY_RAW",
-    "science"
-   ],
-   [
     "metis_lm_img_basic_reduce_std",
     "LM_IMAGE_STD_RAW",
     "science"
@@ -473,11 +468,6 @@
    [
     "metis_lm_img_basic_reduce_sci",
     "LM_IMAGE_SCI_RAW",
-    "science"
-   ],
-   [
-    "metis_lm_img_basic_reduce_sky",
-    "LM_IMAGE_SKY_RAW",
     "science"
    ],
    [
@@ -1808,27 +1798,11 @@
     ]
    ],
    [
-    "task:metis_lm_img_basic_reduce_sky",
-    "metis_lm_img_background_sci",
-    "assoc",
-    [
-     "LM_SKY_BASIC_REDUCED"
-    ]
-   ],
-   [
     "task:metis_lm_img_basic_reduce_std",
     "metis_lm_img_background_std",
     "main",
     [
      "LM_STD_BASIC_REDUCED"
-    ]
-   ],
-   [
-    "task:metis_lm_img_basic_reduce_sky",
-    "metis_lm_img_background_std",
-    "assoc",
-    [
-     "LM_SKY_BASIC_REDUCED"
     ]
    ],
    [

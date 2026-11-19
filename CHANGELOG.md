@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- **Bundled snapshot follows METIS_Pipeline `134c9bf`:** `metis_lm_img_background_sci`
+  / `_std` no longer take `LM_SKY_BASIC_REDUCED` from `metis_lm_img_basic_reduce_sky`.
+
 ## 0.8.1 — 2026-11-11
 
 ### Action required
