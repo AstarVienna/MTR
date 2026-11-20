@@ -8,7 +8,8 @@
   *Reports* tab shows a run's images where EDPS left them; right-click a task in
   the *Data flow* window to see just its reports. The `default` runner sets
   `ADARI_REPORTS_DIR` to the pipeline checkout's reports; with `native`, set it
-  yourself.
+  yourself. Needs a METIS_Pipeline that defines ADARI reports (not yet on its
+  `main`); until then the tab stays empty and runs are unaffected.
 
 ## 0.8.1 — 2026-11-11
 
