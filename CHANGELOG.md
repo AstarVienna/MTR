@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 — 2026-11-20
 
 ### Added
 - **ADARI reports:** EDPS now makes the pipeline's QC report images for every
