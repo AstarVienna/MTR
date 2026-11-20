@@ -103,7 +103,7 @@ class _NodeItem(QGraphicsItem):
                 3.0 if state == "target" else 1.5,
             )
         if state == "missing":
-            return _color(c, "btn_danger_bg"), _color(c, "btn_danger_bg"), _color(c, "btn_danger_fg"), 1.5
+            return _color(c, "btn_danger_bg"), _color(c, "btn_danger_fg"), _color(c, "btn_danger_fg"), 2.0
         fill, border = {
             "sim": ("accent_dim", "accent"),
             "static": ("alt_base", "log_orange"),
@@ -114,14 +114,17 @@ class _NodeItem(QGraphicsItem):
         }[kind]
         text = _color(c, "highlight_text" if kind == "archive" else "window_text")
         if state == "present":
-            return _color(c, fill), _color(c, "log_green"), text, 2.5
+            return _color(c, fill), _color(c, "log_green"), text, 1.5
         return _color(c, fill), _color(c, border), text, 1.8 if kind == "group" else 1.2
 
     def paint(self, painter, option, widget=None) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
         fill, border, text, width = self._style()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # State shows in the border shape too, not only its colour (colour-blind users).
         pen = QPen(border, width)
-        if self.node.kind == "static":
+        if self.node.state == "missing":
+            pen.setStyle(Qt.PenStyle.DotLine)
+        elif self.node.kind == "static":
             pen.setStyle(Qt.PenStyle.DashLine)
         painter.setPen(pen)
         lines = self.node.label.split("\n")
@@ -131,6 +134,7 @@ class _NodeItem(QGraphicsItem):
             fill.setAlpha(90)
             painter.setBrush(fill)
             painter.drawRoundedRect(self.boundingRect().adjusted(1, 1, -1, -1), 8, 8)
+            self._paint_inner_ring(painter, 8)
             painter.setPen(text)
             painter.setFont(self._window.small_bold_font)
             header = QRectF(PAD - 6, -SIM_HEAD + 3, self._w, SIM_HEAD - 4)
@@ -138,6 +142,7 @@ class _NodeItem(QGraphicsItem):
             return
         painter.setBrush(fill)
         painter.drawRoundedRect(self.boundingRect().adjusted(1, 1, -1, -1), 6, 6)
+        self._paint_inner_ring(painter, 6)
         painter.setPen(text)
         painter.setFont(self._window.bold_font)
         inner = self._w - 2 * PAD
@@ -154,6 +159,12 @@ class _NodeItem(QGraphicsItem):
             painter.drawText(
                 QRectF(PAD, 20, inner, 15), Qt.AlignmentFlag.AlignRight, "  ".join(self.node.badges)
             )
+
+    def _paint_inner_ring(self, painter: QPainter, radius: float) -> None:
+        """Second, inset border that marks a "present" node with the current pen."""
+        if self.node.state == "present":
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(self.boundingRect().adjusted(4, 4, -4, -4), radius - 2, radius - 2)
 
     def hoverEnterEvent(self, event) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
         self._window.hover(self.node.id)
@@ -621,7 +632,11 @@ class FlowWindow(QWidget):
         if flow.ARCHIVE_ID in (self.flow.nodes if self.flow else {}):
             parts += [("log_green", "upload"), ("log_yellow", "auto-fetch (dashed)")]
         if self.overlay_cb.isChecked():
-            parts += [("btn_success_bg", "would run"), ("btn_danger_bg", "missing master")]
+            parts += [
+                ("btn_success_bg", "would run"),
+                ("btn_danger_bg", "missing master (dotted)"),
+                ("log_green", "input present (double border)"),
+            ]
         self.legend.setText("  ".join(f"<span style='color:{c[key]}'>■</span> {text}" for key, text in parts))
 
     def _trace(self, node_id: str) -> set[str]:
