@@ -123,6 +123,11 @@ def pipeline_dir() -> Path:
     return own[0] if own else data_dir() / "METIS_Pipeline"
 
 
+def reports_dir() -> Path:
+    """The pipeline's ADARI reports, which ``genreport`` finds through ``ADARI_REPORTS_DIR``."""
+    return pipeline_dir() / "metisp" / "pymetis" / "src" / "pymetis" / "instruments" / "metis" / "reports"
+
+
 def simulations_dir() -> Path:
     own = _repo_override("simulations")
     return own[0] if own else data_dir() / "METIS_Simulations"

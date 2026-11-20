@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+- **ADARI reports:** EDPS now makes the pipeline's QC report images for every
+  task (`--report-type`, default `all`: raw inputs and products). The new
+  *Reports* tab shows a run's images where EDPS left them; right-click a task in
+  the *Data flow* window to see just its reports. The `default` runner sets
+  `ADARI_REPORTS_DIR` to the pipeline checkout's reports; with `native`, set it
+  yourself. Needs a METIS_Pipeline that defines ADARI reports (not yet on its
+  `main`); until then the tab stays empty and runs are unaffected.
+
 ### Changed
 - **Bundled snapshot follows METIS_Pipeline `134c9bf`:** `metis_lm_img_background_sci`
   / `_std` no longer take `LM_SKY_BASIC_REDUCED` from `metis_lm_img_basic_reduce_sky`.

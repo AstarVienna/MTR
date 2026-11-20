@@ -93,6 +93,8 @@ def resolve_runtime_env(runner: str = "default") -> dict[str, str]:
     env["PYESOREX_LOG_LEVEL"] = "debug"
     # So ScopeSim resolves the instrument packages in a bare `python` session.
     env["METIS_INST_PKGS"] = str(paths.inst_pkgs_dir())
+    # genreport (run by the EDPS server) otherwise looks next to esorex, which pyesorex installs lack.
+    env["ADARI_REPORTS_DIR"] = str(paths.reports_dir())
 
     venv_bin = str(Path(sys.executable).parent)
     env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")

@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
     QGraphicsView,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
     QVBoxLayout,
@@ -235,8 +236,14 @@ class _View(QGraphicsView):
         self.zoom(1.15 ** (event.angleDelta().y() / 120))
 
     def mousePressEvent(self, event) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
-        self._press = event.position()
+        # A right click opens the context menu; it must not pin or pan.
+        self._press = event.position() if event.button() == Qt.MouseButton.LeftButton else None
         super().mousePressEvent(event)
+
+    def contextMenuEvent(self, event) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
+        item = self.itemAt(event.pos())
+        if isinstance(item, _NodeItem) and item.node.id.startswith("task:"):
+            self._window.task_menu(item.node.id[5:], event.globalPos())
 
     def mouseReleaseEvent(self, event) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
         super().mouseReleaseEvent(event)
@@ -257,6 +264,7 @@ class FlowWindow(QWidget):
         colors: dict[str, str],
         run_input: Callable[[], flow.RunInput] | None = None,
         run_task: Callable[[str], None] | None = None,
+        show_reports: Callable[[str], None] | None = None,
         parent: QWidget | None = None,
     ):
         super().__init__(parent, Qt.WindowType.Window)
@@ -266,6 +274,7 @@ class FlowWindow(QWidget):
         self.expanded: set[str] = set()
         self._run_input = run_input
         self._run_task = run_task
+        self._show_reports = show_reports
         self._hover: str | None = None
         # Passing over nodes would flash their traces; show one only once the pointer rests
         # on it, but clear it as soon as the pointer leaves.
@@ -451,6 +460,14 @@ class FlowWindow(QWidget):
         self.run_task_btn.setToolTip(
             f"Run the Run tab input with EDPS targeting {task}" if task else "Click a task to pin it first"
         )
+
+    def task_menu(self, task: str, pos) -> None:
+        """Right-click menu of a task node."""
+        menu = QMenu(self)
+        action = menu.addAction(f"Show reports of {task}")
+        action.setEnabled(self._show_reports is not None)
+        if menu.exec(pos) is action and self._show_reports is not None:
+            self._show_reports(task)
 
     def run_pinned_task(self) -> None:
         """Run the pinned task on the Run tab input, or say why it cannot run."""

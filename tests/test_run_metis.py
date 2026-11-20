@@ -2272,6 +2272,7 @@ class TestEdpsTargetFlag:
         monkeypatch.setattr(rm, "scan_fits_inputs", lambda d: ({"DARK_IFU_RAW"}, {"metis.metis_ifu_wkf"}))
         monkeypatch.setattr(rm, "edps_session", lambda *a, **k: contextlib.nullcontext())
         monkeypatch.setattr(rm, "has_products", lambda pipe_out: False)
+        monkeypatch.setattr(rm, "index_reports", lambda *a: None)  # would scan the real EDPS base_dir
         calls = []
         monkeypatch.setattr(rm, "_run_child", lambda cmd, **k: (calls.append(cmd), 0)[1])
         (tmp_path / "fits").mkdir()
@@ -2295,3 +2296,11 @@ class TestEdpsTargetFlag:
         with pytest.raises(SystemExit) as exc:
             self._edps_cmd(tmp_path, monkeypatch, "--edps-target", "no_such_task")
         assert "no_such_task" in str(exc.value)
+
+    def test_all_reports_by_default(self, tmp_path, monkeypatch):
+        cmd = self._edps_cmd(tmp_path, monkeypatch)
+        assert cmd[cmd.index("-rt") + 1] == "all"
+
+    def test_report_type_flag(self, tmp_path, monkeypatch):
+        cmd = self._edps_cmd(tmp_path, monkeypatch, "--report-type", "none")
+        assert cmd[cmd.index("-rt") + 1] == "none"

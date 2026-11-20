@@ -37,6 +37,7 @@ class TestResolveRuntimeEnv:
         assert env["PYESOREX_MSG_LEVEL"] == "debug"
         assert env["PYESOREX_LOG_LEVEL"] == "debug"
         assert env["METIS_INST_PKGS"] == str(inst)
+        assert env["ADARI_REPORTS_DIR"] == f"{pipe}/metisp/pymetis/src/pymetis/instruments/metis/reports"
         assert env["PYTHONUNBUFFERED"] == "1"
 
     def test_default_prepends_venv_bin_to_path(self, monkeypatch, tmp_path):
@@ -56,8 +57,10 @@ class TestResolveRuntimeEnv:
     def test_native_injects_nothing_clone_specific(self, monkeypatch, tmp_path):
         _patch_paths(monkeypatch, tmp_path)
         monkeypatch.delenv("PYCPL_RECIPE_DIR", raising=False)
+        monkeypatch.delenv("ADARI_REPORTS_DIR", raising=False)
         env = resolve_runtime_env("native")
         assert "PYCPL_RECIPE_DIR" not in env
+        assert "ADARI_REPORTS_DIR" not in env
         assert env["PYTHONUNBUFFERED"] == "1"
 
 
