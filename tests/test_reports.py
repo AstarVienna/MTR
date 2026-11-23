@@ -106,11 +106,9 @@ class TestIndexReports:
         return Namespace(report_type=report_type, pipeline_input=pipeline_input)
 
     def test_writes_index_from_edps_config(self, layout, monkeypatch, capsys):
-        import configparser
-
-        cfg = configparser.ConfigParser()
-        cfg["executor"] = {"base_dir": str(layout.base)}
-        monkeypatch.setattr(rm, "_read_edps_config", lambda: cfg)
+        monkeypatch.setattr(
+            rm.edps_config, "read_text", lambda props=None: f"[executor]\nbase_dir={layout.base}\n"
+        )
         _report(layout.dark, "metis_det_dark", ["MASTER_DARK_IFU"])
         rm.index_reports(self._args(), "default", layout.run, layout.run / "pipeline")
         index = json.loads((layout.run / reports.INDEX_NAME).read_text())
@@ -118,11 +116,9 @@ class TestIndexReports:
         assert "1 image(s) from 3 job(s)" in capsys.readouterr().out
 
     def test_pipeline_input_dirs_are_roots(self, layout, monkeypatch, tmp_path):
-        import configparser
-
-        cfg = configparser.ConfigParser()
-        cfg["executor"] = {"base_dir": str(layout.base)}
-        monkeypatch.setattr(rm, "_read_edps_config", lambda: cfg)
+        monkeypatch.setattr(
+            rm.edps_config, "read_text", lambda props=None: f"[executor]\nbase_dir={layout.base}\n"
+        )
         out = tmp_path / "fresh"
         out.mkdir()
         rm.index_reports(
@@ -132,7 +128,9 @@ class TestIndexReports:
 
     @pytest.mark.parametrize("runner,report_type", [("docker", "all"), ("default", "none")])
     def test_skipped(self, layout, monkeypatch, runner, report_type):
-        monkeypatch.setattr(rm, "_read_edps_config", lambda: pytest.fail("must not read the config"))
+        monkeypatch.setattr(
+            rm.edps_config, "read_text", lambda props=None: pytest.fail("must not read the config")
+        )
         rm.index_reports(self._args(report_type), runner, layout.run, layout.run / "pipeline")
         assert not (layout.run / reports.INDEX_NAME).exists()
 

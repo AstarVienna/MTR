@@ -1843,7 +1843,7 @@ class TestPreferMastersIsHonest:
     def _props(self, tmp_path, monkeypatch, body):
         props = tmp_path / "application.properties"
         props.write_text(body)
-        monkeypatch.setattr(rm, "_edps_properties_path", lambda: props)
+        monkeypatch.setattr(rm.edps_config, "path", lambda: props)
         return props
 
     @pytest.mark.parametrize("runner", ["docker", "podman"])
@@ -1866,7 +1866,7 @@ class TestPreferMastersIsHonest:
         real.chmod(0o644)
         link = tmp_path / "application.properties"
         link.symlink_to(real)
-        monkeypatch.setattr(rm, "_edps_properties_path", lambda: link)
+        monkeypatch.setattr(rm.edps_config, "path", lambda: link)
         writes = []
         real_atomic = rm.paths.write_text_atomic
         monkeypatch.setattr(
@@ -1912,7 +1912,7 @@ class TestHardlinkMismatch:
     def _props(self, tmp_path, monkeypatch, body):
         props = tmp_path / "application.properties"
         props.write_text(body)
-        monkeypatch.setattr(rm, "_edps_properties_path", lambda: props)
+        monkeypatch.setattr(rm.edps_config, "path", lambda: props)
         return props
 
     @staticmethod
@@ -1948,7 +1948,7 @@ class TestHardlinkMismatch:
         assert rm.hardlink_mismatch(tmp_path / "out" / "pipeline") is None
 
     def test_missing_or_unreadable_config_is_skipped(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(rm, "_edps_properties_path", lambda: tmp_path / "nope")
+        monkeypatch.setattr(rm.edps_config, "path", lambda: tmp_path / "nope")
         assert rm.hardlink_mismatch(tmp_path / "out") is None
         self._props(tmp_path, monkeypatch, "mode=link\n")  # no [section] header
         assert rm.hardlink_mismatch(tmp_path / "out") is None
@@ -2050,13 +2050,13 @@ class TestWhitespaceProblem:
 
 class TestEdpsPaths:
     def _args(self, **kw):
-        defaults = {"no_sim": False, "pipeline_input": None, "static": 1}
+        defaults = {"no_sim": False, "pipeline_input": None, "static": 1, "auto_fetch_calibrations": False}
         return argparse.Namespace(**{**defaults, **kw})
 
     def _props(self, tmp_path, monkeypatch, base_dir):
         props = tmp_path / "application.properties"
         props.write_text(f"[executor]\nbase_dir={base_dir}\n")
-        monkeypatch.setattr(rm, "_edps_properties_path", lambda: props)
+        monkeypatch.setattr(rm.edps_config, "path", lambda: props)
         return props
 
     def test_static_calibs_fix_points_at_the_data_dir(self, tmp_path, monkeypatch):
@@ -2089,7 +2089,7 @@ class TestEdpsPaths:
 
     @pytest.mark.parametrize("runner", ["docker", "podman"])
     def test_container_config_is_not_read(self, tmp_path, monkeypatch, runner):
-        monkeypatch.setattr(rm, "_read_edps_config", MagicMock(side_effect=AssertionError("read")))
+        monkeypatch.setattr(rm.edps_config, "read_text", MagicMock(side_effect=AssertionError("read")))
         found = rm._edps_paths(self._args(), runner, tmp_path / "sim", tmp_path / "pipe", tmp_path / "s")
         assert [label for label, _p, _f in found] == ["Pipeline input", "Static calibs"]
 
@@ -2271,7 +2271,7 @@ class TestEdpsTargetFlag:
         monkeypatch.setattr(rm, "_require_astropy", lambda purpose: None)
         monkeypatch.setattr(rm, "scan_fits_inputs", lambda d: ({"DARK_IFU_RAW"}, {"metis.metis_ifu_wkf"}))
         monkeypatch.setattr(rm, "edps_session", lambda *a, **k: contextlib.nullcontext())
-        monkeypatch.setattr(rm, "has_products", lambda pipe_out: False)
+        monkeypatch.setattr(rm, "has_products", lambda pipe_out, since=0.0: False)
         monkeypatch.setattr(rm, "index_reports", lambda *a: None)  # would scan the real EDPS base_dir
         calls = []
         monkeypatch.setattr(rm, "_run_child", lambda cmd, **k: (calls.append(cmd), 0)[1])
@@ -2304,3 +2304,167 @@ class TestEdpsTargetFlag:
     def test_report_type_flag(self, tmp_path, monkeypatch):
         cmd = self._edps_cmd(tmp_path, monkeypatch, "--report-type", "none")
         assert cmd[cmd.index("-rt") + 1] == "none"
+
+
+class TestPipelineInputEnv:
+    def test_cli_value_replaces_the_env_value(self, monkeypatch):
+        monkeypatch.setenv("METIS_PIPELINE_INPUT", "/env/dir")
+        args = rm.parse_args(["--no-sim", "--pipeline-input", "/cli/dir"])
+        assert args.pipeline_input == ["/cli/dir"]
+
+    def test_env_value_is_the_fallback(self, monkeypatch):
+        monkeypatch.setenv("METIS_PIPELINE_INPUT", "/env/dir")
+        assert rm.parse_args(["--no-sim"]).pipeline_input == ["/env/dir"]
+
+
+class TestMainInference:
+    """What a run reduces comes from the FITS the pipeline reads (review #1, #5, #10, #20)."""
+
+    LM_YAML = """
+    block1:
+      do.catg: LM_IMAGE_SCI_RAW
+      properties:
+        tech: "IMAGE,LM"
+        catg: "SCIENCE"
+    """
+
+    def _harness(self, tmp_path, monkeypatch, fits_by_dir):
+        """Stub the simulation and EDPS; return the recorded child commands and their env."""
+        monkeypatch.setattr(rm, "hardlink_mismatch", lambda pipe_out: None)
+        monkeypatch.setattr(rm, "_check_default_env", lambda runner: None)
+        monkeypatch.setattr(rm, "have_astropy", lambda: True)
+        monkeypatch.setattr(rm, "scan_fits_inputs", lambda d: fits_by_dir.get(Path(d).name, (set(), set())))
+        monkeypatch.setattr(rm, "edps_session", lambda *a, **k: contextlib.nullcontext())
+        monkeypatch.setattr(rm, "index_reports", lambda *a: None)
+        monkeypatch.setattr(rm, "_run_simulation", lambda *a: 0)
+        calls = []
+        monkeypatch.setattr(rm, "_run_child", lambda cmd, **k: (calls.append((cmd, k)), 0)[1])
+        (tmp_path / "sims" / "metis_simulations").mkdir(parents=True)
+        return calls
+
+    def _base(self, tmp_path):
+        return ["--runner", "native", "--simulations-dir", str(tmp_path / "sims"), "--no-static"]
+
+    @staticmethod
+    def _edps(calls):
+        return next(cmd for cmd, _k in calls if "-w" in cmd)
+
+    def test_mixed_yaml_and_csv_targets_what_was_simulated(self, tmp_path, monkeypatch):
+        calls = self._harness(
+            tmp_path,
+            monkeypatch,
+            {
+                "sim": (
+                    {"LM_IMAGE_SCI_RAW", "DARK_IFU_RAW"},
+                    {"metis.metis_lm_img_wkf", "metis.metis_ifu_wkf"},
+                )
+            },
+        )
+        yaml_in = _write_yaml(tmp_path, "obs.yaml", self.LM_YAML)
+        csv_in = tmp_path / "seq.csv"
+        csv_in.write_text("a\nb\nc\nd\n")
+        main([*self._base(tmp_path), "-o", str(tmp_path / "o"), str(yaml_in), str(csv_in)])
+        cmd = self._edps(calls)
+        assert "metis_ifu_dark" in cmd  # from the CSV's frames, which the YAML scan never saw
+        assert cmd[-2:] == ["-m", "science"]
+
+    def test_simulating_into_an_earlier_runs_frames_is_refused(self, tmp_path, monkeypatch):
+        self._harness(tmp_path, monkeypatch, {})
+        monkeypatch.setattr(rm, "_run_simulation", MagicMock(side_effect=AssertionError("simulated")))
+        (tmp_path / "o" / "sim").mkdir(parents=True)
+        (tmp_path / "o" / "sim" / "old.fits").write_bytes(b"")
+        yaml_in = _write_yaml(tmp_path, "obs.yaml", self.LM_YAML)
+        with pytest.raises(SystemExit) as exc:
+            main([*self._base(tmp_path), "-o", str(tmp_path / "o"), str(yaml_in)])
+        assert "earlier run" in str(exc.value)
+
+    def test_native_children_get_a_filtered_environment(self, tmp_path, monkeypatch):
+        calls = self._harness(tmp_path, monkeypatch, {"fits": ({"DARK_IFU_RAW"}, {"metis.metis_ifu_wkf"})})
+        monkeypatch.setenv("database_password", "secret")
+        (tmp_path / "fits").mkdir()
+        main(
+            [
+                *self._base(tmp_path),
+                "--no-sim",
+                "--pipeline-input",
+                str(tmp_path / "fits"),
+                "-o",
+                str(tmp_path / "o"),
+            ]
+        )
+        for _cmd, kw in calls:
+            assert "database_password" not in kw["env"]
+            assert kw["env"]["PYTHONUNBUFFERED"] == "1"
+
+    def _fetch_run(self, tmp_path, monkeypatch, fetch):
+        from metis_test_runner import archive
+
+        calls = self._harness(
+            tmp_path,
+            monkeypatch,
+            {
+                "a": ({"DARK_IFU_RAW"}, {"metis.metis_ifu_wkf"}),
+                "b": ({"IFU_SCI_RAW"}, {"metis.metis_ifu_wkf"}),
+            },
+        )
+        seen = {}
+
+        def fake_fetch(workflow, data_tags, has_science, dest_dir, on_log):
+            seen.update(tags=set(data_tags), science=has_science, dest=dest_dir)
+            return fetch(dest_dir)
+
+        monkeypatch.setattr(archive, "fetch_missing_calibrations", fake_fetch)
+        for d in ("a", "b"):
+            (tmp_path / d).mkdir()
+        argv = [*self._base(tmp_path), "--no-sim", "--auto-fetch-calibrations", "-o", str(tmp_path / "o")]
+        argv += ["--pipeline-input", str(tmp_path / "a"), "--pipeline-input", str(tmp_path / "b")]
+        main(argv)
+        return calls, seen
+
+    def test_auto_fetch_sees_every_input_folder_and_writes_to_the_output(self, tmp_path, monkeypatch, capsys):
+        def fetch(dest):
+            dest.mkdir(parents=True, exist_ok=True)
+            (dest / "MASTER.fits").write_bytes(b"")
+            return [dest / "MASTER.fits"]
+
+        calls, seen = self._fetch_run(tmp_path, monkeypatch, fetch)
+        assert {"DARK_IFU_RAW", "IFU_SCI_RAW"} <= seen["tags"] and seen["science"]
+        assert seen["dest"] == tmp_path / "o" / "archive_calibs"
+        assert not any((tmp_path / d / "MASTER.fits").exists() for d in ("a", "b"))
+        cmd = self._edps(calls)
+        i = cmd.index("-i")
+        assert cmd[i + 1 : i + 4] == [
+            str(tmp_path / "a"),
+            str(tmp_path / "b"),
+            str(tmp_path / "o" / "archive_calibs"),
+        ]
+
+    def test_a_failing_archive_is_not_reported_as_missing_masters(self, tmp_path, monkeypatch, capsys):
+        def fetch(dest):
+            raise RuntimeError("bad credentials")
+
+        self._fetch_run(tmp_path, monkeypatch, fetch)
+        out = capsys.readouterr().out
+        assert "Could not query the archive for: metis.metis_ifu_wkf" in out
+        assert "not available in archive" not in out
+
+
+class TestHasProductsSince:
+    def test_products_of_an_earlier_run_do_not_count(self, tmp_path):
+        import time as _time
+
+        (tmp_path / "MASTER_DARK.fits").write_bytes(b"")
+        assert rm.has_products(tmp_path, since=_time.time() - 60)
+        assert not rm.has_products(tmp_path, since=_time.time() + 60)
+
+    def test_a_fresh_hardlink_to_an_old_file_counts(self, tmp_path):
+        import os
+        import time as _time
+
+        old = tmp_path / "store.fits"
+        old.write_bytes(b"")
+        os.utime(old, (1, 1))
+        start = _time.time() - 1
+        (tmp_path / "pipe").mkdir()
+        os.link(old, tmp_path / "pipe" / "MASTER.fits")
+        assert rm.has_products(tmp_path / "pipe", since=start)

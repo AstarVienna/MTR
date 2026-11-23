@@ -397,7 +397,7 @@ YAML and CSV inputs may be mixed in any combination.
 
 | Flag | Default | Description |
 |---|---|---|
-| `-o / --output` | `./output/<timestamp>` | Root directory for all outputs (env: `METIS_OUTPUT_DIR`) |
+| `-o / --output` | `./output/<timestamp>` | Root directory for all outputs (env: `METIS_OUTPUT_DIR`). A simulating run refuses one whose `sim/` already holds frames |
 | `--runner {default,native,docker,podman}` | `default` | Execution mode (see below; env: `METIS_RUNNER`) |
 | `--container NAME` | — | Container name/ID for `docker` / `podman` runners (env: `METIS_CONTAINER`) |
 | `--calib N` | `1` | Auto-generate N calibration frames (dark/flat) per unique config, inferred from input content. Forwarded to METIS_Simulations as `doCalib`, which sets `nObs` per calibration config. Pass `--calib 0` or `--no-calib` to disable. |
@@ -410,7 +410,7 @@ YAML and CSV inputs may be mixed in any combination.
 | `--csv-lines START:END` | all rows | Restrict CSV inputs to a range of 1-based file lines (e.g. `6:12`, `6:` from line 6 to end, `:12` from start to line 12). The header block (column-name row + `component`/`description`/`type` rows) is always kept; MTR writes a sliced copy under `<output>/sliced_inputs/` and feeds that to the simulation. Applies to `.csv` inputs only; ignored with `--no-sim`. With `--csv-to-yaml`, the YAML is written next to the original CSV as `<name>_lines<START>-<END>.yaml` (open bounds become `1` / `end`). Also exposed in the GUI Run tab. |
 | `--simulations-dir PATH` | `<data dir>/METIS_Simulations` or [your own checkout](#own-checkout) (host), `/home/metis/METIS_Simulations` (container) | Path to ScopeSim scripts (env: `METIS_SIMULATIONS_DIR`) |
 | `--inst-pkgs PATH` | see below | Path to ScopeSim instrument packages (Armazones, ELT, METIS). Defaults to the user data dir for the `default` runner, `./inst_pkgs` for `native`, and container-resolved `./inst_pkgs` for `docker`/`podman` (env: `METIS_INST_PKGS`) |
-| `--auto-fetch-calibrations` | off | Before running the pipeline, query the remote METIS archive (via MetisWISE) for any master calibrations the input set is missing and download them into the pipeline input directory. Requires MetisWISE to be installed and archive credentials stored via the Archive tab (OS keyring; a legacy `~/.awe/Environment.cfg` also works). |
+| `--auto-fetch-calibrations` | off | Before running the pipeline, query the remote METIS archive (via MetisWISE) for any master calibrations the input set is missing and download them into `<output>/archive_calibs/`, which EDPS also reads. Requires MetisWISE to be installed and archive credentials stored via the Archive tab (OS keyring; a legacy `~/.awe/Environment.cfg` also works). |
 | `--prefer-masters` | off | Set EDPS `association_preference` to `master_per_quality_level` for this run, preferring master calibrations over reduced raw data. **Only useful when EDPS was configured outside MTR** — the Install tab already pins this value, so on a standard install the flag changes nothing. Ignored for `docker`/`podman`, where EDPS reads the container's own configuration. Not exposed in the GUI for the same reason. |
 
 ### Overriding the environment

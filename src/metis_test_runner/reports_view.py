@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from . import reports
+from . import edps_config, reports
 from .reports import Panel, Report
 
 _DATA = Qt.ItemDataRole.UserRole
@@ -32,10 +32,7 @@ _DATA = Qt.ItemDataRole.UserRole
 
 def edps_base_dir(run: Path) -> Path | None:
     """EDPS's job folder for *run*, from ~/.edps/application.properties (None if unreadable)."""
-    from .run_metis import _edps_base_dir, _read_edps_config  # run_metis is otherwise only run as a script
-
-    cfg = _read_edps_config()
-    return None if cfg is None else _edps_base_dir(cfg, run / "pipeline")
+    return edps_config.base_dir(run / "pipeline")
 
 
 class ReportViewer(QWidget):

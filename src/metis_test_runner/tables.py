@@ -10,13 +10,13 @@ choices, which no upstream file states.
 
 from __future__ import annotations
 
-import configparser
 import json
 import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import paths, upstream
+from . import edps_config, paths, upstream
 
 #: The workflow MTR always runs; it imports every sub-workflow.
 UMBRELLA_WORKFLOW = "metis.metis_wkf"
@@ -106,12 +106,7 @@ def _snapshot() -> dict:
 
 def edps_workflow_dir() -> Path | None:
     """``workflow_dir`` from EDPS's configuration: the workflows EDPS really runs."""
-    cfg = configparser.ConfigParser(interpolation=None)
-    try:
-        cfg.read(Path.home() / ".edps" / "application.properties")
-        value = cfg.get("application", "workflow_dir", fallback="").strip()
-    except (configparser.Error, OSError, UnicodeDecodeError):
-        return None
+    value = (edps_config.get("workflow_dir") or "").strip()
     return Path(value).expanduser() if value else None
 
 
@@ -125,20 +120,31 @@ def workflow_dir() -> Path | None:
 
 _cache: Tables | None = None
 _snapshot_only = False
+# GUI worker threads call get() too; the first load runs git and parses files.
+_lock = threading.RLock()
 
 
 def use_snapshot(only: bool = True) -> None:
     """Ignore local checkouts (docker / podman run the container's own Pipeline)."""
     global _snapshot_only, _cache
-    _snapshot_only, _cache = only, None
+    with _lock:
+        _snapshot_only, _cache = only, None
+
+
+def reset() -> None:
+    """Reload on next use, e.g. after Install or a checkout change moved the Pipeline."""
+    global _cache
+    with _lock:
+        _cache = None
 
 
 def get() -> Tables:
     """The tables for this process, loaded on first use."""
     global _cache
-    if _cache is None:
-        _cache = _load()
-    return _cache
+    with _lock:
+        if _cache is None:
+            _cache = _load()
+        return _cache
 
 
 def _load() -> Tables:

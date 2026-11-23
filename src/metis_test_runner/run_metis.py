@@ -25,38 +25,33 @@ Four execution modes are supported via --runner (or METIS_RUNNER env var):
       container. Requires --container NAME (or METIS_CONTAINER env var).
       The output directory must be bind-mounted into the container.
 
-The workflow (lm_img / n_img / ifu / lm_lss / n_lss / …) is inferred
-automatically from the DPR.TECH / mode values in YAML blocks. CSV content is
-not parsed on the MTR side, so for CSV-only runs the workflow is auto-detected
-from the simulated FITS headers instead (after Step 1). For direct, manual
-control over the EDPS/pyesorex invocation, use the mtr-exec / mtr-shell
-commands instead of this orchestrated runner.
-The pipeline target task is inferred from the data types present in the YAML
-(or from FITS headers when --no-sim or all inputs are CSV): it targets the
-deepest task in the workflow chain whose main-input classification tag is
-present in the data. If any block has catg="SCIENCE", the pipeline is run
-with -m science.
+The sub-workflows (lm_img / n_img / ifu / lm_lss / n_lss / …) and data types
+are read from the FITS headers the pipeline gets: the simulated frames, or the
+--pipeline-input folders with --no-sim (the YAML is only checked up front).
+EDPS then targets the deepest task in each workflow chain whose main-input
+classification tag is present, and runs with -m science when science frames
+are. For direct, manual control over the EDPS/pyesorex invocation, use the
+mtr-exec / mtr-shell commands instead of this orchestrated runner.
 """
 
 import argparse
-import configparser
 import contextlib
 import os
-import re
 import shlex
 import shutil
 import signal
-import stat
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
 import yaml
 
-from . import __version__, docs, paths, reports, tables
+from . import __version__, docs, edps_config, paths, reports, tables
 from .env import resolve_runtime_env
 
 # Recognised input file extensions
@@ -69,30 +64,9 @@ INPUT_EXTS = (".yaml", ".yml", ".csv")
 IRDB_RELEASES = {"METIS": "2026-09-23", "ELT": "2025-10-26", "Armazones": "2023-07-11"}
 
 
-def _edps_properties_path() -> Path:
-    """Location of the EDPS configuration MTR reads and patches."""
-    return Path.home() / ".edps" / "application.properties"
-
-
 def _device(path: Path) -> int:
     """Filesystem id of *path*, or of its nearest existing parent."""
     return next(p for p in (path, *path.parents) if p.exists()).stat().st_dev
-
-
-def _read_edps_config() -> configparser.ConfigParser | None:
-    cfg = configparser.ConfigParser(interpolation=None)
-    try:
-        cfg.read(_edps_properties_path())
-    except (configparser.Error, OSError, UnicodeDecodeError):
-        return None
-    return cfg
-
-
-def _edps_base_dir(cfg: configparser.ConfigParser, pipe_out: Path) -> Path:
-    """EDPS's job directory (``base_dir``), where it runs the recipes."""
-    base_dir = Path(cfg.get("executor", "base_dir", fallback=".").strip())
-    # EDPS resolves a relative one against its working directory, pipe_out.
-    return base_dir if base_dir.is_absolute() else pipe_out / base_dir
 
 
 def whitespace_problem(edps_paths: list[tuple[str, Path, str]]) -> str | None:
@@ -118,17 +92,18 @@ def _edps_paths(args, runner, sim_out, pipe_out, static_calibs_dir) -> list[tupl
     else:
         inputs, in_fix = [sim_out], out_fix
     found = [("Pipeline input", p, in_fix) for p in inputs]
+    if args.auto_fetch_calibrations:
+        found.append(("Fetched masters", pipe_out.parent / "archive_calibs", out_fix))
     if args.static:
         fix = out_fix if runner in ("docker", "podman") else "set METIS_DATA_DIR to a folder without spaces"
         found.append(("Static calibs", static_calibs_dir, fix))
     # A container runs EDPS with its own config, which the host cannot see.
-    cfg = _read_edps_config() if runner in ("default", "native") else None
-    if cfg is not None:
-        base_dir = _edps_base_dir(cfg, pipe_out)
+    base_dir = edps_config.base_dir(pipe_out) if runner in ("default", "native") else None
+    if base_dir is not None:
         if base_dir.is_relative_to(pipe_out):
             fix = out_fix
         else:
-            fix = f"change base_dir in {_edps_properties_path()} to a folder without spaces"
+            fix = f"change base_dir in {edps_config.path()} to a folder without spaces"
         found.append(("EDPS job folder", base_dir, fix))
     return found
 
@@ -141,14 +116,16 @@ def hardlink_mismatch(pipe_out: Path) -> str | None:
     fails with EXDEV, which EDPS only logs, so the run "succeeds" with an empty
     output folder.
     """
-    props = _edps_properties_path()
-    cfg = _read_edps_config()
-    if cfg is None:
+    props = edps_config.path()
+    text = edps_config.read_text()
+    if text is None:
         return None
     # Fallbacks are EDPS's own defaults for keys the file does not set.
-    if cfg.get("packager", "mode", fallback="copy").strip() != "link":
+    if (edps_config.get("mode", "copy", text=text) or "").strip() != "link":
         return None
-    base_dir = _edps_base_dir(cfg, pipe_out)
+    base_dir = edps_config.base_dir(pipe_out, text=text)
+    if base_dir is None:
+        return None
     try:
         if _device(base_dir) == _device(pipe_out):
             return None
@@ -163,16 +140,24 @@ def hardlink_mismatch(pipe_out: Path) -> str | None:
     )
 
 
-def has_products(pipe_out: Path) -> bool:
-    """True if *pipe_out* holds anything besides EDPS's own log."""
-    return pipe_out.is_dir() and any(
-        p.is_file() and not p.name.startswith("edps.log") for p in pipe_out.rglob("*")
-    )
+def has_products(pipe_out: Path, since: float = 0.0) -> bool:
+    """True if *pipe_out* holds anything besides EDPS's own log, placed there at or after *since*.
+
+    ctime, not mtime: a hardlinked product keeps its old mtime, but linking it here changes its ctime.
+    """
+
+    def fresh(p: Path) -> bool:
+        try:
+            return p.is_file() and not p.name.startswith("edps.log") and p.lstat().st_ctime >= since
+        except OSError:
+            return False
+
+    return pipe_out.is_dir() and any(fresh(p) for p in pipe_out.rglob("*"))
 
 
-def report_products(pipe_out: Path, runner: str) -> None:
-    """Say where the products are, or warn that a successful run left none."""
-    if has_products(pipe_out):
+def report_products(pipe_out: Path, runner: str, since: float = 0.0) -> None:
+    """Say where the products are, or warn that a successful run left none (new ones, given *since*)."""
+    if has_products(pipe_out, since):
         print(f"\nDone. Pipeline products are in: {pipe_out}")
         return
     if runner in ("docker", "podman"):
@@ -186,12 +171,12 @@ def index_reports(args, runner: str, output_root: Path, pipe_out: Path) -> None:
     """Record which EDPS jobs (and so which ADARI reports) belong to this run, for the GUI."""
     if args.report_type == "none" or runner not in ("default", "native"):
         return
-    cfg = _read_edps_config()
-    if cfg is None:
+    base_dir = edps_config.base_dir(pipe_out)
+    if base_dir is None:
         return
     roots = [output_root] + [Path(d).resolve() for d in (args.pipeline_input or [])]
     try:
-        jobs = reports.write_index(output_root, _edps_base_dir(cfg, pipe_out), roots)
+        jobs = reports.write_index(output_root, base_dir, roots)
     except OSError as exc:
         print(f"  Warning: could not index the ADARI reports: {exc}", file=sys.stderr)
         return
@@ -201,21 +186,17 @@ def index_reports(args, runner: str, output_root: Path, pipe_out: Path) -> None:
 
 def read_edps_port(default: int = 5000) -> int:
     """Read the EDPS server port from ~/.edps/application.properties."""
-    props = _edps_properties_path()
-    if props.exists():
-        for line in props.read_text().splitlines():
-            line = line.strip()
-            if line.startswith("port="):
-                raw = line.split("=", 1)[1]
-                try:
-                    return int(raw)
-                except ValueError:
-                    print(
-                        f"warning: {props} has malformed port value "
-                        f"{raw!r}; falling back to default {default}",
-                        file=sys.stderr,
-                    )
-    return default
+    raw = edps_config.get("port")
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        print(
+            f"warning: {edps_config.path()} has malformed port value {raw!r}; falling back to default {default}",
+            file=sys.stderr,
+        )
+        return default
 
 
 def yaml_block_tag(block, props):
@@ -314,6 +295,70 @@ def _require_astropy(purpose):
         )
 
 
+_FITS_KEYS = (
+    "HIERARCH ESO DPR CATG",
+    "HIERARCH ESO DPR TYPE",
+    "HIERARCH ESO DPR TECH",
+    "HIERARCH ESO PRO CATG",
+)
+#: path -> ((mtime_ns, size), keyword values): the Data flow window rescans the same inputs often.
+_header_cache: dict[Path, tuple[tuple[int, int], tuple[str, ...]]] = {}
+_header_lock = threading.Lock()
+_HEADER_CACHE_MAX = 100_000
+
+
+def _fits_keywords(path: Path, afits) -> tuple[str, ...]:
+    """DPR CATG/TYPE/TECH and PRO CATG of *path* (stripped, "" if absent); raises if unreadable."""
+    st = path.stat()
+    stamp = (st.st_mtime_ns, st.st_size)
+    with _header_lock:
+        hit = _header_cache.get(path)
+    if hit is not None and hit[0] == stamp:
+        return hit[1]
+    with afits.open(path, memmap=True) as hdul:
+        hdr = hdul[0].header  # pyright: ignore[reportAttributeAccessIssue]  # astropy stub gap
+        values = tuple(hdr.get(key, "").strip() for key in _FITS_KEYS)
+    with _header_lock:
+        if len(_header_cache) >= _HEADER_CACHE_MAX:
+            _header_cache.clear()
+        _header_cache[path] = (stamp, values)
+    return values
+
+
+def have_astropy() -> bool:
+    try:
+        import astropy.io.fits  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def scan_inputs(yaml_files=(), fits_dirs=()):
+    """Return ``(data_tags, has_science, sub_workflows)`` of YAML blocks and the FITS in *fits_dirs*.
+
+    The one inference behind a run's EDPS targets, its auto-fetch and the Data flow preview.
+    """
+    tags, wfs, has_science = set(), set(), False
+    if yaml_files:
+        tags, has_science, wfs = scan_yaml_inputs(yaml_files)
+    for d in fits_dirs:
+        found, found_wfs = scan_fits_inputs(d)
+        tags |= found
+        wfs |= found_wfs
+    return tags, has_science or derive_has_science(tags, wfs), wfs
+
+
+def missing_calibrations(data_tags, has_science, sub_workflows) -> list[tuple[str, str, str]]:
+    """``(sub-workflow, task, PRO.CATG)`` of the masters the input lacks (see archive.identify_missing_calibrations)."""
+    from .archive import identify_missing_calibrations
+
+    return [
+        (wf, task, catg)
+        for wf in sorted(sub_workflows)
+        for task, catg in identify_missing_calibrations(wf, data_tags, has_science)
+    ]
+
+
 def scan_fits_inputs(fits_dir):
     """Return ``(data_tags, sub_workflows)`` from FITS headers in *fits_dir*.
 
@@ -333,12 +378,7 @@ def scan_fits_inputs(fits_dir):
     unreadable: list[str] = []
     for f in Path(fits_dir).rglob("*.fits"):
         try:
-            with afits.open(f, memmap=True) as hdul:
-                hdr = hdul[0].header  # pyright: ignore[reportAttributeAccessIssue]  # astropy stub gap
-                catg = hdr.get("HIERARCH ESO DPR CATG", "").strip()
-                typ = hdr.get("HIERARCH ESO DPR TYPE", "").strip()
-                tech = hdr.get("HIERARCH ESO DPR TECH", "").strip()
-                pro_catg = hdr.get("HIERARCH ESO PRO CATG", "").strip()
+            catg, typ, tech, pro_catg = _fits_keywords(f, afits)
         except Exception as exc:
             # A corrupt or unreadable frame is not the same as an
             # unrecognised one; silently skipping both meant a truncated
@@ -384,14 +424,7 @@ def classify_fits_file(path):
         return None
 
     try:
-        with afits.open(path, memmap=True) as hdul:
-            hdr = hdul[0].header  # pyright: ignore[reportAttributeAccessIssue]  # astropy stub gap
-            # fmt: off
-            catg = hdr.get("HIERARCH ESO DPR CATG", "").strip()
-            typ  = hdr.get("HIERARCH ESO DPR TYPE", "").strip()
-            tech = hdr.get("HIERARCH ESO DPR TECH", "").strip()
-            # fmt: on
-            pro_catg = hdr.get("HIERARCH ESO PRO CATG", "").strip()
+        catg, typ, tech, pro_catg = _fits_keywords(Path(path), afits)
     except Exception:
         return None
 
@@ -844,6 +877,7 @@ def _run_simulation(runner, container, sim_code, sims_cwd):
         return _run_child(
             [runner, "exec", "-i", "-w", str(sims_cwd), container, "python", "-"],
             input=sim_code.encode(),
+            env=resolve_runtime_env(runner),
         )
 
     _check_default_env(runner)
@@ -862,10 +896,11 @@ def _run_simulation(runner, container, sim_code, sims_cwd):
                 cwd=str(sims_cwd),
                 env=_default_subprocess_env(),
             )
-        else:  # native
+        else:  # native: archive credentials auto-fetch put in os.environ must not reach it
             return _run_child(
                 ["python", tmp.name],
                 cwd=str(sims_cwd),
+                env=resolve_runtime_env(runner),
             )
     finally:
         os.unlink(tmp.name)
@@ -887,26 +922,12 @@ def _edps_base_cmd(runner, container, edps_port):
 def _set_association_preference(value: str) -> str | None:
     """Patch ``association_preference`` in ``~/.edps/application.properties``.
 
-    Returns the original value so it can be restored, or ``None`` if the
-    file doesn't exist (no patching needed).
+    Returns the original value so it can be restored, or ``None`` if the file
+    or the key does not exist (nothing is patched then).
     """
-    props = _edps_properties_path()
-    if not props.exists():
+    if not edps_config.path().exists():
         return None
-    text = props.read_text()
-    match = re.search(r"^association_preference=(.*)$", text, re.MULTILINE)
-    original = match.group(1) if match else None
-    new_text = re.sub(
-        r"^association_preference=.*",
-        f"association_preference={value}",
-        text,
-        flags=re.MULTILINE,
-    )
-    # Atomic, so an interrupted run never leaves the user's EDPS config empty;
-    # resolved and chmod-ed so a symlinked file and its permissions survive.
-    target = props.resolve()
-    paths.write_text_atomic(target, new_text, mode=stat.S_IMODE(target.stat().st_mode))
-    return original
+    return edps_config.update({"association_preference": value})["association_preference"]
 
 
 def _restore_association_preference(original: str | None) -> None:
@@ -940,7 +961,7 @@ def _apply_prefer_masters(runner: str) -> str | None:
     if original is None:
         print(
             "  Warning: no 'association_preference=' line found in "
-            f"{_edps_properties_path()} — --prefer-masters had no effect."
+            f"{edps_config.path()} — --prefer-masters had no effect."
         )
     elif original == _PREFER_MASTERS_VALUE:
         print(
@@ -1216,7 +1237,8 @@ def parse_args(argv=None):
         "--pipeline-input",
         metavar="DIR",
         action="append",
-        default=([os.environ["METIS_PIPELINE_INPUT"]] if os.environ.get("METIS_PIPELINE_INPUT") else None),
+        # Not the env value: argparse appends CLI values to an append default.
+        default=None,
         help="Directory containing FITS files to use as pipeline input. "
         "May be specified multiple times. Only used with --no-sim. "
         "When omitted, defaults to <output>/sim/. "
@@ -1328,6 +1350,8 @@ def parse_args(argv=None):
     )
 
     args = p.parse_args(argv)
+    if not args.pipeline_input and os.environ.get("METIS_PIPELINE_INPUT"):
+        args.pipeline_input = [os.environ["METIS_PIPELINE_INPUT"]]
 
     if args.examples_dir:
         print(paths.examples_dir())
@@ -1356,6 +1380,8 @@ def parse_args(argv=None):
 
 
 def main(argv=None):
+    # Slack for coarse filesystem timestamps; products older than this are a previous run's.
+    run_start = time.time() - 2
     args = parse_args(argv)
     runner = args.runner
 
@@ -1427,24 +1453,34 @@ def main(argv=None):
                 f"{docs.see('own-checkout')}"
             )
 
-    # Collect data tags and the set of sub-workflows implied by the YAML
-    # blocks (if provided).  We always run EDPS against the umbrella workflow
-    # ``metis.metis_wkf`` (which imports every sub-workflow), so we never need
-    # to pick a single sub-workflow up front — but knowing which sub-workflows
-    # are present lets us compute the right -t / -m flags and drive the
-    # auto-fetch step per sub-workflow.
-    # In --no-sim mode YAML/CSV content is ignored — tags and sub-workflows
-    # come from the FITS headers in --pipeline-input, so a leftover input from
-    # a previous simulate+run cannot mislead the pipeline step here.
+    # Data tags and sub-workflows decide EDPS's -t / -m flags and what auto-fetch
+    # looks for; EDPS always runs the umbrella workflow ``metis.metis_wkf``.
+    # They are read from the FITS the pipeline gets: the simulated frames (so
+    # CSV-made and --calib frames count too), or the --pipeline-input folders.
+    # The YAML scan here only checks the input before a long simulation.
     print(f"  Runner    : {runner}" + (f" (container: {args.container})" if args.container else ""))
     if runner in ("docker", "podman"):
         # The container runs its own Pipeline clone, which a host checkout need not match.
         tables.use_snapshot()
     print(f"  Tables    : {tables.get().source}")
     workflow = tables.UMBRELLA_WORKFLOW
-    has_science = False
-    yaml_tags = set()
-    yaml_sub_workflows = set()
+    yaml_tags, yaml_has_science, yaml_sub_workflows = set(), False, set()
+    yaml_subset = [] if args.no_sim else [p for p in input_files if p.suffix.lower() in (".yaml", ".yml")]
+    has_csv = not args.no_sim and any(p.suffix.lower() == ".csv" for p in input_files)
+
+    # Fail before the simulation, not after it, when the FITS cannot be read.
+    if not args.no_pipeline and not args.csv_to_yaml and not have_astropy():
+        if args.auto_fetch_calibrations:
+            _require_astropy("--auto-fetch-calibrations")
+        if args.no_sim:
+            _require_astropy("Reading the input FITS headers (--no-sim)")
+        if has_csv:
+            _require_astropy("Identifying the workflow of a CSV input from the simulated FITS")
+        print(
+            "  Warning: astropy is not installed, so the EDPS targets come from the YAML alone "
+            "(frames made by --calib are not considered).",
+            file=sys.stderr,
+        )
 
     if input_files and not args.no_sim:
         by_ext = Counter(p.suffix.lower() for p in input_files)
@@ -1454,35 +1490,30 @@ def main(argv=None):
             kind = "YAML" if p.suffix.lower() in (".yaml", ".yml") else "CSV"
             print(f"    [{kind:<4}] {p}")
 
-        yaml_subset = [p for p in input_files if p.suffix.lower() in (".yaml", ".yml")]
-        csv_only = all(p.suffix.lower() == ".csv" for p in input_files)
-
         if args.no_pipeline:
             # Sim-only: workflow / sub-workflow values are unused downstream;
             # skip inference so a CSV-only set never trips on it here.
             print("  Workflow      : (not needed in --no-pipeline mode)")
-        elif csv_only:
-            # CSV content is not parsed on the MTR side: the active
-            # sub-workflow(s) and data tags are inferred from the simulated FITS
-            # headers after Step 1 (see the pipeline step below). EDPS always
-            # runs the umbrella workflow, so a single sub-workflow is never
-            # needed up front.
-            print("  Workflow      : (auto-detected from simulated FITS; CSV-only run)")
-            print("  Data tags     : (will be inferred from FITS headers)")
         else:
-            try:
-                yaml_tags, has_science, yaml_sub_workflows = scan_yaml_inputs(yaml_subset)
-            except ValueError as exc:
-                sys.exit(f"Error: {exc}")
-            if not yaml_sub_workflows:
-                sys.exit(
-                    "Error: could not identify any METIS sub-workflow from the "
-                    "YAML input(s). Check that properties.tech or mode is set "
-                    "to one of the known values."
-                )
+            if yaml_subset:
+                try:
+                    yaml_tags, yaml_has_science, yaml_sub_workflows = scan_yaml_inputs(yaml_subset)
+                except ValueError as exc:
+                    sys.exit(f"Error: {exc}")
+                if not yaml_sub_workflows and not has_csv:
+                    sys.exit(
+                        "Error: could not identify any METIS sub-workflow from the "
+                        "YAML input(s). Check that properties.tech or mode is set "
+                        "to one of the known values."
+                    )
             print(f"  Workflow      : {workflow}")
-            print(f"  Sub-workflows : {sorted(yaml_sub_workflows)}")
-            print(f"  Data tags     : {sorted(yaml_tags) or '(none found)'}")
+            if yaml_subset:
+                part = " of the YAML" if has_csv else ""
+                print(f"  Sub-workflows : {sorted(yaml_sub_workflows) or '(none found)'}  (expected{part})")
+                print(f"  Data tags     : {sorted(yaml_tags) or '(none found)'}  (expected{part})")
+            if has_csv:
+                # CSV content is not parsed on the MTR side.
+                print("  CSV input     : sub-workflows and data tags are read from the simulated FITS")
     else:
         if input_files:
             print(f"  Note          : ignoring {len(input_files)} input file(s) in --no-sim mode")
@@ -1514,6 +1545,16 @@ def main(argv=None):
             if not indir.is_dir():
                 sys.exit(f"Error: pipeline input directory not found: {indir}")
         sim_out = Path(args.pipeline_input[0]).resolve()
+
+    # Old frames would be simulated "into" this run: inferred, fetched for and reduced.
+    if not args.no_sim and not args.csv_to_yaml and sim_out.is_dir() and any(sim_out.iterdir()):
+        sys.exit(
+            f"Error: {sim_out} already holds the frames of an earlier run, which would be mixed into "
+            "this one. Choose an empty output folder (-o DIR, METIS_OUTPUT_DIR or the GUI's Output "
+            "directory), leave it unset for a new timestamped folder, or empty that folder."
+        )
+    # Masters fetched from the archive go here, never into the user's own input folders.
+    fetched_dir = output_root / "archive_calibs"
 
     # Fail before a long simulation rather than after it with an empty output.
     if not args.no_pipeline and not args.csv_to_yaml and runner in ("default", "native"):
@@ -1655,131 +1696,70 @@ def main(argv=None):
             sys.exit(f"Error: static calibration generation failed (exit code {rc}).")
 
     # -----------------------------------------------------------------------
+    # What the pipeline reads: data tags, sub-workflows, science
+    # -----------------------------------------------------------------------
+    if not args.no_pipeline:
+        input_dirs = (
+            [Path(d).resolve() for d in args.pipeline_input]
+            if args.no_sim and args.pipeline_input
+            else [sim_out]
+        )
+        if have_astropy():
+            data_tags, has_science, active_sub_workflows = scan_inputs(fits_dirs=input_dirs)
+            print(f"  FITS tags found : {sorted(data_tags) or '(none)'}")
+            if active_sub_workflows:
+                print(f"  Sub-workflows   : {sorted(active_sub_workflows)}")
+        else:  # a YAML-only run without astropy (warned about above)
+            data_tags, has_science, active_sub_workflows = yaml_tags, yaml_has_science, yaml_sub_workflows
+        if not active_sub_workflows:
+            sys.exit(
+                "Error: could not identify any METIS sub-workflow from "
+                "FITS headers in: " + ", ".join(str(d) for d in input_dirs)
+            )
+
+    # -----------------------------------------------------------------------
     # Step 1.5: Auto-fetch missing master calibrations (optional)
     # -----------------------------------------------------------------------
     if not args.no_pipeline and args.auto_fetch_calibrations:
-        from .archive import (
-            fetch_missing_calibrations,
-            identify_missing_calibrations,
-        )
-
-        # Resolve tags/workflows from whatever data actually exists now: the
-        # simulation has already run, so for a CSV-only or --no-sim run the
-        # YAML-derived values are empty or stale. Scanning the FITS that are
-        # on disk is the only way to know what we have.
-        fetch_tags = set(yaml_tags)
-        fetch_sub_workflows = set(yaml_sub_workflows)
-        if sim_out.is_dir():
-            _require_astropy("--auto-fetch-calibrations")
-            fits_tags_now, fits_wfs_now = scan_fits_inputs(sim_out)
-            fetch_tags |= fits_tags_now
-            fetch_sub_workflows |= fits_wfs_now
-        # ...and re-derive has_science from those, not from the YAML pass.
-        fetch_has_science = derive_has_science(fetch_tags, fetch_sub_workflows)
+        from .archive import db_session, fetch_missing_calibrations
 
         print("=== Checking for missing calibrations ===")
-        all_missing = []
+        # Masters an earlier run into this output folder fetched count as present.
+        have_tags = set(data_tags) | (scan_fits_inputs(fetched_dir)[0] if fetched_dir.is_dir() else set())
+        missing = missing_calibrations(have_tags, has_science, active_sub_workflows)
         all_fetched = []
-        failed = []
-        for wf in sorted(fetch_sub_workflows):
-            try:
-                missing = identify_missing_calibrations(
-                    workflow=wf,
-                    data_tags=fetch_tags,
-                    has_science=fetch_has_science,
-                )
-                if not missing:
+        failed: dict[str, Exception] = {}
+        with db_session():
+            for wf in sorted({wf for wf, _, _ in missing}):
+                try:
+                    fetched = fetch_missing_calibrations(
+                        workflow=wf,
+                        data_tags=have_tags,
+                        has_science=has_science,
+                        dest_dir=fetched_dir,
+                        on_log=lambda msg: print(f"  {msg}"),
+                    )
+                except Exception as exc:
+                    failed[wf] = exc
+                    print(f"  Warning: auto-fetch for {wf} failed ({exc}); continuing without")
                     continue
-                all_missing.extend(missing)
-                fetched = fetch_missing_calibrations(
-                    workflow=wf,
-                    data_tags=fetch_tags,
-                    has_science=fetch_has_science,
-                    dest_dir=sim_out,
-                    on_log=lambda msg: print(f"  {msg}"),
-                )
-                all_fetched.extend(fetched)
-            except Exception as exc:
-                failed.append(wf)
-                print(f"  Warning: auto-fetch for {wf} failed ({exc}); continuing without")
-        # Distinguish "checked, nothing missing" from "could not check".
-        if not fetch_sub_workflows:
-            print(
-                "  Skipped: could not identify any sub-workflow from the "
-                "input set, so there is nothing to check against."
-            )
-        elif failed and not all_missing:
-            print(f"  Could not check {len(failed)} workflow(s); calibration state is unknown")
-        elif not all_missing:
+                if fetched:  # sub-workflows share masters: don't fetch one twice
+                    all_fetched += fetched
+                    have_tags |= scan_fits_inputs(fetched_dir)[0]
+        not_found = sorted({catg for wf, _, catg in missing if wf not in failed and catg not in have_tags})
+        if not missing:
             print("  All required calibrations already present")
-        elif all_fetched:
-            print(f"  Downloaded {len(all_fetched)} master calibration file(s)")
-        else:
-            catgs = ", ".join(pc for _, pc in all_missing)
-            print(f"  Missing masters not available in archive: {catgs}")
+        if all_fetched:
+            print(f"  Downloaded {len(all_fetched)} master calibration file(s) into {fetched_dir}")
+        if failed:
+            print(f"  Could not query the archive for: {', '.join(sorted(failed))} (see the warnings above)")
+        if not_found:
+            print(f"  Missing masters not available in archive: {', '.join(not_found)}")
 
     # -----------------------------------------------------------------------
     # Step 2: EDPS pipeline
     # -----------------------------------------------------------------------
     if not args.no_pipeline:
-        # When re-using existing FITS (--no-sim), classify them from headers
-        # to determine which sub-workflows' tasks apply.
-        if args.no_sim:
-            # Scan all pipeline input directories for FITS tags and the set
-            # of sub-workflows their DPR.TECH headers imply.  EDPS itself
-            # picks the right files per workflow from the shared input dir,
-            # so we just need to cover every workflow whose raws are present.
-            input_dirs = (
-                [str(Path(d).resolve()) for d in args.pipeline_input]
-                if args.pipeline_input
-                else [str(sim_out)]
-            )
-            fits_tags = set()
-            active_sub_workflows = set()
-            _require_astropy("Reading the input FITS headers (--no-sim)")
-            for d in input_dirs:
-                tags, wfs = scan_fits_inputs(d)
-                fits_tags |= tags
-                active_sub_workflows |= wfs
-            if fits_tags:
-                print(f"  FITS tags found : {sorted(fits_tags)}")
-            if active_sub_workflows:
-                print(f"  Sub-workflows   : {sorted(active_sub_workflows)}")
-            else:
-                sys.exit(
-                    "Error: could not identify any METIS sub-workflow from "
-                    "FITS headers in: " + ", ".join(input_dirs)
-                )
-            data_tags = fits_tags
-            # Re-derive has_science from the FITS tags + active workflow
-            # chains so the -m science flag is added when science raws are
-            # present.
-            has_science = derive_has_science(data_tags, active_sub_workflows)
-        else:
-            data_tags = yaml_tags
-            active_sub_workflows = yaml_sub_workflows
-            # CSV inputs carry no MTR-side tags or sub-workflow (their content
-            # is not parsed), so these are empty for a CSV-only run.  Without
-            # them no EDPS -t target is inferred and EDPS falls back to the
-            # workflow's science products, which a calibration-only run cannot
-            # satisfy -> 0 jobs created.  Recover both from the FITS we just
-            # simulated, mirroring the --no-sim path, so the correct calibration
-            # target gets scheduled for a CSV-only run.
-            if not data_tags or not active_sub_workflows:
-                _require_astropy("Identifying the workflow of a CSV-only run from the simulated FITS")
-                fits_tags, fits_wfs = scan_fits_inputs(sim_out)
-                if not data_tags:
-                    data_tags = fits_tags
-                if not active_sub_workflows:
-                    active_sub_workflows = fits_wfs
-                if data_tags:
-                    print(f"  Data tags     : {sorted(data_tags)}  (inferred from simulated FITS)")
-                if active_sub_workflows:
-                    print(f"  Sub-workflows : {sorted(active_sub_workflows)}  (inferred from simulated FITS)")
-                has_science = derive_has_science(data_tags, active_sub_workflows)
-            if not active_sub_workflows:
-                sys.exit("Error: could not identify any METIS sub-workflow from the simulated FITS headers.")
-
         if args.edps_target:
             unknown = [t for t in args.edps_target if t not in tables.get().graph["tasks"]]
             if unknown:
@@ -1805,15 +1785,15 @@ def main(argv=None):
         # cwd to pipe_out (host-accessible via the MTR bind mount) so the logs
         # land there; for docker/podman the container resolves cwd internally.
         edps_cwd = None if runner in ("docker", "podman") else str(pipe_out)
-        edps_env = _default_subprocess_env() if runner == "default" else None
+        # Never inherited unfiltered: auto-fetch put the archive password in os.environ.
+        edps_env = resolve_runtime_env(runner)
 
-        # Build EDPS input directories: sim output + any extra dirs + static
-        # calibs cache.  EDPS uses nargs='*' for -i, so all paths must follow
-        # a single -i flag (a second -i would replace the first, not append).
-        edps_inputs = ["-i", str(sim_out)]
-        if args.no_sim and args.pipeline_input:
-            for d in args.pipeline_input[1:]:
-                edps_inputs.append(str(Path(d).resolve()))
+        # Build EDPS input directories: the input FITS folders + fetched masters
+        # + static calibs cache.  EDPS uses nargs='*' for -i, so all paths must
+        # follow a single -i flag (a second -i would replace the first, not append).
+        edps_inputs = ["-i", *(str(d) for d in input_dirs)]
+        if args.auto_fetch_calibrations and fetched_dir.is_dir() and any(fetched_dir.iterdir()):
+            edps_inputs.append(str(fetched_dir))
         if args.static and static_calibs_dir.is_dir():
             edps_inputs.append(str(static_calibs_dir))
 
@@ -1861,7 +1841,7 @@ def main(argv=None):
     if args.no_pipeline:
         print(f"\nDone. Pipeline products are in: {pipe_out}")
     else:
-        report_products(pipe_out, runner)
+        report_products(pipe_out, runner, since=run_start)
 
 
 class Terminated(KeyboardInterrupt):
