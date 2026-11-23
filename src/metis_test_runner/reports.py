@@ -40,6 +40,14 @@ def _sof_paths(sof: Path) -> list[Path]:
     return [Path(line.split()[0]) for line in lines if line.strip() and not line.lstrip().startswith("#")]
 
 
+def _mtime(path: Path) -> float:
+    """*path*'s mtime, or 0 if it vanished (EDPS's base_dir may be cleaned at any time)."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def run_jobs(base_dir: Path, roots: list[Path]) -> list[Path]:
     """EDPS job folders under *base_dir* that belong to the run whose inputs live under *roots*."""
     jobs = {sof.parent: _sof_paths(sof) for sof in base_dir.glob("*/*/*/input.sof")}
@@ -53,7 +61,12 @@ def run_jobs(base_dir: Path, roots: list[Path]) -> list[Path]:
             ):
                 member.add(job)
                 changed = True
-    return sorted(member, key=lambda j: (j / "input.sof").stat().st_mtime)
+    return sorted(member, key=lambda j: _mtime(j / "input.sof"))
+
+
+def jobs_stamp(base_dir: Path) -> frozenset[tuple[str, float]]:
+    """Changes when a job folder is added or removed: each one changes its parent's mtime (cheap to stat)."""
+    return frozenset((str(d), _mtime(d)) for d in [base_dir, *base_dir.glob("*"), *base_dir.glob("*/*")])
 
 
 def write_index(output_root: Path, base_dir: Path, roots: list[Path]) -> list[Path]:
@@ -66,7 +79,11 @@ def write_index(output_root: Path, base_dir: Path, roots: list[Path]) -> list[Pa
 
 def job_reports(job: Path) -> list[Report]:
     reports = []
-    for d in sorted(p for p in job.iterdir() if p.is_dir() and (p / "genreport.stdout").exists()):
+    try:
+        dirs = sorted(p for p in job.iterdir() if p.is_dir() and (p / "genreport.stdout").exists())
+    except OSError:  # the job folder vanished
+        return []
+    for d in dirs:
         out = d / "output.json"
         try:
             entries = json.loads(out.read_text())
@@ -104,4 +121,4 @@ def list_runs(output_dir: Path) -> list[Path]:
     if not output_dir.is_dir():
         return []
     runs = [d for d in output_dir.iterdir() if (d / "pipeline").is_dir()]
-    return sorted(runs, key=lambda d: d.stat().st_mtime, reverse=True)
+    return sorted(runs, key=_mtime, reverse=True)

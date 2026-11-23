@@ -6,7 +6,7 @@ from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import QObject, QRunnable, Qt, QThreadPool, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QPixmap
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -28,6 +28,42 @@ from . import edps_config, reports
 from .reports import Panel, Report
 
 _DATA = Qt.ItemDataRole.UserRole
+
+
+class _Signals(QObject):
+    done = pyqtSignal(int, object, object)  # token, result, exception
+
+
+class _Job(QRunnable):
+    """Run *fn* on the global thread pool and emit ``signals.done(token, result, error)``."""
+
+    def __init__(self, fn: Callable[[], object], token: int):
+        super().__init__()
+        self.setAutoDelete(False)
+        self.fn, self.token, self.signals = fn, token, _Signals()
+
+    def run(self) -> None:
+        try:
+            result, error = self.fn(), None
+        except Exception as e:  # reported to the GUI, never raised in a slot
+            result, error = None, e
+        self.signals.done.emit(self.token, result, error)
+
+
+_LIVE: set[_Job] = set()
+
+
+def start_job(fn: Callable[[], object], token: int, slot: Callable[[int, object, object], None]) -> None:
+    """Run *fn* off the GUI thread and call *slot* there with the result.
+
+    Jobs use the global pool and capture no widgets, so a closing window never waits on or kills a
+    thread; a result for a destroyed receiver is simply dropped (queued signals disconnect with it).
+    """
+    job = _Job(fn, token)
+    _LIVE.add(job)
+    job.signals.done.connect(slot)
+    job.signals.done.connect(lambda *_: _LIVE.discard(job))
+    QThreadPool.globalInstance().start(job)
 
 
 def edps_base_dir(run: Path) -> Path | None:
@@ -185,6 +221,9 @@ class ReportsTab(QWidget):
         super().__init__(parent)
         self._output_dir = output_dir
         self._reports: list[Report] = []
+        self._token = 0
+        self._request: tuple[Path, tuple] = (Path(), ())
+        self._cache: dict[Path, tuple[tuple, list[Report]]] = {}
 
         self.run_combo = QComboBox()
         self.run_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
@@ -193,7 +232,7 @@ class ReportsTab(QWidget):
         browse.setProperty("role", "browse")
         browse.clicked.connect(self._browse)
         refresh = QPushButton("Refresh")
-        refresh.clicked.connect(lambda: self.show_run(self.current_run()))
+        refresh.clicked.connect(lambda: self.show_run(self.current_run(), force=True))
         top = QHBoxLayout()
         top.addWidget(QLabel("Run:"))
         top.addWidget(self.run_combo, 1)
@@ -212,8 +251,8 @@ class ReportsTab(QWidget):
         data = self.run_combo.currentData()
         return Path(data) if data else None
 
-    def show_run(self, run: Path | None = None) -> None:
-        """Re-list the runs and show *run* (default: the newest)."""
+    def show_run(self, run: Path | None = None, force: bool = False) -> None:
+        """Re-list the runs and show *run* (default: the newest); *force* rescans a cached run."""
         runs = reports.list_runs(self._output_dir())
         if run is not None and run not in runs:
             runs.insert(0, run)
@@ -225,7 +264,7 @@ class ReportsTab(QWidget):
         if run is not None:
             self.run_combo.setCurrentIndex(runs.index(run))
         self.run_combo.blockSignals(False)
-        self._load()
+        self._load(force)
 
     def reports_for(self, task: str) -> list[Report]:
         return [r for r in self._reports if r.task == task]
@@ -241,29 +280,67 @@ class ReportsTab(QWidget):
         if chosen:
             self.show_run(Path(chosen))
 
-    def _load(self) -> None:
+    @staticmethod
+    def _stamp(run: Path) -> tuple:
+        """What *run*'s reports depend on: its index, or lacking one EDPS's job folders."""
+        try:
+            return ((run / reports.INDEX_NAME).stat().st_mtime,)
+        except OSError:
+            pass
+        base = edps_base_dir(run)
+        return (str(base), reports.jobs_stamp(base)) if base is not None else (None,)
+
+    def _load(self, force: bool = False) -> None:
+        self._token += 1  # supersedes any scan still running
         run = self.current_run()
         if run is None:
-            self._reports = []
-        else:  # the EDPS config is only needed to scan runs made before reports were indexed
+            self._apply(None, [])
+            return
+        stamp = self._stamp(run)
+        cached = self._cache.get(run)
+        if not force and cached is not None and cached[0] == stamp:
+            self._apply(run, cached[1])
+            return
+        self.status.setText("Loading reports…")
+        self._reports = []  # reports_for() must not answer with the previous run's
+        self.viewer.set_reports([])
+
+        def scan() -> list[Report]:  # the EDPS config is only needed for runs made before indexing
             indexed = (run / reports.INDEX_NAME).is_file()
-            self._reports = reports.load_run(run, None if indexed else edps_base_dir(run))
-        images = sum(len(r.panels) for r in self._reports)
-        failed = sum(bool(r.error) for r in self._reports)
+            return reports.load_run(run, None if indexed else edps_base_dir(run))
+
+        self._request = (run, stamp)
+        start_job(scan, self._token, self._loaded)
+
+    def _loaded(self, token: int, result: object, error: object) -> None:
+        if token != self._token:  # a newer request superseded this one
+            return
+        run, stamp = self._request
+        if error is not None:
+            self._reports = []
+            self.status.setText(f"Could not load the reports of {run.name}: {error}")
+            return
+        self._cache[run] = (stamp, result)  # pyright: ignore[reportArgumentType]
+        self._apply(run, result)  # pyright: ignore[reportArgumentType]
+
+    def _apply(self, run: Path | None, items: list[Report]) -> None:
+        self._reports = items
+        images = sum(len(r.panels) for r in items)
+        failed = sum(bool(r.error) for r in items)
         if run is None:
             self.status.setText(f"No runs in {self._output_dir()} yet.")
-        elif not self._reports:
+        elif not items:
             self.status.setText(
                 "No ADARI reports for this run. EDPS makes them when the pipeline's workflows declare "
                 "reports and the run's report type is not 'none'."
             )
         else:
-            jobs = len({r.job_dir for r in self._reports})
+            jobs = len({r.job_dir for r in items})
             self.status.setText(
-                f"{images} image(s) from {len(self._reports)} report(s) in {jobs} EDPS job(s)"
+                f"{images} image(s) from {len(items)} report(s) in {jobs} EDPS job(s)"
                 + (f"; {failed} report(s) failed" if failed else "")
             )
-        self.viewer.set_reports(self._reports)
+        self.viewer.set_reports(items)
 
 
 class ReportsDialog(QDialog):

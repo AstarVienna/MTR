@@ -2,6 +2,7 @@
 
 import json
 from argparse import Namespace
+from pathlib import Path
 
 import pytest
 
@@ -101,6 +102,22 @@ class TestLoadRun:
         assert reports.list_runs(tmp_path / "missing") == []
 
 
+class TestVanishedJobs:
+    def test_a_job_removed_mid_scan_is_skipped(self, layout, monkeypatch):
+        real_stat = Path.stat
+
+        def flaky(self, *a, **k):
+            if self == layout.dark / "input.sof":
+                raise FileNotFoundError(self)
+            return real_stat(self, *a, **k)
+
+        monkeypatch.setattr(Path, "stat", flaky)
+        assert layout.dark in reports.run_jobs(layout.base, [layout.run])
+
+    def test_reports_of_a_vanished_job_are_empty(self, tmp_path):
+        assert reports.job_reports(tmp_path / "gone") == []
+
+
 class TestIndexReports:
     def _args(self, report_type="all", pipeline_input=None):
         return Namespace(report_type=report_type, pipeline_input=pipeline_input)
@@ -135,6 +152,18 @@ class TestIndexReports:
         assert not (layout.run / reports.INDEX_NAME).exists()
 
 
+def _wait(predicate, timeout=5.0):
+    """Process Qt events until *predicate()* holds (fails after *timeout* seconds)."""
+    import time
+
+    from PyQt6.QtCore import QCoreApplication
+
+    end = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < end, "timed out waiting for the worker"
+        QCoreApplication.processEvents()
+
+
 class TestViews:
     def test_reports_tab_lists_run(self, qapp, layout):
         from metis_test_runner.reports_view import ReportsTab
@@ -144,6 +173,7 @@ class TestViews:
         reports.write_index(layout.run, layout.base, [layout.run])
         tab = ReportsTab(lambda: layout.run.parent)
         tab.show_run(layout.run)
+        _wait(lambda: tab.viewer.tree.topLevelItemCount() == 2)
         assert tab.current_run() == layout.run
         assert tab.run_combo.count() == 2
         assert tab.viewer.tree.topLevelItemCount() == 2
@@ -160,8 +190,8 @@ class TestViews:
         monkeypatch.setattr(reports_view, "edps_base_dir", lambda run: layout.base)
         tab = ReportsTab(lambda: layout.run.parent)
         tab.show_run(layout.run)
+        _wait(lambda: "No ADARI reports" in tab.status.text())
         assert tab.viewer.tree.topLevelItemCount() == 0
-        assert "No ADARI reports" in tab.status.text()
 
     def test_dialog_shows_task_reports(self, qapp, layout):
         from metis_test_runner.reports_view import ReportsDialog
@@ -182,6 +212,7 @@ class TestViews:
         win = gui.MainWindow()
         win._run_tab.run_finished.emit(str(layout.run))
         assert win._reports_tab.current_run() == layout.run
+        _wait(lambda: win._reports_tab.viewer.tree.topLevelItemCount() > 0)
         win._show_task_reports("metis_ifu_dark")
         (dialog,) = [w for w in qapp.topLevelWidgets() if isinstance(w, ReportsDialog) and w.isVisible()]
         assert dialog.viewer.tree.topLevelItemCount() == 1
@@ -200,3 +231,87 @@ class TestViews:
         win.task_menu("metis_ifu_dark", QPoint(0, 0))
         assert shown == ["metis_ifu_dark"]
         win.close()
+
+
+class TestAsyncReportsTab:
+    @pytest.fixture
+    def tab(self, qapp, layout, monkeypatch):
+        from metis_test_runner import reports_view
+
+        _report(layout.dark, "metis_det_dark", ["MASTER_DARK_IFU"])
+        reports.write_index(layout.run, layout.base, [layout.run])
+        calls = []
+        real = reports.load_run
+
+        def counting(run, base=None):
+            calls.append(run)
+            return real(run, base)
+
+        monkeypatch.setattr(reports, "load_run", counting)
+        tab = reports_view.ReportsTab(lambda: layout.run.parent)
+        tab.calls = calls
+        return tab
+
+    def test_load_is_async_and_applied(self, tab, layout):
+        tab.show_run(layout.run)
+        assert tab.status.text() == "Loading reports…"
+        _wait(lambda: "image(s)" in tab.status.text())
+        assert tab.viewer.tree.topLevelItemCount() == 1
+
+    def test_superseded_request_is_dropped(self, tab, layout):
+        tab.show_run(layout.run)
+        stale = tab._token
+        tab._load(force=True)
+        tab._loaded(stale, [], None)  # a late result of the first request
+        assert tab.status.text() == "Loading reports…"
+        _wait(lambda: "image(s)" in tab.status.text())
+
+    def test_error_becomes_status(self, tab, layout, monkeypatch):
+        def boom(run, base=None):
+            raise OSError("disk gone")
+
+        monkeypatch.setattr(reports, "load_run", boom)
+        tab.show_run(layout.run)
+        _wait(lambda: "Could not load" in tab.status.text())
+        assert "disk gone" in tab.status.text()
+
+    def test_unindexed_run_is_rescanned_when_edps_jobs_change(self, tab, layout, monkeypatch):
+        import shutil
+
+        from metis_test_runner import reports_view
+
+        (layout.run / reports.INDEX_NAME).unlink()  # a run from before the index
+        monkeypatch.setattr(reports_view, "edps_base_dir", lambda run: layout.base)
+        tab.show_run(layout.run)
+        _wait(lambda: "image(s)" in tab.status.text())
+        tab._load()
+        assert len(tab.calls) == 1  # nothing changed: cached
+        shutil.rmtree(layout.dark.parent)  # EDPS's job folder was cleaned
+        tab._load()
+        _wait(lambda: "No ADARI reports" in tab.status.text())
+        assert len(tab.calls) == 2
+
+    def test_jobs_stamp_follows_added_and_removed_jobs(self, layout):
+        import os
+        import shutil
+
+        before = reports.jobs_stamp(layout.base)
+        assert reports.jobs_stamp(layout.base) == before
+        _job(layout.base, "metis_ifu_distortion", "e5", [])
+        assert reports.jobs_stamp(layout.base) != before
+        task = layout.dark.parent
+        os.utime(task, (0, 0))
+        before = reports.jobs_stamp(layout.base)
+        shutil.rmtree(layout.dark)  # same count, but its task folder's mtime moves
+        assert reports.jobs_stamp(layout.base) != before
+
+    def test_cache_hit_and_refresh(self, tab, layout):
+        tab.show_run(layout.run)
+        _wait(lambda: "image(s)" in tab.status.text())
+        tab._load()
+        assert "image(s)" in tab.status.text() and len(tab.calls) == 1
+        tab.show_run(layout.run)
+        assert len(tab.calls) == 1
+        tab.show_run(layout.run, force=True)
+        _wait(lambda: len(tab.calls) == 2)
+        _wait(lambda: "image(s)" in tab.status.text())
