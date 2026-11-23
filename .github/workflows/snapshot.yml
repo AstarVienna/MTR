@@ -1,7 +1,7 @@
 name: Refresh upstream snapshot
 
 # Opens (or updates) a PR when METIS_Pipeline's workflows drift from the bundled
-# snapshot, so drift is reviewed promptly instead of failing a release.
+# snapshot, and merges it once the PR's Unit Tests (incl. the upstream contract) pass.
 on:
   schedule:
     - cron: "0 4 * * 1,4"  # Mondays and Thursdays
@@ -17,9 +17,9 @@ concurrency:
 
 jobs:
   refresh:
-    name: Regenerate and open a PR
+    name: Regenerate, open a PR and merge it
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 45
     env:
       BRANCH: automation/upstream-snapshot
       SNAPSHOT: src/metis_test_runner/upstream_snapshot.json
@@ -69,6 +69,7 @@ jobs:
           fi
 
       - name: Open or update the PR
+        id: pr
         if: steps.check.outputs.drift == 'true'
         env:
           GH_TOKEN: ${{ secrets.SNAPSHOT_PR_TOKEN || github.token }}
@@ -81,14 +82,15 @@ jobs:
           git add "$SNAPSHOT"
           git commit -m "Refresh upstream snapshot (METIS_Pipeline $commit)"
           git push --force origin "$BRANCH"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           {
             echo "METIS_Pipeline \`$commit\` changed the workflow tables MTR bundles for the"
             echo "\`docker\` / \`podman\` runners:"
             echo
             grep 'differs from upstream' drift.txt | sed 's/^.*: \(.*\) differs.*/- `\1`/'
             echo
-            echo "Review the diff before merging: a change here can change which task MTR"
-            echo "sends data to. Add a CHANGELOG entry (\"Bundled snapshot follows …\")."
+            echo "This PR merges itself once its Unit Tests pass. A change here can change"
+            echo "which task MTR sends data to; if they fail, review the diff by hand."
           } > body.md
           if [ -n "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
             gh pr edit "$BRANCH" --body-file body.md \
@@ -97,3 +99,30 @@ jobs:
             gh pr create --head "$BRANCH" --base main \
               --title "Refresh upstream snapshot (METIS_Pipeline $commit)" --body-file body.md
           fi
+
+      # main has no required checks, so `gh pr merge --auto` would not wait for CI.
+      # Watch the PR's own Unit Tests run for this exact commit instead.
+      - name: Merge once the PR's tests pass
+        if: steps.check.outputs.drift == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.SNAPSHOT_PR_TOKEN || github.token }}
+          HAS_PAT: ${{ secrets.SNAPSHOT_PR_TOKEN != '' }}
+          SHA: ${{ steps.pr.outputs.sha }}
+        run: |
+          if [ "$HAS_PAT" != "true" ]; then
+            echo "::notice::No SNAPSHOT_PR_TOKEN, so the PR runs no CI; leaving it for review."
+            exit 0
+          fi
+          run=
+          for _ in $(seq 40); do
+            run=$(gh run list --commit "$SHA" --workflow unit_tests.yaml --event pull_request \
+              --json databaseId --jq '.[0].databaseId // empty')
+            [ -n "$run" ] && break
+            sleep 15
+          done
+          if [ -z "$run" ]; then
+            echo "::error::Unit Tests never started for $SHA; leaving the PR for review."
+            exit 1
+          fi
+          gh run watch "$run" --exit-status --interval 30
+          gh pr merge "$BRANCH" --squash --delete-branch --match-head-commit "$SHA"
