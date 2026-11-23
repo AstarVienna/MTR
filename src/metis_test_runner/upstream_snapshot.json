@@ -1,5 +1,5 @@
 {
- "pipeline_commit": "134c9bf5",
+ "pipeline_commit": "ae4e72de",
  "irdb_release": "2026-09-23",
  "dpr_to_tag": [
   [
@@ -2207,14 +2207,6 @@
     ]
    ],
    [
-    "source:lm_wcu_off_raw",
-    "metis_lm_lss_lingain",
-    "assoc",
-    [
-     "LM_WCU_OFF_RAW"
-    ]
-   ],
-   [
     "task:metis_lm_lss_mf_model",
     "metis_lm_lss_mf_calctrans",
     "main",
@@ -3052,14 +3044,6 @@
     "main",
     [
      "DETLIN_GEO_RAW"
-    ]
-   ],
-   [
-    "source:n_wcu_off_raw",
-    "metis_n_lss_lingain",
-    "assoc",
-    [
-     "N_WCU_OFF_RAW"
     ]
    ],
    [
