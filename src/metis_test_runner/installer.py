@@ -120,7 +120,8 @@ def _assert_safe_to_remove(target: Path, *, follow_symlink: bool = False) -> Non
             f"Refusing to remove {resolved}: not a real directory. {docs.see('uninstall-refusing')}"
         )
     home = Path.home().resolve()
-    if resolved in {Path("/"), home, *home.parents} or len(resolved.parts) < 3:
+    shallow = min(len(resolved.parts), len(target.absolute().parts)) < 3  # /tmp → /private/tmp on macOS
+    if resolved in {Path("/"), home, *home.parents} or shallow:
         raise RuntimeError(
             f"Refusing to remove {resolved}: this does not look like an MTR "
             f"data directory. Check METIS_DATA_DIR. {docs.see('uninstall-refusing')}"

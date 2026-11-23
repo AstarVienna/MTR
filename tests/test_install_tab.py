@@ -7,6 +7,7 @@ needs the network and pip-installs the pipeline into the current interpreter.
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -34,8 +35,12 @@ def installed(qapp, tmp_path_factory):
 
         tab = gui.InstallTab()
         QTest.mouseClick(tab.install_btn, Qt.MouseButton.LeftButton)
-        assert tab._worker is not None, "the click did not start an install"
         assert not tab.install_btn.isEnabled()
+        deadline = time.monotonic() + 60  # the click first checks the clones for local changes
+        while tab._worker is None:
+            assert time.monotonic() < deadline, "the click did not start an install"
+            qapp.processEvents()
+            time.sleep(0.01)
 
         # Every installer step has a timeout, so `done` always arrives.
         results = []
