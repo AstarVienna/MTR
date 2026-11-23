@@ -14,6 +14,7 @@ Thin client wrapper around the MetisWISE Python API.  Provides:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -27,14 +28,6 @@ from pathlib import Path
 from . import credentials, paths, tables
 from .env import ENV_CFG_FIELDS as _ENV_CFG_FIELDS
 from .indexes import ENTROPYNAUT_INDEX, ESO_INDEX, PYCPL_INDEX
-
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
-
-# Module-level alias kept for back-compat with tests / external callers.
-# Now resolves to the platformdirs user data directory.
-REPO_ROOT = paths.data_dir()
 
 # ---------------------------------------------------------------------------
 # Section A — MetisWISE availability & installation
@@ -168,7 +161,8 @@ def _ensure_db_connection() -> None:
 
     MetisWISE uses thread-local storage; each new thread must create its
     own profile and database connection.  Repeated calls on the same
-    thread are no-ops.
+    thread are no-ops.  Close it with :func:`close_db_connection` (or run
+    the work inside :func:`db_session`) on the same thread.
     """
     if getattr(_thread_local, "db_ready", False):
         return
@@ -188,10 +182,47 @@ def _ensure_db_connection() -> None:
     from common.config.Profile import profiles
 
     profiles.create_profile()
+    imported = "common.database.Database" in sys.modules
     from common.database.Database import database
 
+    # commonwise keys connections by thread ident, which the OS reuses: a
+    # connection already filed under this new thread's ident belongs to a
+    # finished thread (with possibly other credentials). The first import
+    # connects on this thread itself, so only an earlier import can leave one.
+    if imported and database.connected():
+        _disconnect(database)
     database.connect()
     _thread_local.db_ready = True
+
+
+def _disconnect(database) -> None:
+    try:
+        database.disconnect()
+    except Exception:  # a dead connection must not mask the caller's result
+        pass
+
+
+def close_db_connection() -> None:
+    """Close this thread's archive DB connection, if it opened one; never raises."""
+    if not getattr(_thread_local, "db_ready", False):
+        return
+    _thread_local.db_ready = False
+    module = sys.modules.get("common.database.Database")
+    if module is not None:
+        _disconnect(module.database)
+
+
+@contextlib.contextmanager
+def db_session():
+    """Run archive operations on this thread, closing its DB connection afterwards.
+
+    Without this every worker thread left a Postgres connection open until
+    the process exited.
+    """
+    try:
+        yield
+    finally:
+        close_db_connection()
 
 
 def reset_db_connection() -> None:
@@ -201,7 +232,7 @@ def reset_db_connection() -> None:
     ``query_archive`` / ``download_file`` call on this thread picks up
     the updated settings.
     """
-    _thread_local.db_ready = False
+    close_db_connection()
 
 
 def apply_db_credentials(fields: dict[str, str]) -> None:
