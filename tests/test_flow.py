@@ -168,3 +168,68 @@ class TestTaskCheck:
         assert not self._check("metis_ifu_dark", dark_only, pipeline=False)[0]
         ok, reason, _ = self._check("metis_ifu_dark", "seq.csv")
         assert not ok and "CSV" in reason
+
+
+class TestFlowWindowOverlay:
+    @pytest.fixture
+    def win(self, qapp, monkeypatch, dark_only):
+        from metis_test_runner.flow_view import FlowWindow
+        from metis_test_runner.gui import THEMES
+
+        calls = []
+        real = flow.overlay_for
+
+        def counting(run):
+            calls.append(run)
+            return real(run)
+
+        monkeypatch.setattr(flow, "overlay_for", counting)
+        w = FlowWindow(
+            THEMES["dark"] if "dark" in THEMES else next(iter(THEMES.values())),
+            lambda: flow.RunInput([dark_only], []),
+        )
+        w.calls = calls
+        return w
+
+    @staticmethod
+    def _wait(predicate, timeout=10.0):
+        import time
+
+        from PyQt6.QtCore import QCoreApplication
+
+        end = time.monotonic() + timeout
+        while not predicate():
+            assert time.monotonic() < end, "timed out waiting for the worker"
+            QCoreApplication.processEvents()
+
+    def test_overlay_computed_off_thread_and_applied(self, win):
+        win.overlay_cb.setChecked(True)
+        assert "Scanning the Run tab input" in win.status.text()
+        assert win._overlay is None
+        self._wait(lambda: win._overlay is not None)
+        assert "Scanning" not in win.status.text()
+
+    def test_lane_toggle_reuses_overlay_and_refresh_rescans(self, win):
+        win.overlay_cb.setChecked(True)
+        self._wait(lambda: win._overlay is not None)
+        win.toggle_lane(next(iter(flow.lanes())))
+        win.apply_theme(win.colors)
+        assert win._overlay is not None and len(win.calls) == 1
+        win.rebuild(refresh=True)
+        self._wait(lambda: len(win.calls) == 2)
+        self._wait(lambda: win._overlay is not None)
+
+    def test_stale_result_dropped(self, win):
+        win.overlay_cb.setChecked(True)
+        stale = win._token
+        win.rebuild(refresh=True)
+        win._overlay_ready(stale, flow.Overlay(set(), [], set(), set(), [], False), None)
+        assert win._overlay is None
+        self._wait(lambda: win._overlay is not None)
+
+    def test_unchecking_drops_pending_scan(self, win):
+        win.overlay_cb.setChecked(True)
+        win.overlay_cb.setChecked(False)
+        for _ in range(50):
+            win._overlay_ready(win._token - 1, None, None)
+        assert win._overlay is None and win._overlay is None

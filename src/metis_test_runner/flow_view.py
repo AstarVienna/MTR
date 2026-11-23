@@ -40,6 +40,7 @@ from PyQt6.QtWidgets import (
 )
 
 from . import flow
+from .reports_view import start_job
 
 NODE_H = 38
 RAW_H = 26
@@ -308,6 +309,11 @@ class FlowWindow(QWidget):
         self._up: dict[str, set[str]] = defaultdict(set)
         self._down: dict[str, set[str]] = defaultdict(set)
         self.flow: flow.Flow | None = None
+        self._token = 0  # newest overlay scan; older results are dropped
+        self._inflight: tuple | None = None  # input key of the running scan
+        self._overlay: tuple[tuple, flow.Overlay | None, str] | None = None  # key, result, error
+        self._check_token = 0  # newest Run pinned task check
+        self._check: tuple[str, flow.RunInput] | None = None  # task and input it checks
 
         self.bold_font = QFont(self.font())
         self.bold_font.setBold(True)
@@ -322,10 +328,10 @@ class FlowWindow(QWidget):
         collapse_btn.clicked.connect(lambda: self.set_expanded(set()))
         self.overlay_cb = QCheckBox("Highlight Run tab input")
         self.overlay_cb.setEnabled(run_input is not None)
-        self.overlay_cb.toggled.connect(lambda _on: self.rebuild())
+        self.overlay_cb.toggled.connect(lambda on: self.rebuild(refresh=on))
         refresh_btn = QPushButton("Refresh")
         refresh_btn.setToolTip("Re-read the Run tab and the archive install state")
-        refresh_btn.clicked.connect(lambda: self.rebuild())
+        refresh_btn.clicked.connect(lambda: self.rebuild(refresh=True))
         self.fit_btn = QPushButton("Fit")
         self.fit_btn.setCheckable(True)
         self.fit_btn.setChecked(True)
@@ -373,9 +379,9 @@ class FlowWindow(QWidget):
 
     def showEvent(self, event) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
         super().showEvent(event)
-        # The archive may have been installed since the window was last open.
+        # The archive may have been installed, or the input files changed, since the window was last open.
         if not event.spontaneous():
-            self.rebuild()
+            self.rebuild(refresh=True)
             QTimer.singleShot(0, self.fit)
 
     def fit(self) -> None:
@@ -406,12 +412,29 @@ class FlowWindow(QWidget):
     def toggle_lane(self, lane: str) -> None:
         self.set_expanded(self.expanded ^ {lane})
 
-    def rebuild(self, fit: bool = False) -> None:
+    @staticmethod
+    def _input_key(run: flow.RunInput) -> tuple:
+        return (tuple(run.files), tuple(run.fits_dirs), run.simulate, run.pipeline, run.auto_fetch)
+
+    def rebuild(self, fit: bool = False, refresh: bool = False) -> None:
+        """Redraw; the Run tab input overlay is scanned off the GUI thread (*refresh* rescans)."""
         from .archive import metiswise_available
 
-        overlay = None
+        overlay, scanning, overlay_error = None, False, ""
         if self.overlay_cb.isChecked() and self._run_input is not None:
-            overlay = flow.overlay_for(self._run_input())
+            run = self._run_input()
+            key = self._input_key(run)
+            if not refresh and self._overlay is not None and self._overlay[0] == key:
+                overlay, overlay_error = self._overlay[1], self._overlay[2]
+            else:
+                scanning = True
+                if refresh or self._inflight != key:
+                    self._token += 1
+                    self._inflight = key
+                    start_job(lambda: flow.overlay_for(run), self._token, self._overlay_ready)
+        else:
+            self._token += 1  # drop a scan nobody wants any more
+            self._inflight = None
         archive_installed = metiswise_available()
         self.flow = flow.build_flow(self.expanded, archive_installed, overlay)
         self._hover = self._hover_next = None
@@ -427,6 +450,10 @@ class FlowWindow(QWidget):
         if not archive_installed:
             notes.append("Archive not shown: MetisWISE is not installed (Archive tab).")
         notes += self.flow.notes
+        if scanning:
+            notes.append("Scanning the Run tab input…")
+        if overlay_error:
+            notes.append(f"Run tab input scan failed: {overlay_error}")
         notes.append(
             "Wheel: zoom · drag: pan · Fit: back to the whole flow · "
             "click a sub-workflow to show or hide its tasks · hover a node to trace it, click to pin · "
@@ -435,6 +462,16 @@ class FlowWindow(QWidget):
         self.status.setText("\n".join(notes))
         if self._auto_fit:
             self._fit_rect(self.scene.itemsBoundingRect())
+
+    def _overlay_ready(self, token: int, result: object, error: object) -> None:
+        if token != self._token:
+            return
+        key, self._inflight = self._inflight, None
+        if key is None:
+            return
+        # Keyed by the input the scan ran on: if the input changed since, rebuild() rescans.
+        self._overlay = (key, result, str(error) if error else "")  # pyright: ignore[reportAssignmentType]
+        self.rebuild()
 
     def click(self, item: QGraphicsItem | None) -> None:
         if isinstance(item, _LaneHeader) and item.lane:
@@ -467,7 +504,9 @@ class FlowWindow(QWidget):
 
     def _update_run_task_btn(self) -> None:
         task = self._pinned_task()
-        self.run_task_btn.setEnabled(task is not None and self._run_task is not None)
+        checking = self._check is not None and self._check[0] == task
+        self.run_task_btn.setText("Checking…" if checking else "Run pinned task")
+        self.run_task_btn.setEnabled(task is not None and self._run_task is not None and not checking)
         self.run_task_btn.setToolTip(
             f"Run the Run tab input with EDPS targeting {task}" if task else "Click a task to pin it first"
         )
@@ -481,12 +520,30 @@ class FlowWindow(QWidget):
             self._show_reports(task)
 
     def run_pinned_task(self) -> None:
-        """Run the pinned task on the Run tab input, or say why it cannot run."""
+        """Check the pinned task off the GUI thread (it scans the input); _task_checked runs it."""
         task = self._pinned_task()
         if task is None or self._run_task is None or self._run_input is None:
             return
         run = self._run_input()
-        ok, reason, warnings = flow.task_check(task, run)
+        self._check_token += 1
+        self._check = (task, run)
+        self._update_run_task_btn()
+        start_job(lambda: flow.task_check(task, run), self._check_token, self._task_checked)
+
+    def _task_checked(self, token: int, result: object, error: object) -> None:
+        if token != self._check_token or self._check is None:
+            return
+        (task, run), self._check = self._check, None
+        self._update_run_task_btn()
+        if task != self._pinned_task() or self._run_input is None or self._run_task is None:
+            return  # pinned another node meanwhile
+        if self._input_key(self._run_input()) != self._input_key(run):
+            self.run_pinned_task()  # the Run tab input changed meanwhile: check that instead
+            return
+        if error is not None:
+            QMessageBox.warning(self, "Task check failed", f"Could not check {task}: {error}")
+            return
+        ok, reason, warnings = result  # pyright: ignore[reportGeneralTypeIssues]
         if not ok:
             QMessageBox.warning(self, "Task cannot run", f"{task} cannot run on this input.\n\n{reason}")
             return

@@ -1619,13 +1619,13 @@ class TestDataFlowWindow:
             win._run_tab.input_list.addItem(str(examples / "small_test.yaml"))
             win._run_tab.rb_both.setChecked(True)
             win._run_tab.csv_to_yaml_cb.setChecked(False)
-            flow_win.overlay_cb.setChecked(True)
-            assert flow_win.flow.nodes["group:metis.metis_ifu_wkf"].state == "target"
-            flow_win.toggle_lane("metis.metis_ifu_wkf")
+            flow_win.overlay_cb.setChecked(True)  # the overlay is scanned in the background
+            _wait_for(qapp, lambda: flow_win.flow.nodes["group:metis.metis_ifu_wkf"].state == "target")
+            flow_win.toggle_lane("metis.metis_ifu_wkf")  # same input: the cached overlay
             assert flow_win.flow.nodes["task:metis_ifu_dark"].state == "target"
             win._run_tab.rb_sim_only.setChecked(True)
             flow_win.rebuild()
-            assert flow_win.flow.nodes["task:metis_ifu_dark"].state == "idle"
+            _wait_for(qapp, lambda: flow_win.flow.nodes["task:metis_ifu_dark"].state == "idle")
         finally:
             win.close()
 
@@ -1752,11 +1752,37 @@ class TestDataFlowWindow:
             flow_win.pin("task:metis_ifu_rsrf")
             assert flow_win.run_task_btn.isEnabled()
             flow_win.run_task_btn.click()
+            assert flow_win.run_task_btn.text() == "Checking…" and not flow_win.run_task_btn.isEnabled()
+            _wait_for(qapp, lambda: warned)
             assert runs == [] and "IFU_RSRF_RAW" in warned[0]
+            assert flow_win.run_task_btn.isEnabled()
             flow_win.pin("task:metis_ifu_lingain")
             flow_win.run_task_btn.click()
+            _wait_for(qapp, lambda: runs)
             assert runs[0][runs[0].index("--edps-target") + 1] == "metis_ifu_lingain"
             assert win._run_tab._edps_target is None
+        finally:
+            win.close()
+
+    def test_run_pinned_task_drops_a_check_for_a_task_no_longer_pinned(self, qapp, monkeypatch):
+        from PyQt6.QtWidgets import QMessageBox
+
+        from metis_test_runner import flow
+
+        win, flow_win = self._open(monkeypatch)
+        try:
+            monkeypatch.setattr(flow, "task_check", lambda task, run: (True, "", []))
+            asked = []
+            monkeypatch.setattr(
+                QMessageBox, "question", lambda *a: asked.append(a) or QMessageBox.StandardButton.No
+            )
+            flow_win.toggle_lane("metis.metis_ifu_wkf")
+            flow_win.pin("task:metis_ifu_lingain")
+            flow_win.run_task_btn.click()
+            flow_win.pin("task:metis_ifu_rsrf")  # before the check's result arrives
+            assert flow_win.run_task_btn.isEnabled()
+            _wait_for(qapp, lambda: flow_win._check is None)
+            assert asked == []
         finally:
             win.close()
 

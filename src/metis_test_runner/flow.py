@@ -98,14 +98,6 @@ def lanes() -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _have_astropy() -> bool:
-    try:
-        import astropy.io.fits  # noqa: F401
-    except ImportError:
-        return False
-    return True
-
-
 def _running(flags: list[str], present: set[str]) -> set[str]:
     """Tasks EDPS would run for *flags*: the targets and their ancestors that have input data."""
     t = tables.get()
@@ -142,8 +134,11 @@ def _running(flags: list[str], present: set[str]) -> set[str]:
 
 
 def overlay_for(run: RunInput) -> Overlay:
-    """Mirror run_metis's input scan and EDPS target choice for *run*."""
-    from . import archive, run_metis
+    """What run_metis would infer and target for *run*, from the same helpers.
+
+    Simulating, the YAML stands in for the frames that do not exist yet.
+    """
+    from . import run_metis
 
     if not run.simulate and not run.pipeline:
         return Overlay(set(), [], set(), set(), ["CSV to YAML translation only: nothing runs."], False)
@@ -156,7 +151,7 @@ def overlay_for(run: RunInput) -> Overlay:
     if run.simulate:
         if yaml_files:
             try:
-                tags, has_science, wfs = run_metis.scan_yaml_inputs(yaml_files)
+                tags, has_science, wfs = run_metis.scan_inputs(yaml_files=yaml_files)
             except (OSError, ValueError) as exc:
                 notes.append(f"Cannot read the input: {exc}")
         if n_csv:
@@ -169,35 +164,27 @@ def overlay_for(run: RunInput) -> Overlay:
     elif run.pipeline:
         if not run.fits_dirs:
             notes.append("The Run tab has no pipeline input folders.")
-        elif not _have_astropy():
+        elif not run_metis.have_astropy():
             notes.append("Reading the pipeline input FITS headers needs astropy.")
         else:
-            for d in run.fits_dirs:
-                found, found_wfs = run_metis.scan_fits_inputs(d)
-                tags |= found
-                wfs |= found_wfs
-            has_science = run_metis.derive_has_science(tags, wfs)
+            tags, has_science, wfs = run_metis.scan_inputs(fits_dirs=run.fits_dirs)
     if not run.pipeline:
         notes.append("Simulate only: the pipeline does not run.")
         return Overlay(tags, [], set(), set(), notes, run.simulate)
 
     flags = run_metis.infer_edps_targets_for_workflows(tags, has_science, wfs)
-    missing = [
-        (task, catg)
-        for wf in sorted(wfs)
-        for task, catg in archive.identify_missing_calibrations(wf, tags, has_science)
-    ]
+    missing = run_metis.missing_calibrations(tags, has_science, wfs)
     if flags:
         notes.append("EDPS target: " + " ".join(flags))
     elif tags:
         notes.append("No EDPS target inferred; EDPS would use the workflow default.")
     if missing:
-        catgs = ", ".join(sorted({c for _, c in missing}))
+        catgs = ", ".join(sorted({c for _, _, c in missing}))
         how = (
             "auto-fetch will try the archive" if run.auto_fetch else "add them as input or enable auto-fetch"
         )
         notes.append(f"Missing master calibrations: {catgs} ({how}).")
-    return Overlay(tags, flags, _running(flags, tags), {t for t, _ in missing}, notes, run.simulate)
+    return Overlay(tags, flags, _running(flags, tags), {t for _, t, _ in missing}, notes, run.simulate)
 
 
 def _blocker(
