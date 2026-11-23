@@ -110,7 +110,10 @@ pip-installs the dependencies the cloned pymetis declares (`pycpl`, `edps`,
 `pyesorex`, `adari_core`, …), `scopesim` and `scopesim_templates` into MTR's
 own venv, and initialises EDPS on port 4444.
 Re-running updates the clones in place rather than re-cloning, and out-of-band
-installs such as MetisWISE are preserved. *Uninstall* reverses all of it.
+installs such as MetisWISE are preserved. *Uninstall* reverses all of it; in the data
+directory it deletes only what MTR created there (clones, `inst_pkgs`, `output`, …).
+If `METIS_DATA_DIR` names a folder without MTR's `.mtr-data-dir` marker, the confirmation lists
+what would be deleted, and `mtr-uninstall --yes` keeps `output/`, `.env` and `settings.json` there.
 
 Under **Repositories (advanced)**, leave the version fields blank to track each repository's default
 branch. Set one to install a specific branch, tag or commit instead — for people
@@ -563,7 +566,7 @@ shell runs inside the named container. These replace the old
 ```
 MTR/
 ├── src/metis_test_runner/
-│   ├── gui.py              # Graphical front-end (PyQt6) — primary entry point
+│   ├── gui/               # Graphical front-end (PyQt6) — primary entry point
 │   ├── launcher.py         # `mtr` entry point: starts the GUI or explains why not
 │   ├── run_metis.py        # Headless CLI (used directly or wrapped by the GUI)
 │   ├── installer.py        # Install/uninstall logic; mtr-install / mtr-uninstall
@@ -773,8 +776,8 @@ checkout. Running tests does not need *Install / Update* in between.
 
 **What goes wrong:** as a safety check, Uninstall never deletes `/`, your home
 directory or any of its parents, a top-level directory such as `/data`, or the
-directory you are currently in. So it refuses when `METIS_DATA_DIR` points at
-one of those, or when you run it from the data directory itself (easy to do
+directory you are currently in or one containing it. So it refuses when `METIS_DATA_DIR` points at
+one of those, or when you run it from inside the data directory (easy to do
 over SSH). The rest of the uninstall still runs, then it reports "finished with
 errors" and `mtr-uninstall` exits 1. MTR 0.5.0 and earlier reported "Uninstall
 complete" regardless, and blamed `METIS_DATA_DIR` in both cases.

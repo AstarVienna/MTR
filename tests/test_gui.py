@@ -1,5 +1,5 @@
 """
-Unit tests for gui.py.
+Unit tests for the gui package.
 
 Covers:
   - append_log helper
@@ -21,8 +21,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from PyQt6.QtCore import QThread
 
-from metis_test_runner import gui, installer
+from metis_test_runner import gui, installer, paths
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -195,18 +196,16 @@ class TestRunnerFieldVisibility:
 
 class TestInstPkgsPlaceholder:
     def test_default_runner_placeholder_shows_resolved_path(self, qapp):
-        from metis_test_runner import gui
 
         tab = _make_run_tab(qapp)
         tab.runner_combo.setCurrentText("default")
-        assert tab.inst_edit.placeholderText() == str(gui.REPO_ROOT / "inst_pkgs")
+        assert tab.inst_edit.placeholderText() == str(paths.inst_pkgs_dir())
 
     def test_native_runner_placeholder_shows_resolved_path(self, qapp):
-        from metis_test_runner import gui
 
         tab = _make_run_tab(qapp)
         tab.runner_combo.setCurrentText("native")
-        assert tab.inst_edit.placeholderText() == str(gui.REPO_ROOT / "inst_pkgs")
+        assert tab.inst_edit.placeholderText() == str(paths.inst_pkgs_dir())
 
     def test_docker_runner_placeholder_indicates_container(self, qapp):
         tab = _make_run_tab(qapp)
@@ -219,11 +218,10 @@ class TestInstPkgsPlaceholder:
         assert "container" in tab.inst_edit.placeholderText()
 
     def test_switching_runner_updates_placeholder(self, qapp):
-        from metis_test_runner import gui
 
         tab = _make_run_tab(qapp)
         tab.runner_combo.setCurrentText("default")
-        assert tab.inst_edit.placeholderText() == str(gui.REPO_ROOT / "inst_pkgs")
+        assert tab.inst_edit.placeholderText() == str(paths.inst_pkgs_dir())
         tab.runner_combo.setCurrentText("docker")
         assert "container" in tab.inst_edit.placeholderText()
 
@@ -406,7 +404,7 @@ class TestBuildCmdArgs:
         tab.sim_dir_edit.setText("/data/sims")
         assert "--simulations-dir" not in tab._build_cmd_args()
         assert tab.sim_dir_row.isHidden() and not tab.sim_dir_row_default.isHidden()
-        assert str(gui.TARGET_B) in tab.sim_dir_info.text()
+        assert str(paths.simulations_dir()) in tab.sim_dir_info.text()
 
     def test_inst_pkgs_included_when_set(self, qapp):
         tab = self._tab_with_inputs(qapp, "obs.yaml")
@@ -638,7 +636,7 @@ class TestArchiveTabUploadPage:
         tab._add_staged_file(fits)
         # Select the one unresolved row, then click Upload.
         tab._stage_table.selectRow(0)
-        with mock_patch("metis_test_runner.gui.QMessageBox.warning") as warn:
+        with mock_patch("metis_test_runner.gui.archive_tab.QMessageBox.warning") as warn:
             tab._on_upload()
         warn.assert_called_once()
         # Upload button stays enabled when the guard fires (no worker dispatched).
@@ -681,7 +679,7 @@ class TestArchiveTabUploadPage:
             def deleteLater(self):
                 pass
 
-        with mock_patch("metis_test_runner.gui.UploadWorker", StubWorker):
+        with mock_patch("metis_test_runner.gui.archive_tab.UploadWorker", StubWorker):
             tab._on_upload()
         assert captured.get("started") is True
         assert captured["entries"] == [(fits, "LM_FLAT_LAMP_RAW")]
@@ -784,6 +782,12 @@ def _install_tab(qapp):
     return InstallTab()
 
 
+def _start_and_settle(qapp, tab):
+    """Click Install and wait for the dirty-check worker, so its dialogs have run."""
+    tab._start()
+    _wait_for(qapp, lambda: not any(isinstance(w, gui.workers.DirtyWorker) for w in tab._workers))
+
+
 class _FakeWorker:
     """Stands in for InstallWorker so _start can be driven without a thread."""
 
@@ -816,7 +820,7 @@ def _stub_worker(monkeypatch):
             self.log = _Sig()
             self.done = _Sig()
 
-    monkeypatch.setattr(gui, "InstallWorker", W)
+    monkeypatch.setattr(gui.install_tab, "InstallWorker", W)
     return _FakeWorker
 
 
@@ -891,7 +895,7 @@ class TestInstallTabStart:
         warned = []
         monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a))
         tab.ref_combos["pipeline_ref"].setCurrentText("--upload-pack=echo")
-        tab._start()
+        _start_and_settle(qapp, tab)
         assert warned, "expected a warning dialog"
         assert fake.constructed == []
 
@@ -902,8 +906,8 @@ class TestInstallTabStart:
         fake = _stub_worker(monkeypatch)
         asked = []
         monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: asked.append(a))
-        monkeypatch.setattr(gui, "_dirty_files", lambda t: [])
-        tab._start()
+        monkeypatch.setattr(gui.workers, "_dirty_files", lambda t: [])
+        _start_and_settle(qapp, tab)
         assert asked == []
         assert len(fake.constructed) == 1
         assert fake.constructed[0].force == set()
@@ -913,9 +917,9 @@ class TestInstallTabStart:
 
         tab = _install_tab(qapp)
         fake = _stub_worker(monkeypatch)
-        monkeypatch.setattr(gui, "_dirty_files", lambda t: [" M x.py"])
+        monkeypatch.setattr(gui.workers, "_dirty_files", lambda t: [" M x.py"])
         monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
-        tab._start()
+        _start_and_settle(qapp, tab)
         assert fake.constructed == []
 
     def test_accepting_the_dialog_forces_only_that_repo(self, qapp, monkeypatch):
@@ -925,11 +929,13 @@ class TestInstallTabStart:
         fake = _stub_worker(monkeypatch)
         # Only the pipeline clone is dirty; confirming it must NOT authorise
         # discarding work in the simulations clone.
-        monkeypatch.setattr(gui, "_dirty_files", lambda t: [" M x.py"] if t == gui.TARGET_A else [])
+        monkeypatch.setattr(
+            gui.workers, "_dirty_files", lambda t: [" M x.py"] if t == paths.pipeline_dir() else []
+        )
         monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
-        tab._start()
+        _start_and_settle(qapp, tab)
         assert len(fake.constructed) == 1
-        assert fake.constructed[0].force == {gui.TARGET_A}
+        assert fake.constructed[0].force == {paths.pipeline_dir()}
 
     def test_dirty_tree_is_checked_even_when_the_ref_is_unchanged(self, qapp, monkeypatch):
         # checkout -f discards tracked edits whether or not the ref moved, so
@@ -939,11 +945,11 @@ class TestInstallTabStart:
         tab = _install_tab(qapp)
         _stub_worker(monkeypatch)
         asked = []
-        monkeypatch.setattr(gui, "_dirty_files", lambda t: [" M x.py"])
+        monkeypatch.setattr(gui.workers, "_dirty_files", lambda t: [" M x.py"])
         monkeypatch.setattr(
             QMessageBox, "question", lambda *a, **k: (asked.append(a), QMessageBox.StandardButton.Yes)[1]
         )
-        tab._start()  # every combo left blank — no ref change at all
+        _start_and_settle(qapp, tab)  # every combo left blank — no ref change at all
         assert asked, "a dirty tree must be questioned even with a blank ref"
 
     def test_unreadable_status_asks_rather_than_assuming_clean(self, qapp, monkeypatch):
@@ -955,26 +961,28 @@ class TestInstallTabStart:
         def boom(_t):
             raise RuntimeError("index corrupt")
 
-        monkeypatch.setattr(gui, "_dirty_files", boom)
+        monkeypatch.setattr(gui.workers, "_dirty_files", boom)
         monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
-        tab._start()
+        _start_and_settle(qapp, tab)
         assert fake.constructed == []
 
     def test_user_owned_repo_is_left_alone(self, qapp, monkeypatch):
         from PyQt6.QtWidgets import QMessageBox
 
-        monkeypatch.setattr(gui, "EXTERNAL", {gui.TARGET_A: "METIS_PIPELINE_DIR"})
+        monkeypatch.setenv("METIS_PIPELINE_DIR", str(paths.pipeline_dir()))
         tab = _install_tab(qapp)
         fake = _stub_worker(monkeypatch)
         asked = []
-        monkeypatch.setattr(gui, "_dirty_files", lambda t: [" M x.py"] if t == gui.TARGET_A else [])
+        monkeypatch.setattr(
+            gui.workers, "_dirty_files", lambda t: [" M x.py"] if t == paths.pipeline_dir() else []
+        )
         monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: asked.append(a))
         assert not tab.ref_combos["pipeline_ref"].isEnabled()
         assert not tab.ref_buttons["pipeline_ref"].isEnabled()
         assert "METIS_PIPELINE_DIR" in tab.ref_status["pipeline_ref"].text()
-        tab._start()
+        _start_and_settle(qapp, tab)
         assert asked == []  # its local changes are the user's business
-        assert gui.TARGET_A not in fake.constructed[0].refs
+        assert paths.pipeline_dir() not in fake.constructed[0].refs
         assert fake.constructed[0].force == set()
 
     def test_selected_refs_reach_the_worker(self, qapp, monkeypatch):
@@ -982,12 +990,12 @@ class TestInstallTabStart:
 
         tab = _install_tab(qapp)
         fake = _stub_worker(monkeypatch)
-        monkeypatch.setattr(gui, "_dirty_files", lambda t: [])
+        monkeypatch.setattr(gui.workers, "_dirty_files", lambda t: [])
         monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
         tab.ref_combos["pipeline_ref"].setCurrentText("  feature/x  ")
-        tab._start()
-        assert fake.constructed[0].refs[gui.TARGET_A] == "feature/x"
-        assert fake.constructed[0].refs[gui.TARGET_B] == ""
+        _start_and_settle(qapp, tab)
+        assert fake.constructed[0].refs[paths.pipeline_dir()] == "feature/x"
+        assert fake.constructed[0].refs[paths.simulations_dir()] == ""
         for c in tab.ref_combos.values():
             c.setCurrentText("")
         tab._save_settings()
@@ -996,7 +1004,7 @@ class TestInstallTabStart:
 class TestRefWorker:
     def test_status_is_emitted_before_the_network_call(self, qapp, monkeypatch):
         seen = []
-        monkeypatch.setattr(gui, "_describe_head", lambda t: "main @ abc")
+        monkeypatch.setattr(gui.workers, "_describe_head", lambda t: "main @ abc")
         monkeypatch.setattr(installer, "_git", _fake_git({"ls-remote": _cp("aaa\trefs/heads/main\n")}))
         w = gui.RefWorker("k", "http://x.invalid/r.git", Path("/nope"))
         w.status.connect(lambda k, s: seen.append(("status", s)))
@@ -1007,7 +1015,7 @@ class TestRefWorker:
 
     def test_ls_remote_failure_emits_failed_not_refs(self, qapp, monkeypatch):
         seen = []
-        monkeypatch.setattr(gui, "_describe_head", lambda t: "not cloned")
+        monkeypatch.setattr(gui.workers, "_describe_head", lambda t: "not cloned")
         monkeypatch.setattr(
             installer,
             "_git",
@@ -1042,8 +1050,8 @@ class TestWorkersDelegate:
 
     def test_install_worker_forwards_refs_force_and_log(self, qapp, monkeypatch):
         built, logs, done = [], [], []
-        monkeypatch.setattr(gui, "Installer", self._stub(True, built))
-        refs, force = {gui.TARGET_A: "develop"}, {gui.TARGET_A}
+        monkeypatch.setattr(gui.workers, "Installer", self._stub(True, built))
+        refs, force = {paths.pipeline_dir(): "develop"}, {paths.pipeline_dir()}
         w = gui.InstallWorker(refs=refs, force=force)
         w.log.connect(lambda text, colour: logs.append((text, colour)))
         w.done.connect(done.append)
@@ -1054,7 +1062,7 @@ class TestWorkersDelegate:
 
     def test_uninstall_worker_reports_failure(self, qapp, monkeypatch):
         built, done = [], []
-        monkeypatch.setattr(gui, "Uninstaller", self._stub(False, built))
+        monkeypatch.setattr(gui.workers, "Uninstaller", self._stub(False, built))
         w = gui.UninstallWorker()
         w.done.connect(done.append)
         w.run()
@@ -1067,7 +1075,7 @@ class TestSmokeTestGuard:
         # main() sets this; CI runs `mtr --smoke-test`, which shows the window
         # (firing showEvent) and then quits immediately.
         tab = _install_tab(qapp)
-        monkeypatch.setattr(gui, "SMOKE_TEST", True)
+        monkeypatch.setattr(gui.widgets, "SMOKE_TEST", True)
         tab._refresh_refs()
         assert tab._ref_workers == {}
 
@@ -1213,7 +1221,7 @@ class TestComboArrowIsNotSuppressed:
 # ---------------------------------------------------------------------------
 
 
-class _SleepyWorker(gui.QThread):
+class _SleepyWorker(QThread):
     """A worker that runs until interrupted, so lifetime can be observed."""
 
     def run(self):
@@ -1277,7 +1285,7 @@ class TestArchiveTabBusyGuard:
     running worker's slot."""
 
     def _tab(self, qapp, monkeypatch):
-        monkeypatch.setattr(gui, "_installation_complete", lambda: True)
+        monkeypatch.setattr(gui.main_window, "_installation_complete", lambda: True)
         monkeypatch.setattr(
             "metis_test_runner.archive.metiswise_available",
             lambda: True,
@@ -1316,7 +1324,7 @@ class TestArchiveTabBusyGuard:
         tab = self._tab(qapp, monkeypatch)
         monkeypatch.setattr("metis_test_runner.archive.pipeline_pymetis_installed", lambda: pymetis)
         worker_cls = MagicMock()
-        monkeypatch.setattr(gui, "MetisWISEInstallWorker", worker_cls)
+        monkeypatch.setattr(gui.archive_tab, "MetisWISEInstallWorker", worker_cls)
         monkeypatch.setattr(tab, "track_worker", lambda w: w)
         warned = []
         monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a))
@@ -1436,7 +1444,9 @@ class TestRunTabStop:
 
         tab = _make_run_tab(qapp)
         tab.input_list.addItem("a.yaml")
-        monkeypatch.setattr(gui, "_resolve_run_metis_command", lambda: [sys.executable, "-u", "-c", code])
+        monkeypatch.setattr(
+            gui.run_tab, "_resolve_run_metis_command", lambda: [sys.executable, "-u", "-c", code]
+        )
         monkeypatch.setattr(tab, "_build_cmd_args", lambda: [])
         tab._run()
         # The echoed command contains the code, so wait for output only it prints.
@@ -1499,7 +1509,7 @@ class TestInstallWorkerCancellation:
                     return False
                 return True
 
-        monkeypatch.setattr(gui, "Installer", FakeInstaller)
+        monkeypatch.setattr(gui.workers, "Installer", FakeInstaller)
         host, worker = _Host(), gui.InstallWorker()
         done = []
         worker.done.connect(done.append)
@@ -1614,7 +1624,7 @@ class TestDataFlowWindow:
         win, flow_win = self._open(monkeypatch)
         try:
             # Earlier tests' saved settings may have left another mode selected.
-            examples = Path(gui.__file__).parent / "examples"
+            examples = Path(gui.__file__).parent.parent / "examples"
             win._run_tab.input_list.clear()
             win._run_tab.input_list.addItem(str(examples / "small_test.yaml"))
             win._run_tab.rb_both.setChecked(True)
@@ -1737,7 +1747,7 @@ class TestDataFlowWindow:
 
         win, flow_win = self._open(monkeypatch)
         try:
-            examples = Path(gui.__file__).parent / "examples"
+            examples = Path(gui.__file__).parent.parent / "examples"
             win._run_tab.input_list.clear()
             win._run_tab.input_list.addItem(str(examples / "small_test.yaml"))
             win._run_tab.rb_both.setChecked(True)
@@ -1795,11 +1805,8 @@ def own_data(tmp_path, monkeypatch):
     monkeypatch.setenv("METIS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv(paths.PIPELINE_ENV, raising=False)
     monkeypatch.delenv(paths.SIMULATIONS_ENV, raising=False)
-    monkeypatch.setattr(gui, "_describe_head", lambda t: "main @ abc12345")
-    gui._reload_paths()
+    monkeypatch.setattr(gui.workers, "_describe_head", lambda t: "main @ abc12345")
     yield tmp_path
-    monkeypatch.undo()
-    gui._reload_paths()
 
 
 def _pipeline_checkout(root):
@@ -1823,8 +1830,8 @@ class TestInstallTabOwnCheckout:
         changed = []
         tab.checkouts_changed.connect(lambda: changed.append(1))
         tab._set_checkout("pipeline_ref", str(own))
-        assert gui.TARGET_A == installer.TARGET_A == own
-        assert {own: paths.INSTALL_TAB} == gui.EXTERNAL
+        assert paths.pipeline_dir() == installer.repos()[0][3] == own
+        assert {own: paths.INSTALL_TAB} == paths.user_owned_repos()
         assert paths.load_repo_dirs() == {"pipeline": own}
         assert not tab.ref_combos["pipeline_ref"].isEnabled()
         assert "Install tab" in tab.ref_status["pipeline_ref"].text()
@@ -1838,7 +1845,7 @@ class TestInstallTabOwnCheckout:
         tab = self._tab(qapp, monkeypatch)
         tab._set_checkout("pipeline_ref", str(own))
         tab._set_checkout("pipeline_ref", "")
-        assert gui.EXTERNAL == {} and paths.load_repo_dirs() == {}
+        assert paths.user_owned_repos() == {} and paths.load_repo_dirs() == {}
         assert tab.ref_combos["pipeline_ref"].isEnabled()
         assert tab.checkout_edits["pipeline_ref"].text() == ""
 
@@ -1854,14 +1861,13 @@ class TestInstallTabOwnCheckout:
         tab._set_checkout("pipeline_ref", str(own_data / "empty"))
         tab._set_checkout("simulations_ref", "relative/path")
         assert len(warned) == 2 and "pyproject.toml" in warned[0]
-        assert paths.load_repo_dirs() == {} and gui.EXTERNAL == {}
+        assert paths.load_repo_dirs() == {} and paths.user_owned_repos() == {}
         assert tab.checkout_edits["pipeline_ref"].text() == ""
 
     def test_env_var_locks_the_field(self, qapp, monkeypatch, own_data):
         from metis_test_runner import paths
 
         monkeypatch.setenv(paths.PIPELINE_ENV, str(own_data / "env"))
-        gui._reload_paths()
         tab = self._tab(qapp, monkeypatch)
         edit = tab.checkout_edits["pipeline_ref"]
         assert edit.isReadOnly() and edit.text() == str(own_data / "env")
@@ -1877,11 +1883,13 @@ class TestInstallTabOwnCheckout:
         tab = self._tab(qapp, monkeypatch)
         _stub_worker(monkeypatch)
         texts = []
-        monkeypatch.setattr(gui, "_dirty_files", lambda t: [" M x.py"] if t == gui.TARGET_A else [])
+        monkeypatch.setattr(
+            gui.workers, "_dirty_files", lambda t: [" M x.py"] if t == paths.pipeline_dir() else []
+        )
         monkeypatch.setattr(
             QMessageBox, "question", lambda *a, **k: (texts.append(a[2]), QMessageBox.StandardButton.No)[1]
         )
-        tab._start()
+        _start_and_settle(qapp, tab)
         assert f'<a href="{docs.url("own-checkout")}">' in texts[0]
         assert "&nbsp;" not in texts[0] and " M x.py" in texts[0]
 
@@ -1915,3 +1923,244 @@ def test_muted_text_is_readable(theme):
     for fg in ("log_gray", "placeholder"):
         for bg in ("window", "base", "alt_base"):
             assert _contrast(t[fg], t[bg]) >= 4.5, (fg, bg)
+
+
+# ---------------------------------------------------------------------------
+# Off-thread git/FITS work, tables cache, per-thread DB sessions
+# ---------------------------------------------------------------------------
+
+
+class TestInstallTabOffThread:
+    def test_head_probe_result_is_applied(self, qapp, monkeypatch, own_data):
+        tab = _install_tab(qapp)
+        target = paths.pipeline_dir()
+        tab._probe_head("pipeline_ref", target)
+        assert tab.ref_status["pipeline_ref"].text() == "currently: …"
+        _wait_for(qapp, lambda: "main @ abc12345" in tab.ref_status["pipeline_ref"].text())
+        tab.stop_workers()
+
+    def test_stale_head_result_is_ignored(self, qapp, monkeypatch, own_data):
+        tab = _install_tab(qapp)
+        target = paths.pipeline_dir()
+        tab._probe_head("pipeline_ref", target)
+        tab.stop_workers()
+        seq = tab._head_seq["pipeline_ref"]
+        before = tab.ref_status["pipeline_ref"].text()
+        tab._on_head("pipeline_ref", "old", target, seq - 1)  # superseded probe
+        tab._on_head("pipeline_ref", "old", Path("/elsewhere"), seq)  # target changed
+        assert tab.ref_status["pipeline_ref"].text() == before
+
+    def test_head_probe_does_not_make_the_tab_busy(self, qapp, monkeypatch, own_data):
+        tab = _install_tab(qapp)
+        tab._probe_head("pipeline_ref", paths.pipeline_dir())
+        assert not tab.busy()
+        tab.stop_workers()
+
+    def test_install_and_uninstall_are_disabled_while_checking(self, qapp, monkeypatch):
+        import threading
+
+        tab = _install_tab(qapp)
+        _stub_worker(monkeypatch)
+        gate = threading.Event()
+        monkeypatch.setattr(gui.workers, "_dirty_files", lambda t: (gate.wait(5), [])[1])
+        tab._start()
+        try:
+            assert not tab.install_btn.isEnabled() and not tab.uninstall_btn.isEnabled()
+            assert tab.busy()
+        finally:
+            gate.set()
+        _wait_for(qapp, lambda: not tab.busy())
+
+    def test_declined_dialog_reenables_the_buttons(self, qapp, monkeypatch):
+        from PyQt6.QtWidgets import QMessageBox
+
+        tab = _install_tab(qapp)
+        _stub_worker(monkeypatch)
+        monkeypatch.setattr(gui.workers, "_dirty_files", lambda t: [" M x.py"])
+        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
+        _start_and_settle(qapp, tab)
+        assert tab.install_btn.isEnabled() and tab.uninstall_btn.isEnabled()
+
+    def test_confirm_discard_decides_from_collected_results(self, qapp, monkeypatch):
+        from PyQt6.QtWidgets import QMessageBox
+
+        tab = _install_tab(qapp)
+        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+        pipe, sims = paths.pipeline_dir(), paths.simulations_dir()
+        assert tab._confirm_discard({pipe: [" M x"], sims: []}) == {pipe}
+        assert tab._confirm_discard({pipe: "boom", sims: []}) == set()
+        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
+        assert tab._confirm_discard({pipe: "boom"}) is None
+
+    def test_done_resets_tables_and_signals(self, qapp, monkeypatch, own_data):
+        from metis_test_runner import tables
+
+        calls = []
+        monkeypatch.setattr(tables, "reset", lambda: calls.append("reset"))
+        tab = _install_tab(qapp)
+        monkeypatch.setattr(tab, "_refresh_status_labels", lambda: None)
+        tab.pipeline_changed.connect(lambda: calls.append("signal"))
+        tab._last_action = "install"
+        tab._on_done(False)
+        assert calls == []
+        tab._on_done(True)
+        assert calls == ["reset", "signal"]
+
+    def test_checkout_change_resets_tables_and_signals(self, qapp, monkeypatch, own_data):
+        from metis_test_runner import tables
+
+        calls = []
+        monkeypatch.setattr(tables, "reset", lambda: calls.append("reset"))
+        tab = _install_tab(qapp)
+        monkeypatch.setattr(tab, "_refresh_refs", lambda **k: None)
+        tab.pipeline_changed.connect(lambda: calls.append("signal"))
+        tab._set_checkout("pipeline_ref", str(_pipeline_checkout(own_data / "own")))
+        assert calls == ["reset", "signal"]
+        tab.stop_workers()
+
+
+class TestMainWindowPipelineChanged:
+    def test_archive_and_flow_window_refresh(self, qapp, monkeypatch):
+        win = gui.MainWindow()
+        try:
+            calls = []
+            monkeypatch.setattr(win._archive_tab, "refresh_categories", lambda: calls.append("archive"))
+
+            class Flow:
+                def isVisible(self):
+                    return True
+
+                def rebuild(self, refresh=False):
+                    calls.append(("flow", refresh))
+
+            win._flow_window = Flow()
+            win._install_tab.pipeline_changed.emit()
+            assert calls == ["archive", ("flow", True)]
+            win._flow_window = None
+        finally:
+            win.close()
+
+
+class TestArchiveCategories:
+    def test_built_lazily_and_rebuilt_keeping_the_selection(self, qapp):
+        tab = gui.ArchiveTab()
+        assert tab._catg_combo.count() == 1  # not built in __init__
+        tab._stack.setCurrentIndex(1)
+        tab.show()
+        try:
+            texts = [tab._catg_combo.itemText(i) for i in range(tab._catg_combo.count())]
+            assert texts[0] == "(all)" and "LM_FLAT_LAMP_RAW" in texts and "MASTER_DARK_2RG" in texts
+            tab._catg_combo.setCurrentText("MASTER_DARK_2RG")
+            tab._catg_combo.addItem("stale")
+            tab.refresh_categories()
+            assert tab._catg_combo.findText("stale") == -1
+            assert tab._catg_combo.currentText() == "MASTER_DARK_2RG"
+        finally:
+            tab.hide()
+
+
+class TestFolderStaging:
+    def _tab(self, qapp, monkeypatch, tmp_path, names, classify=lambda _p: "LM_FLAT_LAMP_RAW"):
+        from PyQt6.QtWidgets import QFileDialog
+
+        from metis_test_runner import run_metis
+
+        monkeypatch.setattr(run_metis, "classify_fits_file", classify)
+        (tmp_path / "sub").mkdir(exist_ok=True)
+        for n in names:
+            (tmp_path / n).write_bytes(b"")
+        monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: str(tmp_path))
+        return gui.ArchiveTab()
+
+    def _add_folder(self, qapp, tab):
+        tab._on_add_upload_folder()
+        assert not tab._add_folder_btn.isEnabled()  # conflicting buttons stay off meanwhile
+        _wait_for(qapp, lambda: tab._add_folder_btn.isEnabled() and not tab.busy())
+
+    def test_files_are_classified_off_thread_and_added(self, qapp, monkeypatch, tmp_path):
+        tab = self._tab(qapp, monkeypatch, tmp_path, ["a.fits", "sub/b.fits.gz", "c.txt"])
+        self._add_folder(qapp, tab)
+        assert sorted(tab._stage_table.item(r, 0).text() for r in range(tab._stage_table.rowCount())) == [
+            "a.fits",
+            "b.fits.gz",
+        ]
+        assert tab._staged == {str(tmp_path / "a.fits"), str(tmp_path / "sub" / "b.fits.gz")}
+        assert tab._stage_table.item(0, 1).text() == "LM_FLAT_LAMP_RAW"
+        assert tab._upload_btn.isEnabled() and tab._remove_staged_btn.isEnabled()
+
+    def test_staged_set_follows_removal_and_duplicates_are_skipped(self, qapp, monkeypatch, tmp_path):
+        tab = self._tab(qapp, monkeypatch, tmp_path, ["a.fits", "b.fits"])
+        tab._add_staged_file(tmp_path / "a.fits")
+        self._add_folder(qapp, tab)
+        assert tab._stage_table.rowCount() == 2
+        tab._stage_table.selectRow(0)
+        tab._on_remove_staged()
+        assert len(tab._staged) == 1 and tab._stage_table.rowCount() == 1
+
+    def test_missing_astropy_is_reported_once(self, qapp, monkeypatch, tmp_path):
+        import sys
+
+        monkeypatch.setitem(sys.modules, "astropy.io.fits", None)  # makes the import raise
+        calls = []
+        tab = self._tab(qapp, monkeypatch, tmp_path, ["a.fits", "b.fits"], classify=lambda p: calls.append(p))
+        self._add_folder(qapp, tab)
+        tab._add_staged_file(tmp_path / "new.fits")
+        text = tab._log.toPlainText()
+        assert text.count("astropy is not installed") == 1
+        assert calls == []  # classification is not even attempted
+        assert tab._stage_table.item(0, 1).text() == tab._UNKNOWN_CLASS_PLACEHOLDER
+
+
+class TestArchiveWorkersUseDbSession:
+    @pytest.mark.parametrize("fail", [False, True])
+    def test_query_worker_closes_its_connection(self, qapp, monkeypatch, fail):
+        import contextlib
+
+        from metis_test_runner import archive
+
+        events = []
+
+        @contextlib.contextmanager
+        def session():
+            events.append("enter")
+            try:
+                yield
+            finally:
+                events.append("exit")
+
+        def query(**_k):
+            events.append("query")
+            if fail:
+                raise RuntimeError("down")
+            return []
+
+        monkeypatch.setattr(archive, "db_session", session)
+        monkeypatch.setattr(archive, "query_archive", query)
+        gui.QueryWorker().run()
+        assert events == ["enter", "query", "exit"]
+
+    def test_every_archive_worker_enters_a_session(self, qapp, monkeypatch, tmp_path):
+        import contextlib
+
+        from metis_test_runner import archive
+
+        entered = []
+
+        @contextlib.contextmanager
+        def session():
+            entered.append(1)
+            yield
+
+        monkeypatch.setattr(archive, "db_session", session)
+        monkeypatch.setattr(archive, "download_file", lambda *a, **k: None)
+        monkeypatch.setattr(archive, "upload_file", lambda *a, **k: False)
+        monkeypatch.setattr(archive, "apply_db_credentials", lambda f: None)
+        monkeypatch.setattr(archive, "query_archive", lambda **k: [])
+        monkeypatch.setattr(archive, "scrub_env_cfg", lambda: False)
+        from metis_test_runner import credentials
+
+        monkeypatch.setattr(credentials, "set_db_credentials", lambda f: None)
+        gui.DownloadWorker(["a"], tmp_path).run()
+        gui.UploadWorker([(tmp_path / "a.fits", "X")]).run()
+        gui.workers.TestConnectionWorker({"a": "1"}).run()
+        assert len(entered) == 3

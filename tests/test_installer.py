@@ -6,6 +6,7 @@ Nothing here needs a QApplication: that the module imports and runs without
 PyQt6 is the point (see TestNoQt).
 """
 
+import shutil
 import subprocess
 import sys
 import time
@@ -105,12 +106,10 @@ class TestPatchEdpsConfig:
         assert installer._is_pristine_mtr_config(text)
 
     def test_patches_workflow_dir(self, tmp_path, monkeypatch):
-        from metis_test_runner.installer import TARGET_A
-
         monkeypatch.setenv("HOME", str(tmp_path))
         props = self._seed(tmp_path, self.FULL_PROPS)
         self._make_worker()._patch_edps_config()
-        assert f"{TARGET_A}/metisp/workflows" in props.read_text()
+        assert f"{paths.pipeline_dir()}/metisp/workflows" in props.read_text()
 
     def test_patches_esorex_path(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
@@ -361,7 +360,7 @@ class TestPipDepsCommand:
         (pymetis / "pyproject.toml").write_text(
             pyproject or f'[project]\nname = "pymetis"\ndependencies = [{deps}]\n'
         )
-        monkeypatch.setattr(installer, "TARGET_A", tmp_path)
+        monkeypatch.setenv("METIS_PIPELINE_DIR", str(tmp_path))
         return installer.Installer._pip_deps_command()
 
     def test_runs_pip_in_mtrs_own_interpreter(self, tmp_path, monkeypatch):
@@ -541,153 +540,163 @@ class TestUninstallPackages:
 
 
 class TestUninstallRemoveDataDir:
-    def _make_worker(self):
+    def _make_worker(self, logs=None):
         from metis_test_runner.installer import Uninstaller
 
-        return Uninstaller()
+        return Uninstaller(log=(lambda text, _c: logs.append(text)) if logs is not None else None)
 
-    def test_removes_entire_data_tree(self, tmp_path, monkeypatch):
-        from metis_test_runner import installer
+    @staticmethod
+    def _data(monkeypatch, data):
+        monkeypatch.setenv("METIS_DATA_DIR", str(data))
+        return data
 
-        data = tmp_path / "data"
-        sims = data / "METIS_Simulations"  # inside the data dir
-        sims.mkdir(parents=True)
+    def test_removes_mtrs_entries_and_the_emptied_dir(self, tmp_path, monkeypatch):
+        data = self._data(monkeypatch, tmp_path / "data")
+        (data / "METIS_Simulations").mkdir(parents=True)
         (data / ".env").write_text("X=1\n")
         (data / "inst_pkgs").mkdir()
-        monkeypatch.setattr(installer, "REPO_ROOT", data)
-        monkeypatch.setattr(installer, "TARGET_B", sims)
+        (data / "output" / "run1").mkdir(parents=True)
+        (data / "static_calibs.tmp1234").mkdir()
+        paths.mark_data_dir(data)
         assert self._make_worker()._remove_data_dir() is True
         assert not data.exists()
 
+    def test_leaves_files_mtr_did_not_create(self, tmp_path, monkeypatch):
+        """A mistyped METIS_DATA_DIR (e.g. ~/Documents) must not take unrelated files with it."""
+        data = self._data(monkeypatch, tmp_path / "Documents")
+        (data / "thesis").mkdir(parents=True)
+        (data / "notes.txt").write_text("keep\n")
+        (data / "METIS_Pipeline").mkdir()
+        logs = []
+        assert self._make_worker(logs)._remove_data_dir() is True
+        assert sorted(p.name for p in data.iterdir()) == ["notes.txt", "thesis"]
+        assert any("not created by MTR" in line and "thesis" in line for line in logs)
+
+    def test_unmarked_data_dir_keeps_generic_names_unless_confirmed(self, tmp_path, monkeypatch):
+        """A METIS_DATA_DIR typo pointing at a project must not cost it its .env or output/."""
+        data = self._data(monkeypatch, tmp_path / "project")
+        (data / "output").mkdir(parents=True)
+        (data / ".env").write_text("SECRET=1\n")
+        (data / "settings.json").write_text("{}")
+        (data / "METIS_Pipeline").mkdir()
+        logs = []
+        assert self._make_worker(logs)._remove_data_dir() is True
+        assert sorted(p.name for p in data.iterdir()) == [".env", "output", "settings.json"]
+        assert any("did not mark" in line and ".env" in line for line in logs)
+        assert installer.Uninstaller(confirmed=True)._remove_data_dir() is True
+        assert not data.exists()
+
+    def test_a_data_dir_mtr_creates_is_marked_and_removed_whole(self, tmp_path, monkeypatch):
+        data = self._data(monkeypatch, tmp_path / "data")
+        assert paths.data_dir() == data and paths.data_dir_is_mtrs()
+        (data / ".env").write_text("X=1\n")
+        assert self._make_worker()._remove_data_dir() is True
+        assert not data.exists()
+
+    def test_summary_lists_what_it_would_delete_from_an_unmarked_dir(self, tmp_path, monkeypatch):
+        data = self._data(monkeypatch, tmp_path / "project")
+        (data / "output").mkdir(parents=True)
+        (data / ".env").write_text("")
+        (data / "src").mkdir()
+        text = installer.uninstall_summary()
+        assert "no .mtr-data-dir marker" in text and "  .env\n  output/\n" in text and "src" not in text
+        paths.mark_data_dir(data)
+        assert "marker" not in installer.uninstall_summary()
+
     def test_keeps_user_owned_checkout_outside_data_dir(self, tmp_path, monkeypatch):
         # METIS_SIMULATIONS_DIR / METIS_PIPELINE_DIR are the user's own checkouts.
-        from metis_test_runner import installer
-
-        data = tmp_path / "data"
+        data = self._data(monkeypatch, tmp_path / "data")
         data.mkdir()
         external_sims = tmp_path / "elsewhere" / "METIS_Simulations"
         external_sims.mkdir(parents=True)
-        monkeypatch.setattr(installer, "REPO_ROOT", data)
-        monkeypatch.setattr(installer, "TARGET_B", external_sims)
-        monkeypatch.setattr(installer, "EXTERNAL", {external_sims: "METIS_SIMULATIONS_DIR"})
+        monkeypatch.setenv("METIS_SIMULATIONS_DIR", str(external_sims))
         assert self._make_worker()._remove_data_dir() is True
         assert not data.exists()
         assert external_sims.exists()
 
     def test_keeps_user_owned_checkout_inside_data_dir(self, tmp_path, monkeypatch):
-        from metis_test_runner import installer
-
-        data = tmp_path / "data"
-        own = data / "mine" / "METIS_Pipeline"
+        data = self._data(monkeypatch, tmp_path / "data")
+        own = data / "METIS_Pipeline"
         (own / "metisp").mkdir(parents=True)
-        (data / "mine" / "other").mkdir()
         (data / "METIS_Simulations").mkdir()
-        (data / ".env").write_text("X=1\n")
-        (data / "link").symlink_to(tmp_path)
-        monkeypatch.setattr(installer, "REPO_ROOT", data)
-        monkeypatch.setattr(installer, "EXTERNAL", {own: "METIS_PIPELINE_DIR"})
+        (data / ".env").symlink_to(tmp_path)
+        paths.mark_data_dir(data)
+        monkeypatch.setenv("METIS_PIPELINE_DIR", str(own))
         assert self._make_worker()._remove_data_dir() is True
         assert (own / "metisp").is_dir()
-        # Only top-level entries are pruned, so mine/other survives with the checkout.
-        assert sorted(p.name for p in data.iterdir()) == ["mine"]
+        assert sorted(p.name for p in data.iterdir()) == ["METIS_Pipeline"]
         assert tmp_path.exists()  # the symlink was removed, not followed
 
     def test_data_dir_that_is_a_user_owned_checkout_is_kept(self, tmp_path, monkeypatch):
-        from metis_test_runner import installer
-
-        data = tmp_path / "data"
-        data.mkdir()
-        monkeypatch.setattr(installer, "REPO_ROOT", data)
-        monkeypatch.setattr(installer, "EXTERNAL", {data: "METIS_PIPELINE_DIR"})
+        data = self._data(monkeypatch, tmp_path / "data")
+        (data / "output").mkdir(parents=True)
+        monkeypatch.setenv("METIS_PIPELINE_DIR", str(data))
         assert self._make_worker()._remove_data_dir() is True
-        assert data.exists()
+        assert (data / "output").exists()
 
     def test_noop_when_nothing_to_remove(self, tmp_path, monkeypatch):
-        from metis_test_runner import installer
-
-        data = tmp_path / "missing"
-        monkeypatch.setattr(installer, "REPO_ROOT", data)
-        monkeypatch.setattr(installer, "TARGET_B", data / "METIS_Simulations")
-        # Should not raise even though nothing exists.
+        data = self._data(monkeypatch, tmp_path / "missing")
         assert self._make_worker()._remove_data_dir() is True
         assert not data.exists()
 
     def test_refuses_to_remove_home(self, tmp_path, monkeypatch):
-        """METIS_DATA_DIR=$HOME must not turn Uninstall into `rm -rf ~`."""
-        from metis_test_runner import installer
-
+        """METIS_DATA_DIR=$HOME must not turn Uninstall into `rm -rf ~/output`."""
         home = tmp_path / "home"
-        (home / "precious").mkdir(parents=True)
+        (home / "output").mkdir(parents=True)
         monkeypatch.setenv("HOME", str(home))
-        monkeypatch.setattr(installer, "REPO_ROOT", home)
-        monkeypatch.setattr(installer, "TARGET_B", home / "METIS_Simulations")
+        self._data(monkeypatch, home)
         assert self._make_worker()._remove_data_dir() is False
-        assert (home / "precious").exists()
+        assert (home / "output").exists()
 
     def test_refuses_to_remove_root(self, monkeypatch):
-        from metis_test_runner import installer
-
-        monkeypatch.setattr(installer, "REPO_ROOT", Path("/"))
-        monkeypatch.setattr(installer, "TARGET_B", Path("/"))
+        self._data(monkeypatch, Path("/"))
         assert self._make_worker()._remove_data_dir() is False
         assert Path("/").exists()
 
     def test_refuses_shallow_paths(self, monkeypatch):
-        from metis_test_runner import installer
-
-        monkeypatch.setattr(installer, "REPO_ROOT", Path("/tmp"))
-        monkeypatch.setattr(installer, "TARGET_B", Path("/tmp"))
+        self._data(monkeypatch, Path("/tmp"))
         assert self._make_worker()._remove_data_dir() is False
         assert Path("/tmp").exists()
 
-    def test_refuses_a_symlinked_data_dir(self, tmp_path, monkeypatch):
-        from metis_test_runner import installer
-
+    def test_a_symlinked_data_dir_loses_only_mtrs_entries(self, tmp_path, monkeypatch):
         real = tmp_path / "real"
         (real / "keep").mkdir(parents=True)
+        (real / "METIS_Pipeline").mkdir()
         link = tmp_path / "link"
         link.symlink_to(real, target_is_directory=True)
-        monkeypatch.setattr(installer, "REPO_ROOT", link)
-        monkeypatch.setattr(installer, "TARGET_B", link)
-        assert self._make_worker()._remove_data_dir() is False
-        assert (real / "keep").exists()
+        self._data(monkeypatch, link)
+        assert self._make_worker()._remove_data_dir() is True
+        assert (real / "keep").exists() and not (real / "METIS_Pipeline").exists()
+        assert link.is_symlink()
 
     def test_refuses_the_current_directory_and_says_so(self, tmp_path, monkeypatch):
         # Easy over SSH: `cd` into the data dir, then run mtr-uninstall.
-        from metis_test_runner import installer
-
-        data = tmp_path / "data"
-        data.mkdir()
-        monkeypatch.setattr(installer, "REPO_ROOT", data)
-        monkeypatch.setattr(installer, "TARGET_B", data / "METIS_Simulations")
-        monkeypatch.chdir(data)
+        data = self._data(monkeypatch, tmp_path / "data")
+        (data / "output").mkdir(parents=True)
+        monkeypatch.chdir(data / "output")
         logs = []
-        assert installer.Uninstaller(log=lambda text, _c: logs.append(text))._remove_data_dir() is False
-        assert data.exists()
+        assert self._make_worker(logs)._remove_data_dir() is False
+        assert (data / "output").exists()
         assert any("current working directory" in line for line in logs)
         assert not any("METIS_DATA_DIR" in line for line in logs)
 
     def test_leftovers_count_as_failure(self, tmp_path, monkeypatch):
-        from metis_test_runner import installer
-
-        data = tmp_path / "data"
-        data.mkdir()
-        monkeypatch.setattr(installer, "REPO_ROOT", data)
-        monkeypatch.setattr(installer, "TARGET_B", data / "METIS_Simulations")
+        data = self._data(monkeypatch, tmp_path / "data")
+        (data / "output").mkdir(parents=True)
 
         def busy_rmtree(path, onexc):
             onexc(None, str(path / "busy.fits"), OSError("Device or resource busy"))
 
         monkeypatch.setattr(installer.shutil, "rmtree", busy_rmtree)
+        paths.mark_data_dir(data)
         assert self._make_worker()._remove_data_dir() is False
+        assert (data / paths.DATA_DIR_MARKER).exists()  # so a re-run still trusts the dir
 
     def test_run_reports_a_refused_removal_as_an_error(self, tmp_path, monkeypatch):
-        from metis_test_runner import credentials, installer
+        from metis_test_runner import credentials
 
-        data = tmp_path / "data"
+        data = self._data(monkeypatch, tmp_path / "data")
         data.mkdir()
-        monkeypatch.setattr(installer, "REPO_ROOT", data)
-        monkeypatch.setattr(installer, "TARGET_B", data / "METIS_Simulations")
         monkeypatch.chdir(data)
         monkeypatch.setattr(installer.Uninstaller, "_ensure_pip", lambda self: None)
         monkeypatch.setattr(installer.Uninstaller, "_run", lambda self, cmd, timeout=300: None)
@@ -1229,7 +1238,7 @@ class TestCloneOrUpdateBlankRef:
     def test_full_history_leaves_a_user_owned_checkout_alone(self, tmp_path, monkeypatch):
         target = tmp_path / "own"
         target.mkdir()
-        monkeypatch.setattr(installer, "EXTERNAL", {target: "METIS_PIPELINE_DIR"})
+        monkeypatch.setenv("METIS_PIPELINE_DIR", str(target))
         w = _worker()
         invoked = _spy(w, monkeypatch)
         w._clone_or_update(URL, target, full_history=True)
@@ -1241,13 +1250,13 @@ class TestCloneOrUpdateBlankRef:
 
         def clone(_url, target, _ref="", _force=False, *, full_history=False):
             calls.append((target, full_history))
-            if target == installer.TARGET_B:
+            if target == paths.simulations_dir():
                 raise RuntimeError("stop here")
 
         w = _worker()
         monkeypatch.setattr(w, "_clone_or_update", clone)
         assert w.run() is False
-        assert calls == [(installer.TARGET_A, True), (installer.TARGET_B, True)]
+        assert calls == [(paths.pipeline_dir(), True), (paths.simulations_dir(), True)]
 
     def test_branch_checkout_fast_forwards_without_resetting(self, tmp_path, monkeypatch):
         w = _worker()
@@ -1354,7 +1363,7 @@ class TestCloneOrUpdateUserOwned:
     def test_existing_checkout_runs_no_git(self, tmp_path, monkeypatch):
         target = tmp_path / "own"
         target.mkdir()
-        monkeypatch.setattr(installer, "EXTERNAL", {target: "METIS_PIPELINE_DIR"})
+        monkeypatch.setenv("METIS_PIPELINE_DIR", str(target))
         w = _worker()
         invoked = _spy(w, monkeypatch)
         git_calls = []
@@ -1364,7 +1373,7 @@ class TestCloneOrUpdateUserOwned:
 
     def test_missing_checkout_is_an_error(self, tmp_path, monkeypatch):
         target = tmp_path / "absent"
-        monkeypatch.setattr(installer, "EXTERNAL", {target: "METIS_PIPELINE_DIR"})
+        monkeypatch.setenv("METIS_PIPELINE_DIR", str(target))
         w = _worker()
         invoked = _spy(w, monkeypatch)
         with pytest.raises(RuntimeError, match="METIS_PIPELINE_DIR"):
@@ -1374,8 +1383,7 @@ class TestCloneOrUpdateUserOwned:
     def test_check_layout_blames_the_env_var(self, tmp_path, monkeypatch):
         own = tmp_path / "own"
         own.mkdir()
-        monkeypatch.setattr(installer, "TARGET_A", own)
-        monkeypatch.setattr(installer, "EXTERNAL", {own: "METIS_PIPELINE_DIR"})
+        monkeypatch.setenv("METIS_PIPELINE_DIR", str(own))
         with pytest.raises(RuntimeError, match="does not look like a current checkout"):
             _worker()._check_layout()
 
@@ -1650,13 +1658,13 @@ class TestInstallCli:
         rc = installer.install_main(["--pipeline-ref", "develop", "--simulations-ref", SHA])
         assert rc == 0
         (run,) = stub_installer.built
-        assert run.kw["refs"] == {installer.TARGET_A: "develop", installer.TARGET_B: SHA}
+        assert run.kw["refs"] == {paths.pipeline_dir(): "develop", paths.simulations_dir(): SHA}
         assert run.kw["force"] == set()
         assert run.kw["log"] is installer._console_log
 
     def test_omitted_refs_mean_default_branch(self, stub_installer):
         assert installer.install_main([]) == 0
-        assert stub_installer.built[0].kw["refs"] == {installer.TARGET_A: "", installer.TARGET_B: ""}
+        assert stub_installer.built[0].kw["refs"] == {paths.pipeline_dir(): "", paths.simulations_dir(): ""}
 
     def test_failed_install_exits_1(self, stub_installer):
         stub_installer.result = False
@@ -1681,17 +1689,17 @@ class TestInstallCli:
 
     def test_discard_changes_forces_only_the_dirty_clone(self, stub_installer, monkeypatch):
         monkeypatch.setattr(
-            installer, "_dirty_files", lambda t: [" M x.py"] if t == installer.TARGET_A else []
+            installer, "_dirty_files", lambda t: [" M x.py"] if t == paths.pipeline_dir() else []
         )
         assert installer.install_main(["--discard-changes"]) == 0
-        assert stub_installer.built[0].kw["force"] == {installer.TARGET_A}
+        assert stub_installer.built[0].kw["force"] == {paths.pipeline_dir()}
 
     @pytest.mark.parametrize("reply", ["y", "YES"])
     def test_prompt_yes_forces(self, stub_installer, monkeypatch, reply):
         monkeypatch.setattr(installer, "_dirty_files", lambda t: [" M x.py"])
         _answer(monkeypatch, reply)
         assert installer.install_main([]) == 0
-        assert stub_installer.built[0].kw["force"] == {installer.TARGET_A, installer.TARGET_B}
+        assert stub_installer.built[0].kw["force"] == {paths.pipeline_dir(), paths.simulations_dir()}
 
     @pytest.mark.parametrize("reply", ["", "n", EOFError])
     def test_prompt_no_or_eof_aborts(self, stub_installer, monkeypatch, reply):
@@ -1731,7 +1739,7 @@ class TestGitMissing:
 
 class TestInstallCliUserOwned:
     def test_ref_for_user_owned_repo_is_a_usage_error(self, stub_installer, monkeypatch, capsys):
-        monkeypatch.setattr(installer, "EXTERNAL", {installer.TARGET_A: "METIS_PIPELINE_DIR"})
+        monkeypatch.setenv("METIS_PIPELINE_DIR", str(paths.pipeline_dir()))
         with pytest.raises(SystemExit) as exc:
             installer.install_main(["--pipeline-ref", "develop"])
         assert exc.value.code == 2
@@ -1739,15 +1747,15 @@ class TestInstallCliUserOwned:
         assert stub_installer.built == []
 
     def test_dirty_user_owned_repo_is_not_a_blocker(self, stub_installer, monkeypatch):
-        monkeypatch.setattr(installer, "EXTERNAL", {installer.TARGET_A: "METIS_PIPELINE_DIR"})
+        monkeypatch.setenv("METIS_PIPELINE_DIR", str(paths.pipeline_dir()))
         monkeypatch.setattr(
-            installer, "_dirty_files", lambda t: [" M x.py"] if t == installer.TARGET_A else []
+            installer, "_dirty_files", lambda t: [" M x.py"] if t == paths.pipeline_dir() else []
         )
         assert installer.install_main([]) == 0
         assert stub_installer.built[0].kw["force"] == set()
 
     def test_list_refs_skips_user_owned_repo(self, stub_installer, monkeypatch, capsys):
-        monkeypatch.setattr(installer, "EXTERNAL", {installer.TARGET_A: "METIS_PIPELINE_DIR"})
+        monkeypatch.setenv("METIS_PIPELINE_DIR", str(paths.pipeline_dir()))
         monkeypatch.setattr(installer, "_describe_head", lambda t: "main @ abc12345")
         calls = []
         monkeypatch.setattr(installer, "_git", lambda args, **kw: calls.append(args) or _cp(""))
@@ -1756,7 +1764,7 @@ class TestInstallCliUserOwned:
         assert len(calls) == 1  # only METIS_Simulations is queried
 
     def test_uninstall_summary_names_kept_checkout(self, monkeypatch):
-        monkeypatch.setattr(installer, "EXTERNAL", {Path("/x/own"): "METIS_PIPELINE_DIR"})
+        monkeypatch.setenv("METIS_PIPELINE_DIR", "/x/own")
         assert "/x/own (set via METIS_PIPELINE_DIR) is kept" in installer.uninstall_summary()
 
 
@@ -1793,11 +1801,13 @@ class TestUninstallCli:
         stub_uninstaller.result = result
         assert installer.uninstall_main(["--yes"]) == rc
         assert stub_uninstaller.built[0].kw["log"] is installer._console_log
+        assert stub_uninstaller.built[0].kw["confirmed"] is False  # nobody saw the summary
 
     def test_prompt_yes_runs(self, stub_uninstaller, monkeypatch):
         _answer(monkeypatch, "y")
         assert installer.uninstall_main([]) == 0
         assert len(stub_uninstaller.built) == 1
+        assert stub_uninstaller.built[0].kw["confirmed"] is True
 
     def test_prompt_no_aborts(self, stub_uninstaller, monkeypatch):
         _answer(monkeypatch, "n")
@@ -1824,17 +1834,11 @@ class TestConsoleLog:
 
 
 class TestOwnCheckoutHelpers:
-    def test_reload_paths_picks_up_the_install_tab(self, tmp_path, monkeypatch):
+    def test_repos_follow_the_install_tab(self, tmp_path, monkeypatch):
         monkeypatch.setenv("METIS_DATA_DIR", str(tmp_path))
-        try:
-            paths.save_repo_dir("simulations", tmp_path / "sims")
-            installer.reload_paths()
-            assert tmp_path / "sims" == installer.TARGET_B
-            assert {tmp_path / "sims": paths.INSTALL_TAB} == installer.EXTERNAL
-            assert installer.REPOS[1][3] == tmp_path / "sims"
-        finally:
-            monkeypatch.undo()
-            installer.reload_paths()
+        paths.save_repo_dir("simulations", tmp_path / "sims")
+        assert {tmp_path / "sims": paths.INSTALL_TAB} == paths.user_owned_repos()
+        assert installer.repos()[1][3] == tmp_path / "sims"
 
     def test_checkout_problem(self, tmp_path):
         assert "pyproject.toml" in installer.checkout_problem("pipeline", tmp_path)
@@ -1848,6 +1852,190 @@ class TestOwnCheckoutHelpers:
 
     def test_missing_install_tab_checkout_points_at_the_tab(self, tmp_path, monkeypatch):
         own = tmp_path / "gone"
-        monkeypatch.setattr(installer, "EXTERNAL", {own: paths.INSTALL_TAB})
+        monkeypatch.setenv("METIS_DATA_DIR", str(tmp_path))
+        paths.save_repo_dir("pipeline", own)
         with pytest.raises(RuntimeError, match="Change or clear it on the Install tab"):
             installer.Installer()._clone_or_update("url", own)
+
+
+# ---------------------------------------------------------------------------
+# Real git against a local upstream (the mocked tests above cannot see these)
+# ---------------------------------------------------------------------------
+
+
+def _g(*args, cwd=None):
+    cp = subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@x", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return cp.stdout.strip()
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="git not installed")
+class TestRealGit:
+    @pytest.fixture
+    def upstream(self, tmp_path):
+        up = tmp_path / "upstream"
+        _g("init", "-q", "-b", "main", str(up))
+        for name in ("one", "two"):
+            (up / f"{name}.txt").write_text(name)
+            _g("add", ".", cwd=up)
+            _g("commit", "-qm", name, cwd=up)
+        _g("branch", "feat", cwd=up)
+        _g("tag", "v1", cwd=up)
+        return up
+
+    @staticmethod
+    def _install(url, target, ref=""):
+        installer.Installer()._clone_or_update(url, target, ref, full_history=True)
+
+    def test_failed_first_pinned_install_leaves_nothing_behind(self, upstream, tmp_path):
+        url, target = f"file://{upstream}", tmp_path / "clone"
+        with pytest.raises(RuntimeError, match="not a branch or tag"):
+            self._install(url, target, "typo-branch")
+        assert not target.exists()
+        self._install(url, target)  # the default install still works afterwards
+        assert _g("rev-parse", "HEAD", cwd=target) == _g("rev-parse", "main", cwd=upstream)
+
+    def test_failed_pinned_install_into_an_empty_dir_keeps_the_dir(self, upstream, tmp_path):
+        target = tmp_path / "clone"
+        target.mkdir()
+        with pytest.raises(RuntimeError):
+            self._install(f"file://{upstream}", target, "typo-branch")
+        assert target.is_dir() and not any(target.iterdir())
+
+    def test_unborn_repo_from_an_older_mtr_is_repaired(self, upstream, tmp_path):
+        url, target = f"file://{upstream}", tmp_path / "clone"
+        _g("init", "-q", str(target))
+        _g("-C", str(target), "remote", "add", "origin", url)
+        self._install(url, target)
+        assert _g("rev-parse", "HEAD", cwd=target) == _g("rev-parse", "main", cwd=upstream)
+
+    def test_repinning_a_branch_keeps_local_commits(self, upstream, tmp_path):
+        url, target = f"file://{upstream}", tmp_path / "clone"
+        self._install(url, target, "feat")
+        (target / "mine.txt").write_text("work")
+        _g("add", ".", cwd=target)
+        _g("commit", "-qm", "local work", cwd=target)
+        mine = _g("rev-parse", "HEAD", cwd=target)
+        with pytest.raises(RuntimeError, match="local work"):
+            self._install(url, target, "feat")
+        assert _g("rev-parse", "feat", cwd=target) == mine
+
+    @staticmethod
+    def _shallow(url, target, ref=""):
+        installer.Installer()._clone_or_update(url, target, ref)
+
+    def test_a_clean_shallow_pin_moves_freely(self, upstream, tmp_path):
+        # The pinned commit is on no local ref, which must not count as local work.
+        url, target = f"file://{upstream}", tmp_path / "clone"
+        self._shallow(url, target, _g("rev-parse", "main~1", cwd=upstream))
+        self._shallow(url, target, "v1")
+        self._shallow(url, target)
+        assert _g("rev-parse", "HEAD", cwd=target) == _g("rev-parse", "main", cwd=upstream)
+
+    @pytest.mark.parametrize("ref", ["main", "v1", ""])
+    def test_moving_off_a_detached_head_keeps_its_commits(self, upstream, tmp_path, ref):
+        url, target = f"file://{upstream}", tmp_path / "clone"
+        self._shallow(url, target, _g("rev-parse", "main~1", cwd=upstream))
+        _g("commit", "-q", "--allow-empty", "-m", "detached work", cwd=target)
+        mine = _g("rev-parse", "HEAD", cwd=target)
+        with pytest.raises(RuntimeError, match=r"(?s)made on the detached HEAD.*detached work"):
+            self._shallow(url, target, ref)
+        assert _g("rev-parse", "HEAD", cwd=target) == mine
+        _g("branch", "keep", cwd=target)  # kept on a branch, they no longer block the install
+        self._shallow(url, target, ref)
+        assert _g("rev-parse", "keep", cwd=target) == mine
+
+    def test_repinning_a_branch_follows_upstream(self, upstream, tmp_path):
+        url, target = f"file://{upstream}", tmp_path / "clone"
+        self._install(url, target, "feat")
+        _g("checkout", "-q", "feat", cwd=upstream)
+        (upstream / "three.txt").write_text("3")
+        _g("add", ".", cwd=upstream)
+        _g("commit", "-qm", "three", cwd=upstream)
+        self._install(url, target, "feat")
+        assert _g("rev-parse", "HEAD", cwd=target) == _g("rev-parse", "feat", cwd=upstream)
+
+    def test_branch_tag_blank_round_trip(self, upstream, tmp_path):
+        url, target = f"file://{upstream}", tmp_path / "clone"
+        self._install(url, target)
+        self._install(url, target, "v1")
+        assert _g("describe", "--tags", "--exact-match", "HEAD", cwd=target) == "v1"
+        self._install(url, target)  # blank: back to the default branch
+        assert _g("symbolic-ref", "--short", "HEAD", cwd=target) == "main"
+
+
+class TestEdpsConfigSafety:
+    """Review #9: never delete the user's config, and put it back if EDPS set-up fails."""
+
+    def _seed(self, home, text):
+        props = home / ".edps" / "application.properties"
+        props.parent.mkdir(parents=True, exist_ok=True)
+        props.write_text(text)
+        return props
+
+    def test_a_later_personal_config_is_kept_not_deleted(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        props = self._seed(tmp_path, "port=2222\n")
+        props.with_name("application.properties_backup").write_text("port=1111\n")
+        moved = installer.Installer()._backup_edps_config()
+        assert moved.name.startswith("application.properties_backup.") and moved.read_text() == "port=2222\n"
+        assert props.with_name("application.properties_backup").read_text() == "port=1111\n"
+
+    @pytest.mark.parametrize("text", ["port=2222\n", installer._mark_edps_config("port=4444\n")])
+    def test_failed_init_puts_the_config_back(self, tmp_path, monkeypatch, text):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        props = self._seed(tmp_path, text)
+        worker = installer.Installer()
+
+        def half_init():
+            props.write_text("half-written\n")
+            raise RuntimeError("edps timed out")
+
+        monkeypatch.setattr(worker, "_init_edps", half_init)
+        with pytest.raises(RuntimeError, match="edps timed out"):
+            worker._configure_edps()
+        assert props.read_text() == text
+        assert sorted(p.name for p in props.parent.iterdir()) == ["application.properties"]
+
+    def test_success_drops_mtrs_previous_config(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        props = self._seed(tmp_path, installer._mark_edps_config("port=4444\n"))
+        worker = installer.Installer()
+        monkeypatch.setattr(worker, "_init_edps", lambda: props.write_text(TestPatchEdpsConfig.FULL_PROPS))
+        worker._configure_edps()
+        assert sorted(p.name for p in props.parent.iterdir()) == ["application.properties"]
+
+    def test_uninstall_keeps_set_aside_configs(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        props = self._seed(tmp_path, "port=4444\n")
+        props.with_name("application.properties_backup.20260101T000000").write_text("port=2222\n")
+        (tmp_path / "EDPS_data").mkdir()
+        installer.Uninstaller()._cleanup_edps()
+        assert not props.exists() and not (tmp_path / "EDPS_data").exists()
+        assert props.with_name("application.properties_backup.20260101T000000").exists()
+
+
+class TestIdleTimeout:
+    def test_silence_trips_the_idle_timeout(self):
+        start = time.monotonic()
+        with pytest.raises(TimeoutError, match="no output for 1s"):
+            installer.stream_subprocess(
+                [sys.executable, "-c", "import time; time.sleep(60)"],
+                on_line=lambda *_: None,
+                timeout=60,
+                idle_timeout=1,
+            )
+        assert time.monotonic() - start < 20
+
+    def test_steady_output_outlives_the_idle_timeout(self):
+        code = "import time\nfor _ in range(6):\n    print('tick', flush=True); time.sleep(0.4)"
+        out = []
+        installer.stream_subprocess(
+            [sys.executable, "-c", code], on_line=lambda t, _c: out.append(t), timeout=60, idle_timeout=1
+        )
+        assert sum(line.startswith("tick") for line in out) == 6

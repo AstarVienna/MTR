@@ -57,14 +57,31 @@ def _warn_legacy_data_dir(d: Path) -> None:
     )
 
 
-def data_dir() -> Path:
-    """Top-level user data directory. Created on first call."""
+#: In a data dir MTR created or installed into; only there does Uninstall trust names like output/.
+DATA_DIR_MARKER = ".mtr-data-dir"
+
+
+def data_dir(create: bool = True) -> Path:
+    """Top-level user data directory, created (and marked as MTR's) unless *create* is false."""
     override = os.environ.get("METIS_DATA_DIR")
     d = Path(override) if override else _default_data_dir()
     if not override:
         _warn_legacy_data_dir(d)
-    d.mkdir(parents=True, exist_ok=True)
+    if create and not d.is_dir():
+        d.mkdir(parents=True, exist_ok=True)
+        mark_data_dir(d)
     return d
+
+
+def mark_data_dir(d: Path) -> None:
+    (d / DATA_DIR_MARKER).write_text(
+        "METIS Test Runner's data directory: mtr-uninstall deletes MTR's files here.\n"
+    )
+
+
+def data_dir_is_mtrs() -> bool:
+    """Whether the data dir is surely MTR's: the default location, or marked by MTR."""
+    return not os.environ.get("METIS_DATA_DIR") or (data_dir(create=False) / DATA_DIR_MARKER).is_file()
 
 
 PIPELINE_ENV = "METIS_PIPELINE_DIR"
@@ -77,7 +94,8 @@ INSTALL_TAB = "the Install tab"
 
 def settings_file() -> Path:
     """Settings shared by the GUI and the CLI tools (unlike QSettings)."""
-    return data_dir() / "settings.json"
+    # Reading must not recreate a data dir that Uninstall just removed.
+    return data_dir(create=False) / "settings.json"
 
 
 def load_repo_dirs() -> dict[str, Path]:
@@ -163,6 +181,11 @@ def pipeline_present() -> bool:
 def inst_pkgs_dir() -> Path:
     override = os.environ.get("METIS_INST_PKGS")
     return Path(override) if override else data_dir() / "inst_pkgs"
+
+
+def output_dir() -> Path:
+    """Where runs go without -o: mtr-cli's ./output in the GUI's working directory, the data dir."""
+    return data_dir() / "output"
 
 
 def env_file() -> Path:

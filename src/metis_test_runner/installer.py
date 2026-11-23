@@ -24,7 +24,7 @@ import traceback
 from collections.abc import Callable
 from pathlib import Path
 
-from . import __version__, docs, paths
+from . import __version__, docs, edps_config, paths
 from .env import ensurepip_command_if_needed, resolve_runtime_env
 from .indexes import ESO_INDEX, PYCPL_INDEX
 
@@ -35,25 +35,24 @@ LogFn = Callable[[str, str], None]
 # Paths
 # ---------------------------------------------------------------------------
 #
-# Module-level aliases computed at import time so tests can monkeypatch them
-# and have the call-time ``REPO_ROOT / "..."`` expressions pick that up.
+# Locations come from paths.py at the time of use, never from module copies:
+# the Install tab can change a checkout while the GUI runs.
 
-# fmt: off
-REPO_ROOT   = paths.data_dir()
-TARGET_A    = paths.pipeline_dir()
-TARGET_B    = paths.simulations_dir()
-REPO_A_URL  = "https://github.com/AstarVienna/METIS_Pipeline.git"
-REPO_B_URL  = "https://github.com/AstarVienna/METIS_Simulations.git"
-# Own checkouts (env var or Install tab, see paths.user_owned_repos) → where set.
-# The user's own checkouts: never cloned, updated or deleted by MTR.
-EXTERNAL    = paths.user_owned_repos()
-# fmt: on
+REPO_A_URL = "https://github.com/AstarVienna/METIS_Pipeline.git"
+REPO_B_URL = "https://github.com/AstarVienna/METIS_Simulations.git"
 
-# (key, label, repo URL, clone target) for the two clones MTR manages.
-REPOS = (
-    ("pipeline", "METIS_Pipeline", REPO_A_URL, TARGET_A),
-    ("simulations", "METIS_Simulations", REPO_B_URL, TARGET_B),
+#: (key, label, repo URL) of the two repositories MTR manages.
+REPO_SPECS = (
+    ("pipeline", "METIS_Pipeline", REPO_A_URL),
+    ("simulations", "METIS_Simulations", REPO_B_URL),
 )
+
+
+def repos() -> tuple[tuple[str, str, str, Path], ...]:
+    """(key, label, repo URL, clone target) for the two repositories, resolved now."""
+    targets = {"pipeline": paths.pipeline_dir(), "simulations": paths.simulations_dir()}
+    return tuple((key, label, url, targets[key]) for key, label, url in REPO_SPECS)
+
 
 # Files a checkout must contain, relative to its root, per repo key. Missing
 # ones mean an old ref, or a directory that is not that repository.
@@ -61,18 +60,6 @@ REQUIRED_FILES = {
     "pipeline": ("metisp/pymetis/pyproject.toml", "metisp/pyrecipes"),
     "simulations": ("pyproject.toml",),
 }
-
-
-def reload_paths() -> None:
-    """Re-resolve the repo aliases above, e.g. after the Install tab changed a checkout."""
-    global TARGET_A, TARGET_B, EXTERNAL, REPOS
-    TARGET_A = paths.pipeline_dir()
-    TARGET_B = paths.simulations_dir()
-    EXTERNAL = paths.user_owned_repos()
-    REPOS = (
-        ("pipeline", "METIS_Pipeline", REPO_A_URL, TARGET_A),
-        ("simulations", "METIS_Simulations", REPO_B_URL, TARGET_B),
-    )
 
 
 def checkout_problem(key: str, target: Path) -> str | None:
@@ -93,6 +80,10 @@ def checkout_problem(key: str, target: Path) -> str | None:
 # counts as the user's. A config from an MTR predating the marker is
 # indistinguishable from a personal one and is treated as such.
 
+#: The user's own config, which Uninstall restores.
+_EDPS_BACKUP = "application.properties_backup"
+#: MTR's previous config, while ``edps`` writes a new one.
+_EDPS_PREVIOUS = "application.properties.mtr-previous"
 _EDPS_MARKER = "# Written by metis-test-runner (install bookkeeping, keep this line) sha256="
 _EDPS_MARKER_RE = re.compile(r"\A# Written by metis-test-runner\b.*\bsha256=([0-9a-f]{64})\n")
 
@@ -114,15 +105,17 @@ def _is_pristine_mtr_config(text: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _assert_safe_to_remove(target: Path) -> None:
-    """Refuse to recursively delete anything that isn't plausibly a data dir.
+def _assert_safe_to_remove(target: Path, *, follow_symlink: bool = False) -> None:
+    """Refuse to delete from anything that isn't plausibly MTR's or EDPS's own directory.
 
-    ``REPO_ROOT`` is ``METIS_DATA_DIR`` verbatim (see paths.py), so a typo or a
-    stray ``METIS_DATA_DIR=$HOME`` would otherwise point Uninstall's rmtree at
-    the user's home directory.
+    The data dir is ``METIS_DATA_DIR`` verbatim (see paths.py) and EDPS's
+    base_dir comes from a user-editable file, so a typo or a stray
+    ``METIS_DATA_DIR=$HOME`` would otherwise point Uninstall at the user's home.
     """
+    if target.is_symlink() and not follow_symlink:
+        raise RuntimeError(f"Refusing to remove {target}: it is a symlink. {docs.see('uninstall-refusing')}")
     resolved = target.resolve()
-    if resolved.is_symlink() or not resolved.is_dir():
+    if not resolved.is_dir():
         raise RuntimeError(
             f"Refusing to remove {resolved}: not a real directory. {docs.see('uninstall-refusing')}"
         )
@@ -132,11 +125,36 @@ def _assert_safe_to_remove(target: Path) -> None:
             f"Refusing to remove {resolved}: this does not look like an MTR "
             f"data directory. Check METIS_DATA_DIR. {docs.see('uninstall-refusing')}"
         )
-    if resolved == Path.cwd().resolve():
+    cwd = Path.cwd().resolve()
+    if resolved == cwd or resolved in cwd.parents:
         raise RuntimeError(
-            f"Refusing to remove {resolved}: it is the current working directory. "
+            f"Refusing to remove {resolved}: it is or contains the current working directory. "
             f"Run the uninstall from another directory. {docs.see('uninstall-refusing')}"
         )
+
+
+#: What MTR creates in its data directory. Uninstall deletes these and nothing else.
+DATA_DIR_ENTRIES = frozenset(
+    {
+        "METIS_Pipeline",
+        "METIS_Simulations",
+        "inst_pkgs",
+        "static_calibs",
+        "output",
+        "settings.json",
+        ".env",
+        "update-check.json",
+        paths.DATA_DIR_MARKER,
+    }
+)
+#: Names other software uses too: in an unmarked METIS_DATA_DIR, deleted only once the user has seen them.
+GENERIC_DATA_DIR_ENTRIES = frozenset({"output", "settings.json", ".env"})
+# Leftovers of an interrupted static-calibs rebuild or atomic settings write.
+_DATA_DIR_LEFTOVER_RE = re.compile(r"\Astatic_calibs\.(tmp|old)\d+\Z|\A\.(settings|update-check)\.json\..+\Z")
+
+
+def _is_mtr_entry(name: str) -> bool:
+    return name in DATA_DIR_ENTRIES or bool(_DATA_DIR_LEFTOVER_RE.match(name))
 
 
 def _log_exception(log: LogFn, label: str, exc: BaseException) -> None:
@@ -353,6 +371,8 @@ class Cancelled(Exception):
 
 #: How often the watchdog polls ``should_stop``.
 _STOP_POLL_S = 0.2
+#: How long a timed-out or stopped process group gets after SIGTERM before SIGKILL.
+_TERM_GRACE_S = 5
 
 
 def stream_subprocess(
@@ -362,14 +382,17 @@ def stream_subprocess(
     cwd: Path | None = None,
     stdin_text: str | None = None,
     timeout: int = 300,
+    idle_timeout: int | None = None,
     env: dict[str, str] | None = None,
     should_stop: Callable[[], bool] | None = None,
 ) -> None:
-    """Run *cmd*, stream its output to *on_line*, and enforce *timeout*.
+    """Run *cmd*, stream its output to *on_line*, and enforce the timeouts.
 
-    Raises ``RuntimeError`` on a non-zero exit, ``TimeoutError`` if the
-    deadline expires, and :class:`Cancelled` once *should_stop* returns true
-    (the process group is killed first).
+    *timeout* caps the total run time; *idle_timeout*, if given, the time
+    without an output line, so a slow but progressing command is not killed.
+    Raises ``RuntimeError`` on a non-zero exit, ``TimeoutError`` once a timeout
+    expires, and :class:`Cancelled` once *should_stop* returns true (the
+    process group is stopped first: SIGTERM, then SIGKILL).
 
     The timeout is enforced by a watchdog rather than ``proc.wait(timeout=…)``:
     draining ``proc.stdout`` blocks until EOF, so by the time ``wait`` is
@@ -382,9 +405,10 @@ def stream_subprocess(
     would orphan.
     """
     on_line(f"$ {' '.join(str(c) for c in cmd)}\n", "")
-    timed_out = threading.Event()
+    timed_out: list[str] = []  # why, once a timeout fired
     cancelled = threading.Event()
     finished = threading.Event()
+    last_output = [time.monotonic()]
 
     with subprocess.Popen(
         [str(c) for c in cmd],
@@ -400,13 +424,16 @@ def stream_subprocess(
         def _watch() -> None:
             deadline = time.monotonic() + timeout
             while not finished.wait(_STOP_POLL_S):
+                now = time.monotonic()
                 if should_stop is not None and should_stop():
                     cancelled.set()
-                elif time.monotonic() >= deadline:
-                    timed_out.set()
+                elif now >= deadline:
+                    timed_out.append(f"timed out after {timeout}s")
+                elif idle_timeout is not None and now - last_output[0] >= idle_timeout:
+                    timed_out.append(f"timed out: no output for {idle_timeout}s")
                 else:
                     continue
-                _kill_process_group(proc)
+                _kill_process_group(proc, grace=_TERM_GRACE_S)
                 return
 
         watchdog = threading.Thread(target=_watch, daemon=True)
@@ -424,6 +451,7 @@ def stream_subprocess(
                     except BrokenPipeError:
                         pass
             for line in proc.stdout:  # pyright: ignore[reportOptionalIterable]  # stdout is a PIPE
+                last_output[0] = time.monotonic()
                 on_line(strip_ansi(line), "")
             proc.wait()
         finally:
@@ -433,21 +461,34 @@ def stream_subprocess(
 
     if cancelled.is_set():
         raise Cancelled(f"Stopped: {' '.join(str(c) for c in cmd)}")
-    if timed_out.is_set():
-        raise TimeoutError(f"Command timed out after {timeout}s: {' '.join(str(c) for c in cmd)}")
+    if timed_out:
+        raise TimeoutError(f"Command {timed_out[0]}: {' '.join(str(c) for c in cmd)}")
     if proc.returncode not in (0, None):
         raise RuntimeError(f"Command exited {proc.returncode}: {' '.join(str(c) for c in cmd)}")
 
 
-def _kill_process_group(proc: subprocess.Popen) -> None:
-    """Kill *proc* and any children it spawned; never raises."""
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except (ProcessLookupError, PermissionError, OSError):
+def _kill_process_group(proc: subprocess.Popen, grace: float = 0) -> None:
+    """Stop *proc* and any children it spawned; never raises.
+
+    With *grace*, SIGTERM first (so pip can clean up), and SIGKILL only if the
+    process is still there after *grace* seconds.
+    """
+    signals = (signal.SIGTERM, signal.SIGKILL) if grace else (signal.SIGKILL,)
+    for sig in signals:
         try:
-            proc.kill()
-        except OSError:
-            pass
+            os.killpg(os.getpgid(proc.pid), sig)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                proc.send_signal(sig)
+            except OSError:
+                pass
+        if sig == signal.SIGKILL:
+            return
+        try:
+            proc.wait(timeout=grace)
+            return
+        except subprocess.TimeoutExpired:
+            continue
 
 
 # ---------------------------------------------------------------------------
@@ -466,6 +507,10 @@ class Installer:
         "scopesim_templates==0.9.0",
     ]
 
+    #: A pip install is stopped after this long in total, or this long without output.
+    PIP_TIMEOUT_S = 3600
+    PIP_IDLE_TIMEOUT_S = 600
+
     @classmethod
     def _pip_deps_command(cls) -> list[str]:
         """``pip install`` argv for the cloned pymetis's dependencies plus MTR's pins."""
@@ -473,7 +518,7 @@ class Installer:
         # edps, pyesorex, adari_core, ...) and the pycpl range for this ref.
         # --upgrade makes a re-install track their newest releases: a bare
         # ``pip install edps`` leaves an already-installed older one in place.
-        pyproject = TARGET_A / "metisp" / "pymetis" / "pyproject.toml"
+        pyproject = paths.pipeline_dir() / "metisp" / "pymetis" / "pyproject.toml"
         deps = tomllib.loads(pyproject.read_text()).get("project", {}).get("dependencies")
         if not deps:
             raise RuntimeError(
@@ -520,17 +565,19 @@ class Installer:
     def run(self) -> bool:
         """Run every step; return True on success. Failures are logged, not raised."""
         try:
-            self._step(f"Cloning / updating METIS_Pipeline  →  {TARGET_A}")
+            pipeline, sims, data = paths.pipeline_dir(), paths.simulations_dir(), paths.data_dir()
+            paths.mark_data_dir(data)  # installing into it makes it MTR's, for Uninstall
+            self._step(f"Cloning / updating METIS_Pipeline  →  {pipeline}")
             # pymetis and (since METIS_Simulations c0ae153) metis_simulations
             # derive their version from Git tags and refuse to build in a
             # shallow clone, so both need history.
             self._clone_or_update(
-                REPO_A_URL, TARGET_A, self._refs.get(TARGET_A, ""), TARGET_A in self._force, full_history=True
+                REPO_A_URL, pipeline, self._refs.get(pipeline, ""), pipeline in self._force, full_history=True
             )
 
-            self._step(f"Cloning / updating METIS_Simulations  →  {TARGET_B}")
+            self._step(f"Cloning / updating METIS_Simulations  →  {sims}")
             self._clone_or_update(
-                REPO_B_URL, TARGET_B, self._refs.get(TARGET_B, ""), TARGET_B in self._force, full_history=True
+                REPO_B_URL, sims, self._refs.get(sims, ""), sims in self._force, full_history=True
             )
 
             self._check_layout()
@@ -538,41 +585,32 @@ class Installer:
             self._ensure_pip()
 
             self._step("Installing pipeline Python dependencies via pip…")
-            recipe_dir = str(TARGET_A / "metisp" / "pyrecipes") + "/"
-            os.environ["PYCPL_RECIPE_DIR"] = recipe_dir
-            os.environ["PYESOREX_PLUGIN_DIR"] = recipe_dir
             # ESO-mirror dependencies are installed into the same interpreter
             # that hosts MTR (sys.executable points at pipx's isolated venv or
-            # whatever venv the user installed MTR into).
-            self._run(self._pip_deps_command(), cwd=REPO_ROOT)
+            # whatever venv the user installed MTR into). The recipe dirs reach
+            # pip through resolve_runtime_env, not os.environ.
+            self._pip(self._pip_deps_command(), cwd=data)
 
             self._step("Installing pymetis (editable)…")
             # metiswise (Archive tab) depends on ``pymetis``, which is just the
             # pip build of the clone above; installing it editable makes it
             # importable in-process and satisfies that dependency.  The step
             # above installed its dependencies, so nothing is fetched here.
-            self._run(
-                [sys.executable, "-m", "pip", "install", "--editable", str(TARGET_A / "metisp" / "pymetis")],
-                cwd=REPO_ROOT,
+            self._pip(
+                [sys.executable, "-m", "pip", "install", "--editable", str(pipeline / "metisp" / "pymetis")],
+                cwd=data,
             )
 
             self._step("Installing METIS_Simulations (editable)…")
             # METIS_Simulations is cloned at install time (above) and pip-
             # installed editable so changes to the working tree are picked up
             # without a re-install.
-            self._run(
-                [sys.executable, "-m", "pip", "install", "--editable", str(TARGET_B)],
-                cwd=REPO_ROOT,
+            self._pip(
+                [sys.executable, "-m", "pip", "install", "--editable", str(sims)],
+                cwd=data,
             )
 
-            self._step("Checking for existing EDPS configuration…")
-            self._backup_edps_config()
-
-            self._step("Initialising EDPS…")
-            self._init_edps()
-
-            self._step("Patching ~/.edps/application.properties…")
-            self._patch_edps_config()
+            self._configure_edps()
 
             self._log("\n✓ Installation complete.\n", "green")
             return True
@@ -598,7 +636,12 @@ class Installer:
             self._run(boot)
 
     def _run(
-        self, cmd: list, cwd: Path | None = None, stdin_text: str | None = None, timeout: int = 300
+        self,
+        cmd: list,
+        cwd: Path | None = None,
+        stdin_text: str | None = None,
+        timeout: int = 300,
+        idle_timeout: int | None = None,
     ) -> None:
         stream_subprocess(
             cmd,
@@ -606,8 +649,13 @@ class Installer:
             cwd=cwd,
             stdin_text=stdin_text,
             timeout=timeout,
+            idle_timeout=idle_timeout,
             should_stop=self._should_stop,
         )
+
+    def _pip(self, cmd: list, cwd: Path) -> None:
+        """A pip install: slow links and source builds may take long, so only silence counts."""
+        self._run(cmd, cwd=cwd, timeout=self.PIP_TIMEOUT_S, idle_timeout=self.PIP_IDLE_TIMEOUT_S)
 
     def _clone_or_update(
         self, url: str, target: Path, ref: str = "", force: bool = False, *, full_history: bool = False
@@ -620,16 +668,17 @@ class Installer:
 
         *full_history* un-shallows the result and fetches its tags.
 
-        A user-owned target (see ``EXTERNAL``) is used as-is: no git at all.
+        A user-owned target (see ``paths.user_owned_repos``) is used as-is: no git at all.
         """
-        if target in EXTERNAL:
+        owned = paths.user_owned_repos()
+        if target in owned:
             if not target.is_dir():
                 raise RuntimeError(
-                    f"{target} (set via {EXTERNAL[target]}) does not exist. "
-                    f"{paths.change_hint(EXTERNAL[target])}. {docs.see('own-checkout')}"
+                    f"{target} (set via {owned[target]}) does not exist. "
+                    f"{paths.change_hint(owned[target])}. {docs.see('own-checkout')}"
                 )
             self._log(
-                f"Using your own checkout at {target} (set via {EXTERNAL[target]}) — not cloned or updated.\n",
+                f"Using your own checkout at {target} (set via {owned[target]}) — not cloned or updated.\n",
                 "yellow",
             )
             return
@@ -671,15 +720,41 @@ class Installer:
     # ── git plumbing ─────────────────────────────────────────────────────────
 
     def _checkout_ref(self, url: str, target: Path, ref: str, force: bool) -> None:
-        """Move *target* onto *ref*, cloning from scratch if need be."""
+        """Move *target* onto *ref*, cloning from scratch if need be.
+
+        A clone this call starts is removed again if it fails: the empty
+        repository a mistyped ref left behind used to pass for a clone, and
+        every later default-branch install then failed in it.
+        """
+        made = None
         if not (target / ".git").exists():
-            # `init` + `remote add` + `fetch <ref>` reaches an arbitrary commit,
-            # which `git clone --branch` cannot; it also collapses the "no
-            # clone yet" and "clone exists" cases into one path.
-            self._run(["git", "init", str(target)])
-            self._run(["git", "-C", str(target), "remote", "add", "origin", url])
+            made = target / ".git" if target.exists() else target
+            try:
+                # `init` + `remote add` + `fetch <ref>` reaches an arbitrary commit,
+                # which `git clone --branch` cannot; it also collapses the "no
+                # clone yet" and "clone exists" cases into one path.
+                self._run(["git", "init", str(target)])
+                self._run(["git", "-C", str(target), "remote", "add", "origin", url])
+            except BaseException:
+                self._discard_new_clone(made)
+                raise
         else:
             self._check_origin(target, url)
+        try:
+            self._move_to_ref(url, target, ref, force)
+        except BaseException:
+            if made is not None:
+                self._discard_new_clone(made)
+            raise
+
+    def _discard_new_clone(self, made: Path) -> None:
+        shutil.rmtree(made, ignore_errors=True)
+        self._log(f"Removed the unfinished clone {made}.\n", "yellow")
+
+    def _move_to_ref(self, url: str, target: Path, ref: str, force: bool) -> None:
+        # Before any fetch: the remote-tracking refs still show what the remote had.
+        local_only = self._local_only_commits(target, ref)
+        detached = self._detached_commits(target)
 
         # An abbreviated SHA cannot be fetched by name, so don't pay for a
         # round trip that is guaranteed to fail.
@@ -691,10 +766,14 @@ class Installer:
             want = _git(["-C", str(target), "rev-parse", "FETCH_HEAD"]).stdout.strip()
             if self._already_at(target, ref, want):
                 return
+            # A branch fetch also creates refs/remotes/origin/<ref>, so this
+            # tells branch from tag/commit with no extra network call.
+            is_branch = self._has_remote_branch(target, ref)
+            if is_branch:
+                self._refuse_to_drop(target, ref, local_only)
+            self._refuse_to_orphan(target, detached)
             self._make_room(target, force)
-            if self._has_remote_branch(target, ref):
-                # A branch fetch also creates refs/remotes/origin/<ref>, so this
-                # tells branch from tag/commit with no extra network call.
+            if is_branch:
                 self._run(["git", "-C", str(target), "checkout", "-f", "-B", ref, "FETCH_HEAD"])
                 _git(["-C", str(target), "branch", "--set-upstream-to", f"origin/{ref}", ref])
             else:
@@ -719,10 +798,87 @@ class Installer:
         )
         self._deepen(target)
         self._run(["git", "-C", str(target), "fetch", "--tags", "--force", "origin"], timeout=900)
-        self._checkout_local(target, url, ref, force)
+        self._checkout_local(target, url, ref, force, local_only, detached)
+
+    def _local_only_commits(self, target: Path, branch: str) -> list[str]:
+        """``<sha> <subject>`` of the commits on local *branch* that no remote branch has."""
+        if (
+            _git(["-C", str(target), "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"]).returncode
+            != 0
+        ):
+            return []
+        cp = _git(["-C", str(target), "log", "--format=%h %s", f"refs/heads/{branch}", "--not", "--remotes"])
+        if cp.returncode != 0:
+            raise RuntimeError(
+                f"Could not check {target} for local commits on '{branch}': {cp.stderr.strip() or 'git log failed'}"
+            )
+        return cp.stdout.splitlines()
+
+    def _detached_commits(self, target: Path) -> list[str]:
+        """``<sha> <subject>`` of commits made on a detached HEAD that no ref has; [] if on a branch.
+
+        A tag or SHA pin creates no ref, so the base is where the last checkout left HEAD (the reflog);
+        without one it cannot tell, and git's own "leaving N commits behind" warning has to do.
+        """
+        if self._current_branch(target) is not None:
+            return []
+        reflog = _git(["-C", str(target), "reflog", "--format=%H %gs", "HEAD"]).stdout.splitlines()
+        base = next((ln.split()[0] for ln in reflog if ln.split()[1:2] == ["checkout:"]), None)
+        if base is None or _git(["-C", str(target), "cat-file", "-e", f"{base}^{{commit}}"]).returncode:
+            return []
+        cp = _git(
+            ["-C", str(target), "log", "--format=%h %s", "HEAD"]
+            + ["--not", base, "--branches", "--tags", "--remotes"]
+        )
+        if cp.returncode != 0:
+            raise RuntimeError(
+                f"Could not check {target} for commits on its detached HEAD: "
+                f"{cp.stderr.strip() or 'git log failed'}"
+            )
+        return cp.stdout.splitlines()
+
+    @staticmethod
+    def _listed(commits: list[str]) -> str:
+        shown = [f"  {c}" for c in commits[:10]]
+        if len(commits) > 10:
+            shown.append(f"  … and {len(commits) - 10} more")
+        return "\n".join(shown)
+
+    def _refuse_to_drop(self, target: Path, branch: str, commits: list[str]) -> None:
+        """Refuse to reset *branch*, which would lose *commits*; like the blank ref's ``pull --ff-only``."""
+        if not commits:
+            return
+        raise RuntimeError(
+            f"{target}: branch '{branch}' has {len(commits)} commit(s) that no remote branch has, "
+            f"and installing '{branch}' would reset the branch and lose them:\n"
+            + self._listed(commits)
+            + f"\nPush them (or keep them on another branch), then re-run the install. To work on "
+            f"the repository yourself, use your own checkout instead. {docs.see('own-checkout')}"
+        )
+
+    def _refuse_to_orphan(self, target: Path, commits: list[str]) -> None:
+        """Refuse to move a detached HEAD away from *commits*, which no branch would keep."""
+        if not commits:
+            return
+        raise RuntimeError(
+            f"{target}: {len(commits)} commit(s) were made on the detached HEAD and are on no branch, "
+            f"so this install would leave them behind:\n"
+            + self._listed(commits)
+            + f"\nKeep them on a branch (git -C {target} branch <name>), then re-run the install. To work "
+            f"on the repository yourself, use your own checkout instead. {docs.see('own-checkout')}"
+        )
 
     def _update_default_branch(self, url: str, target: Path, force: bool) -> None:
         """Blank ref: fast-forward the checked-out branch, as MTR always has."""
+        if _git(["-C", str(target), "rev-parse", "--verify", "--quiet", "HEAD"]).returncode != 0:
+            # No commit checked out: an install (before MTR removed failed
+            # clones) stopped between `git init` and its first checkout.
+            default = self._remote_default_branch(url) or "HEAD"
+            self._log(
+                f"{target} has no commits yet; checking out the default branch ({default}).\n", "yellow"
+            )
+            self._checkout_ref(url, target, default, force)
+            return
         self._run(["git", "-C", str(target), "fetch", "--all", "--prune"])
 
         branch = self._current_branch(target)
@@ -808,7 +964,15 @@ class Installer:
         self._log(f"Already at {want[:8]}; working tree left untouched.\n", "")
         return True
 
-    def _checkout_local(self, target: Path, url: str, ref: str, force: bool) -> None:
+    def _checkout_local(
+        self,
+        target: Path,
+        url: str,
+        ref: str,
+        force: bool,
+        local_only: list[str] | None = None,
+        detached: list[str] | None = None,
+    ) -> None:
         """Check out a ref that is already present in the local object store."""
         # ^{commit} peels annotated tags and rejects a ref naming a tree/blob.
         cp = _git(
@@ -823,8 +987,12 @@ class Installer:
         want = cp.stdout.strip()
         if self._already_at(target, ref, want):
             return
+        is_branch = self._has_remote_branch(target, ref)
+        if is_branch:
+            self._refuse_to_drop(target, ref, local_only or [])
+        self._refuse_to_orphan(target, detached or [])
         self._make_room(target, force)
-        if self._has_remote_branch(target, ref):
+        if is_branch:
             self._run(["git", "-C", str(target), "checkout", "-f", "-B", ref, f"origin/{ref}"])
         else:
             self._run(["git", "-C", str(target), "checkout", "-f", "--detach", want])
@@ -877,16 +1045,17 @@ class Installer:
         worse — silently yields a pipeline with zero recipes because
         PYCPL_RECIPE_DIR points at a directory that does not exist.
         """
-        for key, target in (("pipeline", TARGET_A), ("simulations", TARGET_B)):
+        owned = paths.user_owned_repos()
+        for key, _label, _url, target in repos():
             for rel in REQUIRED_FILES[key]:
                 needed = target / rel
                 if needed.exists():
                     continue
-                if target in EXTERNAL:
+                if target in owned:
                     raise RuntimeError(
                         f"{needed} does not exist: {target} (set via "
-                        f"{EXTERNAL[target]}) does not look like a current checkout "
-                        f"of that repository. {paths.change_hint(EXTERNAL[target])}. "
+                        f"{owned[target]}) does not look like a current checkout "
+                        f"of that repository. {paths.change_hint(owned[target])}. "
                         f"{docs.see('own-checkout')}"
                     )
                 raise RuntimeError(
@@ -895,37 +1064,74 @@ class Installer:
                     f"a newer one."
                 )
 
-    def _backup_edps_config(self) -> None:
-        """Back up the user's own application.properties, once.
+    def _configure_edps(self) -> None:
+        """Set the current EDPS config aside, let ``edps`` write a new one, and patch it.
 
-        MTR's own, unedited config is simply replaced: backing it up would make
-        Uninstall "restore" it as if it were the user's. Only the *first*
-        backup is kept, so a re-install never overwrites the user's original.
+        If that fails, the config that was there is put back.
         """
-        props = Path.home() / ".edps" / "application.properties"
+        self._step("Checking for existing EDPS configuration…")
+        moved = self._backup_edps_config()
+        try:
+            self._step("Initialising EDPS…")
+            self._init_edps()
+            self._step("Patching ~/.edps/application.properties…")
+            self._patch_edps_config()
+        except BaseException:
+            self._restore_edps_config(moved)
+            raise
+        if moved is not None and moved.name == _EDPS_PREVIOUS:
+            moved.unlink(missing_ok=True)
+
+    def _backup_edps_config(self) -> Path | None:
+        """Move the current application.properties aside so ``edps`` writes a fresh one.
+
+        MTR's own, unedited config goes to a temporary name and is deleted once
+        the new one is in place: backing it up would make Uninstall "restore" it
+        as if it were the user's. The user's config becomes the backup that
+        Uninstall restores; if one exists already, it is kept and this config
+        is set aside under a timestamped name instead, never deleted.
+
+        Returns where the config went, or None if there was none.
+        """
+        props = edps_config.path()
         if not props.exists():
-            return
+            return None
         try:
             ours = _is_pristine_mtr_config(props.read_text())
         except (OSError, UnicodeDecodeError):
             ours = False
         if ours:
-            props.unlink()
+            moved = props.with_name(_EDPS_PREVIOUS)
+            props.replace(moved)
             self._log(f"Replacing MTR's own {props}\n", "")
-            return
-        backup = props.with_name("application.properties_backup")
-        if backup.exists():
-            props.unlink()
+            return moved
+        moved = props.with_name(_EDPS_BACKUP)
+        if moved.exists():
+            stamp = time.strftime("%Y%m%dT%H%M%S")
+            moved = props.with_name(f"{_EDPS_BACKUP}.{stamp}")
+            n = 1
+            while moved.exists():
+                moved, n = props.with_name(f"{_EDPS_BACKUP}.{stamp}-{n}"), n + 1
             self._log(
-                f"{backup} already exists — keeping the original backup and discarding the current config\n",
+                f"{props.with_name(_EDPS_BACKUP)} already holds your original config, which "
+                f"Uninstall restores; the current one is kept as {moved}\n",
                 "yellow",
             )
         else:
-            props.rename(backup)
-            self._log(
-                f"Existing {props} found — backed up to {backup}\n",
-                "yellow",
-            )
+            self._log(f"Existing {props} found — backed up to {moved}\n", "yellow")
+        props.rename(moved)
+        return moved
+
+    def _restore_edps_config(self, moved: Path | None) -> None:
+        """Undo _backup_edps_config after a failed EDPS set-up; never raises."""
+        if moved is None or not moved.exists():
+            return
+        props = edps_config.path()
+        try:
+            moved.replace(props)
+            self._log(f"Put your EDPS configuration back in {props}.\n", "yellow")
+        except OSError as exc:
+            self._log(f"✗ Could not put {moved} back as {props}: {exc}\n", "red")
 
     def _init_edps(self) -> None:
         """Run edps once to generate ~/.edps/application.properties.
@@ -937,52 +1143,36 @@ class Installer:
         default port and then fail to stop it.
         """
         edps_bin = Path(sys.executable).parent / "edps"
-        self._run([str(edps_bin)], cwd=REPO_ROOT, stdin_text="\n", timeout=60)
+        self._run([str(edps_bin)], cwd=paths.data_dir(), stdin_text="\n", timeout=60)
 
     def _patch_edps_config(self) -> None:
-        props = Path.home() / ".edps" / "application.properties"
+        props = edps_config.path()
         if not props.exists():
             raise RuntimeError(f"{props} not found — did EDPS initialise correctly?")
-        text = props.read_text()
         # fmt: off
-        patches = {
-            "port":         (r"^port=.*",         "port=4444"),
-            "workflow_dir": (r"^workflow_dir=.*", f"workflow_dir={TARGET_A}/metisp/workflows"),
-            "esorex_path":  (r"^esorex_path=.*",  "esorex_path=pyesorex"),
-            "association_preference": (
-                r"^association_preference=.*",
-                "association_preference=master_per_quality_level",
-            ),
-            "categories": (r"^categories=.*", "categories=.*"),
-            "pattern": (
-                r"^pattern=.*",
-                "pattern=$TASK/$TIMESTAMP/$object$_$pro.catg$.$EXT",
-            ),
+        updates = {
+            "port":                   "4444",
+            "workflow_dir":           f"{paths.pipeline_dir()}/metisp/workflows",
+            "esorex_path":            "pyesorex",
+            "association_preference": "master_per_quality_level",
+            "categories":             ".*",
+            "pattern":                "$TASK/$TIMESTAMP/$object$_$pro.catg$.$EXT",
             # Hardlink products into the per-run output dir instead of copying
             # them, so they don't consume disk twice (once in the EDPS working
             # store ~/EDPS_data, once under the run's output folder). Requires
             # both to be on the same filesystem (true by default — both under
             # $HOME); use "symlink" instead if the output dir is on another mount.
-            "mode": (r"^mode=.*", "mode=link"),
+            "mode":                   "link",
             # Wipe EDPS bookkeeping on every server startup. Without this, a
             # stale db.json entry whose on-disk outputs have been removed will
             # collide with a fresh submission's deterministic job UUID and make
             # EDPS short-circuit the run with a FileNotFoundError.
-            "truncate": (r"^truncate=.*", "truncate=True"),
+            "truncate":               "True",
         }
         # fmt: on
-        for key, (pattern, replacement) in patches.items():
-            # A *function* replacement, because re.subn interprets backslashes
-            # and \g<...> in a string replacement: a data dir containing a
-            # backslash would corrupt the config or raise re.error. The paths
-            # here come from METIS_DATA_DIR, which is arbitrary user input.
-            text, count = re.subn(
-                pattern,
-                lambda _m, r=replacement: r,
-                text,
-                flags=re.MULTILINE,
-            )
-            if count == 0:
+        text, old = edps_config.patch_text(props.read_text(), updates)
+        for key, value in old.items():
+            if value is None:
                 raise RuntimeError(
                     f"{props} has no '{key}=' line to patch — EDPS config "
                     f"format may have changed; re-run EDPS initialisation."
@@ -1026,9 +1216,16 @@ class Uninstaller:
         "metis_simulations",
     ]
 
-    def __init__(self, log: LogFn | None = None, should_stop: Callable[[], bool] | None = None) -> None:
+    def __init__(
+        self,
+        log: LogFn | None = None,
+        should_stop: Callable[[], bool] | None = None,
+        confirmed: bool = False,
+    ) -> None:
+        """*confirmed*: the user saw uninstall_summary() (which lists unmarked entries) and agreed."""
         self._log: LogFn = log or (lambda _text, _colour: None)
         self._should_stop = should_stop or (lambda: False)
+        self._confirmed = confirmed
 
     def run(self) -> bool:
         """Run every step; return False if any of them failed or it was stopped.
@@ -1070,7 +1267,7 @@ class Uninstaller:
             self._log(f"✗ pip uninstall failed: {exc}\n", "red")
 
         # ── delete the user data directory ────────────────────────────────
-        self._step(f"Removing the METIS data directory  →  {REPO_ROOT}")
+        self._step(f"Removing MTR's files from the data directory  →  {paths.data_dir(create=False)}")
         try:
             if not self._remove_data_dir():
                 ok = False
@@ -1132,78 +1329,102 @@ class Uninstaller:
         stream_subprocess(cmd, on_line=self._log, timeout=timeout, should_stop=self._should_stop)
 
     def _remove_data_dir(self) -> bool:
-        """Delete the whole user data dir, sparing user-owned checkouts.
+        """Delete what MTR created in the data dir, then the dir itself if that left it empty.
 
-        A user-owned checkout (env var or Install tab) is never
-        removed. If one lies inside the data dir, only the data dir's other
-        entries are deleted.
+        Only the entries in ``DATA_DIR_ENTRIES`` are deleted, so a mistyped
+        ``METIS_DATA_DIR`` cannot take unrelated files with it. A user-owned
+        checkout (env var or Install tab) is never removed, nor anything holding one.
 
-        Returns False if anything was refused or left behind.
+        Returns False if anything was refused or could not be deleted.
         """
-        ok = True
-        for kept, var in EXTERNAL.items():
+        owned = paths.user_owned_repos()
+        for kept, var in owned.items():
             self._log(f"Keeping your own checkout {kept} (set via {var}).\n", "yellow")
-        root = REPO_ROOT.resolve() if REPO_ROOT.exists() else REPO_ROOT
-        inside = [t.resolve() for t in EXTERNAL if t.exists()]
-        inside = [t for t in inside if t == root or root in t.parents]
-        targets = [REPO_ROOT]
-        if inside and REPO_ROOT.is_dir():
-            if root in inside:
-                self._log(f"{REPO_ROOT} is itself a user-owned checkout — not removed.\n", "yellow")
-                return ok
-            # Delete every entry except those that are, or contain, a kept
-            # checkout. Symlinks always go: unlinking never touches the target.
-            try:
-                _assert_safe_to_remove(REPO_ROOT)
-            except RuntimeError as exc:
-                self._log(f"✗ {exc}\n", "red")
-                return False
+        root = paths.data_dir(create=False)
+        if not root.exists():
+            self._log(f"{root} does not exist — nothing to remove.\n", "")
+            return True
+        try:
+            _assert_safe_to_remove(root, follow_symlink=True)
+        except RuntimeError as exc:
+            self._log(f"✗ {exc}\n", "red")
+            return False
+        real = root.resolve()
+        kept = [t.resolve() for t in owned if t.exists()]
+        if any(real == t or t in real.parents for t in kept):
+            self._log(f"{root} is (inside) a user-owned checkout — not removed.\n", "yellow")
+            return True
 
-            def holds_kept(e: Path) -> bool:
-                return not e.is_symlink() and any(
-                    e.resolve() == t or e.resolve() in t.parents for t in inside
-                )
+        def holds_kept(e: Path) -> bool:
+            return not e.is_symlink() and any(e.resolve() == t or e.resolve() in t.parents for t in kept)
 
-            targets = [e for e in REPO_ROOT.iterdir() if not holds_kept(e)]
-        for target in targets:
-            if target != REPO_ROOT and (target.is_symlink() or not target.is_dir()):
-                # A file or link inside a data dir that holds a kept checkout.
-                target.unlink()
-                self._log(f"Removed {target}\n", "")
+        unsure = set() if self._confirmed or paths.data_dir_is_mtrs() else GENERIC_DATA_DIR_ENTRIES
+        ok = True
+        left: list[str] = []
+        unsure_left: list[str] = []
+        marker = root / paths.DATA_DIR_MARKER
+        for entry in sorted(root.iterdir()):
+            if entry.name in unsure:
+                unsure_left.append(entry.name)
                 continue
-            if not target.exists():
-                self._log(f"{target} does not exist — nothing to remove.\n", "")
+            if not _is_mtr_entry(entry.name) or holds_kept(entry) or entry == marker:
+                left.append(entry.name)
                 continue
-            try:
-                _assert_safe_to_remove(target)
-            except RuntimeError as exc:
-                ok = False
-                self._log(f"✗ {exc}\n", "red")
+            if entry.is_symlink() or not entry.is_dir():
+                entry.unlink()  # unlinking a symlink never touches its target
+                self._log(f"Removed {entry}\n", "")
                 continue
             failures: list[str] = []
-            shutil.rmtree(
-                target,
-                onexc=lambda _f, path, exc, _acc=failures: _acc.append(f"{path}: {exc}"),
-            )
+            shutil.rmtree(entry, onexc=lambda _f, path, exc, _acc=failures: _acc.append(f"{path}: {exc}"))
             if failures:
                 ok = False
-                self._log(
-                    f"✗ Could not fully remove {target} ({len(failures)} item(s) left):\n",
-                    "red",
-                )
+                left.append(entry.name)
+                self._log(f"✗ Could not fully remove {entry} ({len(failures)} item(s) left):\n", "red")
                 for line in failures[:10]:
                     self._log(f"    {line}\n", "red")
             else:
-                self._log(f"Removed {target}\n", "")
+                self._log(f"Removed {entry}\n", "")
+        if marker.name in left and ok:  # last: a failed uninstall still trusts the dir when re-run
+            marker.unlink()
+            left.remove(marker.name)
+        if unsure_left:
+            self._log(
+                f"Kept {', '.join(unsure_left)} in {root}: METIS_DATA_DIR points at a folder MTR did not "
+                f"mark as its own ({paths.DATA_DIR_MARKER}), so they may not be MTR's. Check METIS_DATA_DIR, "
+                f"then delete them yourself, or run mtr-uninstall without --yes to confirm them.\n",
+                "yellow",
+            )
+        if left:
+            self._log(
+                f"Left in {root} (not created by MTR, or not removable): {', '.join(left)}\n",
+                "yellow",
+            )
+        if left or unsure_left:
+            return ok
+        if root.is_symlink():
+            self._log(f"{root} is a symlink; it and its (now empty) target are left in place.\n", "yellow")
+        else:
+            root.rmdir()
+            self._log(f"Removed {root}\n", "")
         return ok
 
     def _cleanup_edps(self) -> None:
         """If the install backed up a pre-existing config, restore it; otherwise
         the install created the whole EDPS state, so remove it entirely
-        (config dir + the base_dir bookkeeping/data directory)."""
+        (config dir + the base_dir bookkeeping/data directory).
+
+        Later configs the install set aside (``application.properties_backup.<time>``)
+        are always kept, and listed.
+        """
         edps_dir = Path.home() / ".edps"
         props = edps_dir / "application.properties"
-        backup = props.with_name("application.properties_backup")
+        backup = props.with_name(_EDPS_BACKUP)
+        later = sorted(edps_dir.glob(f"{_EDPS_BACKUP}.*"))
+        if later:
+            self._log(
+                "Kept configs set aside by later installs: " + ", ".join(str(p) for p in later) + "\n",
+                "yellow",
+            )
         if backup.exists():
             if props.exists():
                 props.unlink()
@@ -1217,10 +1438,14 @@ class Uninstaller:
         # deleting either, with the same guard as the data directory.
         if not base_dir.is_absolute():
             raise RuntimeError(f"Refusing to remove base_dir={base_dir}: not an absolute path (see {props})")
-        for target in (edps_dir, base_dir):
+        targets = [base_dir] if later else [edps_dir, base_dir]
+        for target in targets:
             if target.exists():
                 _assert_safe_to_remove(target)
-        for target in (edps_dir, base_dir):
+        if later and props.exists():
+            props.unlink()
+            self._log(f"Removed {props}\n", "")
+        for target in targets:
             if target.exists():
                 shutil.rmtree(target)
                 self._log(f"Removed {target}\n", "")
@@ -1229,17 +1454,9 @@ class Uninstaller:
 
     @staticmethod
     def _edps_base_dir(props: Path) -> Path:
-        """Read ``base_dir=`` from the EDPS config; fall back to ~/EDPS_data."""
-        default = Path.home() / "EDPS_data"
-        if not props.exists():
-            return default
-        for line in props.read_text().splitlines():
-            stripped = line.strip()
-            if stripped.startswith("base_dir="):
-                value = stripped.split("=", 1)[1].strip()
-                if value:
-                    return Path(value).expanduser()
-        return default
+        """``base_dir`` from the EDPS config; falls back to ~/EDPS_data."""
+        value = (edps_config.get("base_dir", props=props) or "").strip()
+        return Path(value).expanduser() if value else Path.home() / "EDPS_data"
 
 
 def remote_refs(url: str) -> list[str]:
@@ -1283,7 +1500,7 @@ def discard_summary(label: str, target: Path, entries: list) -> str:
 
 def own_checkout_hint(label: str) -> str:
     """How to keep local edits to repo *label*: run MTR against your own checkout."""
-    key = next(k for k, lbl, _url, _target in REPOS if lbl == label)
+    key = next(k for k, lbl, _url in REPO_SPECS if lbl == label)
     return (
         f"To keep local edits, clone {label} elsewhere and select it as your own "
         f"checkout on the Install tab (or set {paths.REPO_ENV[key]}); MTR never "
@@ -1291,15 +1508,38 @@ def own_checkout_hint(label: str) -> str:
     )
 
 
+def _unmarked_entries() -> list[str]:
+    """What uninstall would delete from a METIS_DATA_DIR that MTR did not mark as its own."""
+    root = paths.data_dir(create=False)
+    if paths.data_dir_is_mtrs() or not root.is_dir():
+        return []
+    try:
+        return sorted(e.name + "/" * e.is_dir() for e in root.iterdir() if _is_mtr_entry(e.name))
+    except OSError:
+        return []
+
+
 def uninstall_summary() -> str:
-    kept = "".join(f"\nYour own checkout {t} (set via {var}) is kept." for t, var in EXTERNAL.items())
+    """The uninstall confirmation; agreeing to it is what Uninstaller(confirmed=True) means."""
+    root = paths.data_dir(create=False)
+    notes = "".join(
+        f"\nYour own checkout {t} (set via {var}) is kept." for t, var in paths.user_owned_repos().items()
+    )
+    unsure = _unmarked_entries()
+    if unsure:
+        notes += (
+            f"\n\n⚠ METIS_DATA_DIR ({root}) has no {paths.DATA_DIR_MARKER} marker, so MTR cannot tell "
+            "whether it made these. Check that they are MTR's before you continue:\n"
+            + "\n".join(f"  {name}" for name in unsure)
+        )
     return (
         "This will permanently:\n"
         "• pip-uninstall all pipeline and MetisWISE packages\n"
-        f"• delete the entire data directory ({REPO_ROOT})\n"
+        f"• delete MTR's files in its data directory ({root}),\n"
+        "  including the runs under output/ (other files there are kept)\n"
         "• restore or remove the EDPS configuration\n"
         "• delete stored archive credentials from the OS keyring\n"
-        f"{kept}\n\n"
+        f"{notes}\n\n"
         "Transitive sub-dependencies are not removed. Continue?"
     )
 
@@ -1344,8 +1584,9 @@ def _collect_force(discard_changes: bool) -> set[Path] | None:
     tracked edits either way.
     """
     force: set[Path] = set()
-    for _key, label, _url, target in REPOS:
-        if target in EXTERNAL:
+    owned = paths.user_owned_repos()
+    for _key, label, _url, target in repos():
+        if target in owned:
             continue
         try:
             entries = _dirty_files(target)
@@ -1373,11 +1614,12 @@ def _collect_force(discard_changes: bool) -> set[Path] | None:
 
 
 def _list_refs() -> int:
-    for _key, label, url, target in REPOS:
+    owned = paths.user_owned_repos()
+    for _key, label, url, target in repos():
         print(f"{label}  ({target})")
         print(f"  currently: {_describe_head(target)}")
-        if target in EXTERNAL:
-            print(f"  your own checkout (set via {EXTERNAL[target]}) — not managed by MTR")
+        if target in owned:
+            print(f"  your own checkout (set via {owned[target]}) — not managed by MTR")
             continue
         try:
             refs = remote_refs(url)
@@ -1399,7 +1641,7 @@ def _install_parser() -> argparse.ArgumentParser:
         "Safe to re-run: existing clones are updated, not re-cloned.",
         epilog="Example: mtr-install --pipeline-ref develop --simulations-ref v0.4.2",
     )
-    for key, label, _url, _target in REPOS:
+    for key, label, _url in REPO_SPECS:
         p.add_argument(
             f"--{key}-ref",
             metavar="REF",
@@ -1436,13 +1678,14 @@ def _install(argv: list[str] | None) -> int:
     if args.list_refs:
         return _list_refs()
     try:
-        refs = {target: _validate_ref(getattr(args, f"{key}_ref")) for key, _label, _url, target in REPOS}
+        refs = {target: _validate_ref(getattr(args, f"{key}_ref")) for key, _label, _url, target in repos()}
     except ValueError as exc:
         p.error(str(exc))
-    for key, _label, _url, target in REPOS:
-        if refs[target] and target in EXTERNAL:
+    owned = paths.user_owned_repos()
+    for key, _label, _url, target in repos():
+        if refs[target] and target in owned:
             p.error(
-                f"--{key}-ref cannot be used with your own checkout (set via {EXTERNAL[target]}): MTR does not change it."
+                f"--{key}-ref cannot be used with your own checkout (set via {owned[target]}): MTR does not change it."
             )
     force = _collect_force(args.discard_changes)
     if force is None:
@@ -1468,7 +1711,7 @@ def _uninstall(argv: list[str] | None) -> int:
         if not _confirm(uninstall_summary()):
             print("mtr-uninstall: aborted.", file=sys.stderr)
             return 2
-    return 0 if Uninstaller(log=_console_log).run() else 1
+    return 0 if Uninstaller(log=_console_log, confirmed=not args.yes).run() else 1
 
 
 def install_main(argv: list[str] | None = None) -> int:

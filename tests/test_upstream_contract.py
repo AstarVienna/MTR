@@ -19,7 +19,7 @@ import pytest
 import yaml
 from packaging.version import Version
 
-from metis_test_runner import installer, tables, upstream
+from metis_test_runner import tables, upstream
 from metis_test_runner.installer import Installer, Uninstaller
 from metis_test_runner.run_metis import _build_sim_script
 
@@ -85,7 +85,7 @@ class TestPipelineContract:
 
     def test_uninstaller_knows_pymetis_index_deps(self, upstream_pipeline_dir, monkeypatch):
         # The installer reads pymetis's deps; the uninstaller names the non-PyPI ones itself.
-        monkeypatch.setattr(installer, "TARGET_A", upstream_pipeline_dir)
+        monkeypatch.setenv("METIS_PIPELINE_DIR", str(upstream_pipeline_dir))
         assert Installer._pip_deps_command()
         pyproject = tomllib.loads(
             (upstream_pipeline_dir / "metisp" / "pymetis" / "pyproject.toml").read_text()

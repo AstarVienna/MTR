@@ -23,7 +23,7 @@ os.environ["XDG_DATA_HOME"] = _qsettings_tmp
 # The update check starts from main(); tests that want it clear this themselves.
 os.environ["MTR_NO_UPDATE_CHECK"] = "1"
 # A developer's own METIS_PIPELINE_DIR / METIS_SIMULATIONS_DIR would mark the
-# repos user-owned at import time (installer.EXTERNAL) and skew the tests.
+# repos user-owned (paths.user_owned_repos) and skew the tests.
 # Only the upstream contract tests see them, via the fixtures below.
 _UPSTREAM_PIPELINE = os.environ.pop("METIS_PIPELINE_DIR", None)
 _UPSTREAM_SIMULATIONS = os.environ.pop("METIS_SIMULATIONS_DIR", None)

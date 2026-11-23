@@ -13,7 +13,7 @@ import pytest
 from PyQt6.QtCore import QEventLoop, Qt
 from PyQt6.QtTest import QTest
 
-from metis_test_runner import gui, installer
+from metis_test_runner import gui, paths
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("MTR_INSTALL_TAB_E2E"), reason="MTR_INSTALL_TAB_E2E not set (installs for real)"
@@ -57,7 +57,7 @@ def test_install_succeeds(installed):
     assert gui._installation_complete()
 
 
-@pytest.mark.parametrize("target", [installer.TARGET_A, installer.TARGET_B], ids=lambda t: t.name)
+@pytest.mark.parametrize("target", [paths.pipeline_dir(), paths.simulations_dir()], ids=lambda t: t.name)
 def test_repos_cloned(installed, target):
     cp = _run("git", "-C", str(target), "rev-parse", "HEAD")
     assert cp.returncode == 0, cp.stderr
@@ -66,7 +66,7 @@ def test_repos_cloned(installed, target):
 def test_edps_configured(installed):
     _tab, _success, home = installed
     props = (home / ".edps" / "application.properties").read_text()
-    workflows = installer.TARGET_A / "metisp" / "workflows"
+    workflows = paths.pipeline_dir() / "metisp" / "workflows"
     assert f"workflow_dir={workflows}\n" in props
     assert workflows.is_dir()
 

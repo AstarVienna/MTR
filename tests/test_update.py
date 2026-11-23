@@ -415,7 +415,7 @@ def win(qapp, tmp_path, monkeypatch):
     monkeypatch.setenv("METIS_DATA_DIR", str(tmp_path))
     monkeypatch.delenv(update.DISABLE_ENV)
     monkeypatch.setattr(update, "install_kind", lambda: "pipx")
-    monkeypatch.setattr(gui, "__version__", "0.7.2")
+    monkeypatch.setattr(gui.main_window, "__version__", "0.7.2")
     monkeypatch.setattr(update, "__version__", "0.7.2")
     window = gui.MainWindow()
     window.show()
@@ -518,7 +518,7 @@ class TestUpdateFlow:
         boxes["reply"] = QMessageBox.StandardButton.No
         win._offer_update("0.8.0")
         monkeypatch.setattr(update, "upgrade_commands", lambda v: [["x"]])
-        monkeypatch.setattr(gui, "UpdateDialog", lambda *a: pytest.fail("started the upgrade"))
+        monkeypatch.setattr(gui.main_window, "UpdateDialog", lambda *a: pytest.fail("started the upgrade"))
         win._update_btn.click()
         assert boxes["question"]
 
@@ -535,7 +535,7 @@ class TestUpdateFlow:
         restarted = []
         win._offer_update("0.8.0")
         monkeypatch.setattr(update, "upgrade_commands", lambda v: [["x"]])
-        monkeypatch.setattr(gui, "UpdateDialog", Dialog)
+        monkeypatch.setattr(gui.main_window, "UpdateDialog", Dialog)
         monkeypatch.setattr(win, "_restart", lambda: restarted.append(True))
         win._update_btn.click()
         assert restarted == [True]
@@ -686,8 +686,8 @@ class TestShowWhatsNew:
             def exec(self):
                 return 1
 
-        monkeypatch.setattr(gui, "WhatsNewDialog", Dialog)
-        monkeypatch.setattr(gui, "__version__", "0.8.0")
+        monkeypatch.setattr(gui.main_window, "WhatsNewDialog", Dialog)
+        monkeypatch.setattr(gui.main_window, "__version__", "0.8.0")
         monkeypatch.setattr(update, "load_changelog", lambda: CHANGELOG)
         yield shown
         settings.clear()
