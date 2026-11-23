@@ -82,9 +82,12 @@ class ReportViewer(QWidget):
 
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
+        self.tree.setProperty("role", "reports")
+        self.tree.setIndentation(14)
         self.tree.currentItemChanged.connect(self._on_select)
 
         self.description = QLabel()
+        self.description.setProperty("fontsize", "large")
         self.description.setWordWrap(True)
         self.description.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.image = QLabel()
@@ -96,13 +99,17 @@ class ReportViewer(QWidget):
         self.fit_cb = QCheckBox("Fit")
         self.fit_cb.setChecked(True)
         self.fit_cb.toggled.connect(self._render)
-        zoom_out, zoom_in = QPushButton("-"), QPushButton("+")
+        zoom_out, zoom_in = QPushButton("\u2212"), QPushButton("+")
         zoom_out.clicked.connect(lambda: self._set_zoom(self._zoom / 1.25))
         zoom_in.clicked.connect(lambda: self._set_zoom(self._zoom * 1.25))
+        for b in (zoom_out, zoom_in):
+            b.setProperty("symbol", "true")
         self.open_btn = QPushButton("Open image")
         self.open_btn.clicked.connect(lambda: self._open(self._path))
         self.folder_btn = QPushButton("Open folder")
         self.folder_btn.clicked.connect(lambda: self._open(self._path.parent if self._path else None))
+        for b in (zoom_out, zoom_in, self.open_btn, self.folder_btn):
+            b.setProperty("role", "browse")
         controls = QHBoxLayout()
         for w in (self.fit_cb, zoom_out, zoom_in):
             controls.addWidget(w)
@@ -139,6 +146,9 @@ class ReportViewer(QWidget):
             top = QTreeWidgetItem([label])
             top.setData(0, _DATA, job)
             top.setToolTip(0, str(job))
+            font = top.font(0)
+            font.setBold(True)
+            top.setFont(0, font)
             self.tree.addTopLevelItem(top)
             for r in job_reports:
                 rep = QTreeWidgetItem([r.name + (" (failed)" if r.error else "")])
@@ -226,20 +236,25 @@ class ReportsTab(QWidget):
         self._cache: dict[Path, tuple[tuple, list[Report]]] = {}
 
         self.run_combo = QComboBox()
+        self.run_combo.setProperty("fontsize", "large")
         self.run_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.run_combo.currentIndexChanged.connect(self._load)
         browse = QPushButton("Browse…")
         browse.setProperty("role", "browse")
         browse.clicked.connect(self._browse)
         refresh = QPushButton("Refresh")
+        refresh.setProperty("role", "browse")
         refresh.clicked.connect(lambda: self.show_run(self.current_run(), force=True))
         top = QHBoxLayout()
-        top.addWidget(QLabel("Run:"))
+        run_label = QLabel("Run:")
+        run_label.setProperty("fontsize", "large")
+        top.addWidget(run_label)
         top.addWidget(self.run_combo, 1)
         top.addWidget(browse)
         top.addWidget(refresh)
 
         self.status = QLabel()
+        self.status.setProperty("fontsize", "large")
         self.status.setWordWrap(True)
         self.viewer = ReportViewer()
         lay = QVBoxLayout(self)

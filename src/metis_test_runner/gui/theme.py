@@ -3,7 +3,13 @@
 # PyQt6 stubs type most widget getters as Optional; they are never None here.
 # pyright: reportOptionalMemberAccess=false
 
-from PyQt6.QtGui import QColor, QPalette
+import atexit
+import shutil
+import tempfile
+from pathlib import Path
+
+from PyQt6.QtCore import QPointF, Qt
+from PyQt6.QtGui import QColor, QImage, QPainter, QPalette, QPolygonF
 from PyQt6.QtWidgets import (
     QApplication,
 )
@@ -145,6 +151,31 @@ THEMES: dict[str, dict[str, str]] = {
 LOG_COLORS: dict[str, str] = {}
 
 
+_ICON_DIR: Path | None = None
+
+
+def _branch_arrows(color: str) -> tuple[str, str]:
+    """Closed/open tree arrows in *color*, as PNGs in a per-process temp dir."""
+    global _ICON_DIR
+    if _ICON_DIR is None:
+        _ICON_DIR = Path(tempfile.mkdtemp(prefix="mtr-icons-"))
+        atexit.register(shutil.rmtree, _ICON_DIR, True)
+    paths = []
+    for kind, pts in (("closed", [(4, 2), (9, 6), (4, 10)]), ("open", [(2, 4), (10, 4), (6, 9)])):
+        img = QImage(12, 12, QImage.Format.Format_ARGB32)
+        img.fill(Qt.GlobalColor.transparent)
+        qp = QPainter(img)
+        qp.setRenderHint(QPainter.RenderHint.Antialiasing)
+        qp.setPen(Qt.PenStyle.NoPen)
+        qp.setBrush(QColor(color))
+        qp.drawPolygon(QPolygonF([QPointF(x, y) for x, y in pts]))
+        qp.end()
+        path = _ICON_DIR / f"{kind}-{color.lstrip('#')}.png"
+        img.save(str(path))
+        paths.append(path.as_posix())
+    return paths[0], paths[1]
+
+
 def apply_theme(app: QApplication, name: str) -> None:
     """Apply a named theme to the application (palette + stylesheet)."""
     t = THEMES[name]
@@ -207,6 +238,8 @@ def apply_theme(app: QApplication, name: str) -> None:
         return QColor(
             *(round(0.35 * x + 0.65 * y) for x, y in zip(a.getRgb()[:3], b.getRgb()[:3], strict=True))
         ).name()
+
+    arrow_closed, arrow_open = _branch_arrows(win_text)
 
     app.setStyleSheet(f"""
         QGroupBox {{
@@ -364,5 +397,39 @@ def apply_theme(app: QApplication, name: str) -> None:
         QPushButton[symbol="true"] {{
             font-size: 20px;
             padding: 0 8px;
+        }}
+        QLabel[fontsize="large"], QComboBox[fontsize="large"],
+        QComboBox[fontsize="large"] QAbstractItemView {{
+            font-size: 14px;
+        }}
+        QTreeWidget[role="reports"] {{
+            font-size: 14px;
+            border: 1px solid {brd};
+            border-radius: 8px;
+            padding: 4px;
+            outline: none;
+            show-decoration-selected: 0;
+        }}
+        QTreeWidget[role="reports"]::item {{
+            padding: 5px 6px;
+            margin: 1px 2px;
+            border-radius: 6px;
+        }}
+        QTreeWidget[role="reports"]::item:hover:!selected {{
+            background-color: {alt};
+        }}
+        QTreeWidget[role="reports"]::item:selected {{
+            background-color: {hl};
+            color: {highlight_text};
+        }}
+        /* Opaque in every state, else hover/selection paint a stray box here. */
+        QTreeWidget[role="reports"]::branch {{
+            background-color: palette(base);
+        }}
+        QTreeWidget[role="reports"]::branch:has-children:closed {{
+            image: url("{arrow_closed}");
+        }}
+        QTreeWidget[role="reports"]::branch:has-children:open {{
+            image: url("{arrow_open}");
         }}
     """)
