@@ -8,10 +8,11 @@ Three-tab graphical front-end:
   Archive  — install MetisWISE and upload/download FITS files
 
 Layout: theme (styling), widgets (shared helpers), workers (QThreads),
-install_tab / archive_tab / run_tab, main_window (dialogs, MainWindow, main()).
+install_tab / archive_tab / run_tab, tour (first-run guided tour),
+main_window (dialogs, MainWindow, main()).
 """
 
-from . import archive_tab, install_tab, main_window, run_tab, theme, widgets, workers
+from . import archive_tab, install_tab, main_window, run_tab, theme, tour, widgets, workers
 from .archive_tab import ArchiveTab
 from .install_tab import InstallTab
 from .main_window import MainWindow, UpdateDialog, WhatsNewDialog, main
@@ -60,6 +61,7 @@ __all__ = [
     "main_window",
     "run_tab",
     "theme",
+    "tour",
     "widgets",
     "workers",
 ]

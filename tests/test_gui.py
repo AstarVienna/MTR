@@ -2164,3 +2164,77 @@ class TestArchiveWorkersUseDbSession:
         gui.UploadWorker([(tmp_path / "a.fits", "X")]).run()
         gui.workers.TestConnectionWorker({"a": "1"}).run()
         assert len(entered) == 3
+
+
+# ---------------------------------------------------------------------------
+# First-run tour
+# ---------------------------------------------------------------------------
+
+
+class TestTour:
+    @pytest.fixture
+    def win(self, qapp):
+        from PyQt6.QtCore import QSettings
+
+        from metis_test_runner.gui import MainWindow, tour
+
+        QSettings("METIS", "TestRunner").remove(tour.SETTINGS_KEY)
+        win = MainWindow()
+        win.show()
+        qapp.processEvents()
+        yield win
+        if win._tour is not None:
+            win._tour.finish()
+        win.close()
+        QSettings("METIS", "TestRunner").remove(tour.SETTINGS_KEY)
+
+    def test_first_launch_runs_once_and_ends_on_install(self, qapp, win):
+        from metis_test_runner.gui import tour
+
+        win._tabs.setCurrentIndex(2)
+        win.maybe_start_tour()
+        overlay = win._tour
+        assert overlay is not None and overlay.isVisible()
+        for _ in range(len(overlay._steps)):
+            overlay.next()
+        assert win._tour is None
+        assert tour.completed()
+        assert win._tabs.currentWidget() is win._install_tab
+        win.maybe_start_tour()
+        assert win._tour is None  # not shown again
+
+    def test_skip_marks_completed(self, qapp, win):
+        from metis_test_runner.gui import tour
+
+        win.start_tour()
+        win._tour.finish()
+        assert win._tour is None and tour.completed()
+
+    def test_toolbar_button_replays(self, qapp, win):
+        from metis_test_runner.gui import tour
+
+        tour.mark_completed()
+        win._tour_btn.click()
+        assert win._tour is not None
+
+    def test_every_targeted_step_finds_its_widget(self, qapp, win):
+        from metis_test_runner.gui import tour
+
+        steps = tour.build_steps(win)
+        for step in steps:
+            if step.prepare is not None:
+                step.prepare()
+            qapp.processEvents()
+            if step.target is not None:
+                rect = step.target()
+                assert rect is not None and not rect.isEmpty(), step.title
+                assert win.rect().intersects(rect), step.title
+
+    def test_popup_stays_inside_small_window(self, qapp, win):
+        win.resize(600, 400)
+        win.start_tour()
+        overlay = win._tour
+        for _ in range(len(overlay._steps)):
+            qapp.processEvents()
+            assert overlay.rect().contains(overlay._popup.geometry()), overlay.current_step()
+            overlay.next()

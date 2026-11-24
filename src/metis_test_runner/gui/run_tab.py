@@ -155,7 +155,7 @@ class RunTab(WorkerHost, QWidget):
         top_lay.addWidget(self.input_grp)
 
         # ── Options ──
-        opts_grp = QGroupBox("Options")
+        self.opts_grp = opts_grp = QGroupBox("Options")
         opts_lay = QVBoxLayout(opts_grp)
         opts_lay.setSpacing(10)
         opts_lay.setContentsMargins(9, 9, 9, 12)

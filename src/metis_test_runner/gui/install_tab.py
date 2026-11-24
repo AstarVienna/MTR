@@ -117,7 +117,8 @@ class InstallTab(WorkerHost, QWidget):
         desc.setProperty("intro", "true")
         layout.addWidget(desc)
 
-        layout.addWidget(self._build_version_group())
+        self.repo_grp = self._build_version_group()
+        layout.addWidget(self.repo_grp)
 
         btn_row = QHBoxLayout()
 

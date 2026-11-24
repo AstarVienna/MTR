@@ -35,7 +35,7 @@ from PyQt6.QtWidgets import (
 from .. import __version__, paths, update
 from ..flow_view import FlowWindow
 from ..reports_view import ReportsDialog, ReportsTab
-from . import widgets
+from . import tour, widgets
 from .archive_tab import ArchiveTab
 from .install_tab import InstallTab
 from .run_tab import RunTab
@@ -150,6 +150,12 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self._flow_btn)
         self._flow_btn.clicked.connect(self._show_flow)
         self._flow_window: FlowWindow | None = None
+        self._tour_btn = QPushButton("Tour")
+        self._tour_btn.setProperty("role", "accent")
+        self._tour_btn.setToolTip("Replay the introduction tour of the tabs")
+        toolbar.addWidget(self._tour_btn)
+        self._tour_btn.clicked.connect(self.start_tour)
+        self._tour: tour.TourOverlay | None = None
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer)
@@ -218,6 +224,23 @@ class MainWindow(QMainWindow):
         self._flow_window.show()
         self._flow_window.raise_()
         self._flow_window.activateWindow()
+
+    def start_tour(self) -> None:
+        """Walk through the tabs, then open the Install tab, where a new user starts."""
+        if self._tour is not None:
+            return
+
+        def done() -> None:
+            self._tour = None
+            self._tabs.setCurrentWidget(self._install_tab)
+
+        self._tour = tour.TourOverlay(self, tour.build_steps(self), THEMES[self._current_theme], done)
+        self._tour.start()
+
+    def maybe_start_tour(self) -> None:
+        """Start the tour on the first launch only."""
+        if not tour.completed():
+            self.start_tour()
 
     def _show_task_reports(self, task: str) -> None:
         """Open *task*'s reports from the Reports tab's selected run (the newest by default)."""
@@ -410,7 +433,12 @@ def main() -> None:
         QTimer.singleShot(0, app.quit)
     else:
         win.start_update_check()
-        QTimer.singleShot(0, win.show_whats_new)
+
+        def greet() -> None:
+            win.show_whats_new()
+            win.maybe_start_tour()
+
+        QTimer.singleShot(0, greet)
     code = app.exec()
     if win.restart_requested:
         try:

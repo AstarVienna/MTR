@@ -242,7 +242,7 @@ class ReportsTab(QWidget):
         browse = QPushButton("Browse…")
         browse.setProperty("role", "browse")
         browse.clicked.connect(self._browse)
-        refresh = QPushButton("Refresh")
+        self.refresh_btn = refresh = QPushButton("Refresh")
         refresh.setProperty("role", "browse")
         refresh.clicked.connect(lambda: self.show_run(self.current_run(), force=True))
         top = QHBoxLayout()
