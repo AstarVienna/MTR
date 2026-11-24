@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.10.0 — 2026-11-24
+
+### Added
+- **Guided tour:** on first launch, MTR walks through each tab, highlighting its
+  main controls with an arrow and a short explanation. The new *Tour* toolbar
+  button replays it; afterwards the Install tab is open.
+
+### Changed
+- **`--pipeline-input` replaces `METIS_PIPELINE_INPUT`** instead of adding to it;
+  the variable applies only when the option is not given.
+- **Fetched calibrations go to `<output>/archive_calibs/`:**
+  `--auto-fetch-calibrations` no longer writes into your input folders. EDPS
+  reads that folder too.
+- **A simulating run refuses an output folder whose `sim/` already holds
+  frames** from an earlier run, which would have been mixed into this one.
+- **Mixed YAML + CSV runs** take their EDPS targets from the simulated FITS
+  headers, like CSV-only runs.
+- **Data flow window:** a missing master has a dotted border and a present
+  input a double one, so states no longer depend on colour alone.
+- **Reports tab:** bordered buttons, a rounded report tree and larger text.
+- **Bundled snapshot follows METIS_Pipeline `ae4e72de`:** `metis_lm_lss_lingain`
+  / `metis_n_lss_lingain` no longer take `LM_WCU_OFF_RAW` / `N_WCU_OFF_RAW`.
+
+### Fixed
+- **No more freezes** while the Reports tab loads a run or the Data flow window
+  scans the workflows: both now work in the background, and reports are cached
+  per run.
+- **Install** keeps local and detached-HEAD commits in MTR's clones, removes a
+  clone that failed half-way, never overwrites your EDPS config with a backup,
+  and stops pip downloads that hang.
+- **Uninstall** deletes only what MTR created in the data directory. If
+  `METIS_DATA_DIR` names a folder without MTR's marker, it lists what it would
+  delete and asks first.
+- **Archive credentials** are no longer passed on to the simulation and
+  pipeline processes, and archive database connections are closed after each
+  operation.
+
 ## 0.9.0 — 2026-11-20
 
 ### Added
